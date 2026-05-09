@@ -1,0 +1,1200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>The Lodge Suites — System Overview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg-deep:   #15161A;
+    --bg-elev:   #1E2024;
+    --paper:     #F4EFE5;
+    --cream:     #EFE7D6;
+    --gold:      #C9A961;
+    --gold-deep: #9A7E40;
+    --gold-bright: #E0C079;
+    --ink:       #15161A;
+    --text-dim:  #6B6760;
+    --text-muted:#9A938A;
+    --border:    rgba(0,0,0,0.12);
+    --border-d:  rgba(255,255,255,0.10);
+    --success:   #7FA970;
+    --warn:      #B8852E;
+    --danger:    #9A3A30;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Manrope', system-ui, -apple-system, sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+  }
+  .deck { max-width: 1100px; margin: 0 auto; padding: 32px 24px 96px; }
+
+  /* ── Toolbar ─────────────────────────────────────────────────────────── */
+  .toolbar {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--paper);
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 28px;
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 12px;
+  }
+  .toolbar .brand {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 1.4rem; font-weight: 500; color: var(--ink);
+  }
+  .toolbar .brand em {
+    font-style: italic; color: var(--gold-deep); font-weight: 400;
+  }
+  .toolbar .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .toolbar button, .toolbar a.btn {
+    background: transparent; border: 1px solid var(--gold);
+    color: var(--ink);
+    font-family: 'Manrope', sans-serif;
+    font-size: 0.7rem; letter-spacing: 0.2em; text-transform: uppercase; font-weight: 700;
+    padding: 8px 14px; cursor: pointer; text-decoration: none;
+    transition: background 160ms, color 160ms;
+  }
+  .toolbar button:hover, .toolbar a.btn:hover { background: var(--gold); color: var(--bg-deep); }
+  /* Ghost variant for the leading Back button — softer than the action
+     chips so the user's eye lands on Print/Download first. */
+  .toolbar button.ghost {
+    border-color: rgba(0,0,0,0.18);
+    color: var(--text-dim);
+  }
+  .toolbar button.ghost:hover {
+    background: var(--ink);
+    color: var(--paper);
+    border-color: var(--ink);
+  }
+  /* Close uses the danger accent so it reads as "exit" without being loud. */
+  .toolbar button.close-btn {
+    border-color: var(--danger);
+    color: var(--danger);
+  }
+  .toolbar button.close-btn:hover {
+    background: var(--danger);
+    color: var(--paper);
+    border-color: var(--danger);
+  }
+  /* Inline icon characters get a touch of vertical alignment polish. */
+  .toolbar button .icon {
+    display: inline-block; margin-inline-end: 6px;
+    font-size: 0.85rem; line-height: 1; transform: translateY(-1px);
+  }
+  .toolbar button.close-btn .icon { margin-inline-end: 0; margin-inline-start: 6px; }
+
+  /* ── Slide ───────────────────────────────────────────────────────────── */
+  .slide {
+    background: #FFFFFF;
+    border: 1px solid var(--border);
+    padding: 56px 64px;
+    margin: 0 0 24px;
+    min-height: 540px;
+    position: relative;
+    page-break-after: always;
+    break-after: page;
+  }
+  .slide.cover {
+    background: var(--bg-deep);
+    color: var(--cream);
+    border-color: var(--gold-deep);
+    text-align: center;
+    padding: 96px 64px;
+  }
+  .slide.cover h1 {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 4rem; font-weight: 300; line-height: 1.0;
+    margin: 0 0 12px; color: var(--cream);
+  }
+  .slide.cover h1 em {
+    color: var(--gold); font-weight: 400;
+  }
+  .slide.cover .subtitle {
+    font-family: 'Cormorant Garamond', serif; font-style: italic;
+    color: var(--gold-bright); font-size: 1.6rem; margin-bottom: 28px;
+  }
+  .slide.cover .meta {
+    font-family: 'Manrope', sans-serif;
+    color: var(--text-muted); font-size: 0.78rem;
+    letter-spacing: 0.18em; text-transform: uppercase;
+  }
+  .slide.divider {
+    background: var(--bg-deep);
+    color: var(--cream);
+    border-color: var(--gold-deep);
+    display: flex; align-items: center; justify-content: center;
+    text-align: center;
+  }
+  .slide.divider .label {
+    color: var(--gold);
+    font-family: 'Manrope', sans-serif;
+    font-size: 0.7rem; letter-spacing: 0.4em; text-transform: uppercase; font-weight: 600;
+    margin-bottom: 12px;
+  }
+  .slide.divider h2 {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 3.4rem; font-weight: 300; line-height: 1.05;
+    color: var(--cream); margin: 0 0 8px;
+  }
+  .slide.divider h2 em { color: var(--gold); font-weight: 400; }
+  .slide .eyebrow {
+    color: var(--gold-deep);
+    font-family: 'Manrope', sans-serif;
+    font-size: 0.65rem; letter-spacing: 0.32em;
+    text-transform: uppercase; font-weight: 700;
+    margin-bottom: 14px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .slide .eyebrow::before {
+    content: ""; width: 24px; height: 1px; background: var(--gold);
+  }
+  .slide h2 {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 2.4rem; font-weight: 400; line-height: 1.1;
+    color: var(--ink); margin: 0 0 24px;
+    letter-spacing: -0.005em;
+  }
+  .slide h2 em { color: var(--gold-deep); font-style: italic; }
+  .slide h3 {
+    font-family: 'Manrope', sans-serif;
+    font-size: 0.78rem; letter-spacing: 0.22em; text-transform: uppercase;
+    font-weight: 700; color: var(--gold-deep);
+    margin: 22px 0 10px;
+  }
+  .slide p, .slide li {
+    font-family: 'Manrope', sans-serif;
+    font-size: 0.95rem; line-height: 1.7;
+    color: var(--ink); margin: 0 0 12px;
+  }
+  .slide ul, .slide ol { padding-left: 22px; margin: 0 0 14px; }
+  .slide li { margin: 0 0 6px; }
+  .slide li::marker { color: var(--gold); }
+  .slide strong { color: var(--ink); font-weight: 700; }
+  .slide em { color: var(--gold-deep); font-style: italic; }
+
+  /* Tables */
+  .slide table {
+    width: 100%; border-collapse: collapse; margin: 14px 0 20px;
+    font-family: 'Manrope', sans-serif; font-size: 0.86rem;
+  }
+  .slide th {
+    text-align: left; padding: 10px 12px;
+    background: var(--cream); color: var(--ink);
+    font-size: 0.66rem; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 700;
+    border-bottom: 1px solid var(--gold);
+  }
+  .slide td {
+    padding: 10px 12px; border-bottom: 1px solid var(--border);
+    color: var(--ink); vertical-align: top;
+  }
+  .slide tr:nth-child(even) td { background: rgba(201,169,97,0.04); }
+
+  /* Page number */
+  .slide .page {
+    position: absolute; bottom: 18px; right: 32px;
+    font-family: 'Manrope', sans-serif;
+    font-size: 0.62rem; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--text-muted); font-weight: 700;
+  }
+  .slide.cover .page, .slide.divider .page { color: var(--gold-deep); }
+
+  /* TOC */
+  .toc {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 32px;
+    margin-top: 8px;
+  }
+  .toc .item {
+    display: flex; align-items: baseline; gap: 14px;
+    padding: 10px 0;
+    border-bottom: 1px dashed var(--border);
+  }
+  .toc .num {
+    font-family: 'Cormorant Garamond', serif;
+    color: var(--gold-deep); font-size: 1.6rem; font-weight: 500;
+    min-width: 40px;
+  }
+  .toc .item .meta {
+    font-family: 'Manrope', sans-serif;
+    color: var(--ink); font-size: 0.95rem;
+  }
+  .toc .item .sub {
+    font-family: 'Manrope', sans-serif;
+    color: var(--text-muted); font-size: 0.78rem;
+  }
+
+  /* Print: each slide → page */
+  @media print {
+    body { background: #FFFFFF; }
+    .toolbar { display: none !important; }
+    .deck { padding: 0; max-width: none; }
+    .slide {
+      margin: 0; border: none;
+      padding: 28mm 22mm; min-height: auto;
+      box-shadow: none;
+    }
+    .slide.cover, .slide.divider {
+      background: var(--bg-deep) !important;
+      color: var(--cream) !important;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .slide th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    @page { size: A4 landscape; margin: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="deck">
+
+  <!-- Toolbar -->
+  <div class="toolbar" role="toolbar" aria-label="Document actions">
+    <div class="brand">The Lodge Suites <em>System Overview</em></div>
+    <div class="actions">
+      <button onclick="goBack()" type="button" class="ghost" aria-label="Go back to the previous page">
+        <span class="icon" aria-hidden="true">←</span>Back
+      </button>
+      <button onclick="window.print()" type="button">Print / Save PDF</button>
+      <a class="btn" href="system-presentation.md" download>Download Markdown</a>
+      <button onclick="closeWindow()" type="button" class="close-btn" aria-label="Close this deck">
+        Close<span class="icon" aria-hidden="true">✕</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Cover -->
+  <section class="slide cover">
+    <h1>The Lodge <em>Suites</em></h1>
+    <div class="subtitle">System Overview — Training &amp; Business Development</div>
+    <div class="meta">Juffair · Manama · Bahrain · 72 Suites · "We Speak Your Language"</div>
+    <div class="page">01</div>
+  </section>
+
+  <!-- Agenda -->
+  <section class="slide">
+    <div class="eyebrow">Agenda</div>
+    <h2>What this deck covers</h2>
+    <div class="toc">
+      <div class="item"><div class="num">01</div><div><div class="meta">System at a glance</div><div class="sub">What we built · where it lives</div></div></div>
+      <div class="item"><div class="num">02</div><div><div class="meta">Guest experience</div><div class="sub">Homepage · booking · loyalty</div></div></div>
+      <div class="item"><div class="num">03</div><div><div class="meta">Partner Portal</div><div class="sub">Corporate · Travel Agent · Admin</div></div></div>
+      <div class="item"><div class="num">04</div><div><div class="meta">Operational workflows</div><div class="sub">Day-in-the-life walkthroughs</div></div></div>
+      <div class="item"><div class="num">05</div><div><div class="meta">Business development</div><div class="sub">Value props by audience</div></div></div>
+      <div class="item"><div class="num">06</div><div><div class="meta">Roadmap &amp; integrations</div><div class="sub">Mocked vs. real</div></div></div>
+      <div class="item"><div class="num">07</div><div><div class="meta">Appendix</div><div class="sub">Cheat sheets · glossary · FAQ</div></div></div>
+    </div>
+    <div class="page">02</div>
+  </section>
+
+  <!-- ═══ PART 1 ═══ -->
+  <section class="slide divider">
+    <div>
+      <div class="label">Part One</div>
+      <h2>System <em>at a Glance</em></h2>
+    </div>
+    <div class="page">03</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">What is The Lodge Suites?</div>
+    <h2>A luxury serviced-apartment property in Juffair, Manama</h2>
+    <ul>
+      <li><strong>72 suites</strong> across four types — Studio · One-Bed · Two-Bed · Three-Bed</li>
+      <li>Opened <strong>November 2020</strong> · Boutique five-star · Long-stay specialist</li>
+      <li>Address: Building 916, Road 4019, Block 340, Shabab Avenue, Juffair</li>
+      <li>Phone: <strong>+973 1616 8146</strong> · Instagram: <strong>@thelodgesuites</strong></li>
+      <li>Tagline: <strong>"We Speak Your Language"</strong></li>
+    </ul>
+    <p>The system on display is the <strong>digital front-of-house</strong>: a public website, a guest portal, and a complete operator portal for corporate sales, travel-agent management, and back-office operations.</p>
+    <div class="page">04</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Two surfaces, one codebase</div>
+    <h2>Five audiences served from one app</h2>
+    <table>
+      <thead><tr><th>Surface</th><th>Audience</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Public site</strong></td><td>Walk-up guests</td><td>Discover, see suites, check availability, book direct</td></tr>
+        <tr><td><strong>Guest Portal</strong></td><td>LS Privilege members</td><td>Manage stays, view points, redeem rewards, see tier benefits</td></tr>
+        <tr><td><strong>Corporate Tab</strong></td><td>Corporate bookers</td><td>Submit RFPs, view net-rate contracts, see folio history</td></tr>
+        <tr><td><strong>Travel Agent Tab</strong></td><td>Agency partners</td><td>Manage bookings, raise invoices, track commissions</td></tr>
+        <tr><td><strong>Admin Tab</strong></td><td>Hotel staff</td><td>Run operations: rates, availability, comms, finance, sales pipeline</td></tr>
+      </tbody>
+    </table>
+    <p>A <strong>single React app</strong> serves all five — modals open the right surface based on who's signed in.</p>
+    <div class="page">05</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Brand identity</div>
+    <h2>Quiet, confident, hospitality-first</h2>
+    <ul>
+      <li><strong>Aesthetic</strong> — dark / gold art-deco. Cream paper, deep ink, signature gold (<code>#C9A961</code>).</li>
+      <li><strong>Type</strong> — Cormorant Garamond (display serif) + Manrope (sans). Always paired.</li>
+      <li><strong>Voice</strong> — quiet, confident, hospitality-first. No exclamation marks; no salesy adjectives.</li>
+      <li><strong>Currency</strong> — BHD, three-decimal precision (e.g. <code>BHD 42.000</code>). Never displayed in another currency without an explicit conversion.</li>
+      <li><strong>Languages</strong> — English (LTR) and Arabic (RTL), toggle in the top-right.</li>
+    </ul>
+    <p>Brand consistency is enforced in code — there is one design system file and one brand-color object. Adding a new section to the site automatically inherits these.</p>
+    <div class="page">06</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Tech stack</div>
+    <h2>Intentional simplicity</h2>
+    <ul>
+      <li><strong>Vite 5 + React 18 + Tailwind 3</strong> — single-page app</li>
+      <li><strong>Lucide-react</strong> — every icon in the system</li>
+      <li><strong>No router, no state library, no UI framework</strong> — by design</li>
+      <li><strong>Client-side, in-memory state</strong> — every interactive feature is mocked so the UX can be validated before backend integration</li>
+      <li>Deploys as a static bundle (≈ 460 kB gzipped) to any CDN / Vercel / Netlify</li>
+    </ul>
+    <p>The system is built to be <strong>wired to real backends one slot at a time</strong> — we'll come back to which slots are mocked vs. real.</p>
+    <div class="page">07</div>
+  </section>
+
+  <!-- ═══ PART 2 ═══ -->
+  <section class="slide divider">
+    <div>
+      <div class="label">Part Two</div>
+      <h2>Guest <em>Experience</em></h2>
+    </div>
+    <div class="page">08</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Homepage anatomy</div>
+    <h2>Eight sections, each tells one story</h2>
+    <ol>
+      <li><strong>Hero</strong> — booking widget + Juffair imagery + 5-star rating</li>
+      <li><strong>Intro strip</strong> — "We Speak Your Language" brand statement</li>
+      <li><strong>Suites</strong> — four cards, each linked to "Book this suite"</li>
+      <li><strong>Offers</strong> — active packages with one-click apply</li>
+      <li><strong>LS Privilege</strong> — three-tier loyalty grid + Join CTA</li>
+      <li><strong>Amenities</strong> — facility icons</li>
+      <li><strong>Corporate</strong> — RFP entry point for B2B traffic</li>
+      <li><strong>Gallery + FAQ + Contact</strong> — closer panels</li>
+    </ol>
+    <p>Footer holds: Press, Gift Vouchers, Juffair Guide, Career, RFP, Partner Portal sign-in.</p>
+    <div class="page">09</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Suite catalog (live pricing)</div>
+    <h2>Four suite types, capacity-enforced</h2>
+    <table>
+      <thead><tr><th>Suite</th><th>Size</th><th>Sleeps</th><th>Rack rate</th><th>Extra bed</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Lodge Studio</strong></td><td>43 m²</td><td>2 (2A or 1A+1C)</td><td><strong>BHD 38</strong> / night</td><td>—</td></tr>
+        <tr><td><strong>One-Bedroom Suite</strong></td><td>60 m²</td><td>3 (2A+1C, 1A+2C…)</td><td><strong>BHD 44</strong> / night</td><td>+1 adult, BHD 15</td></tr>
+        <tr><td><strong>Two-Bedroom Suite</strong></td><td>140 m²</td><td>5 (4A + 3C max)</td><td><strong>BHD 78</strong> / night</td><td>+1 adult, BHD 18</td></tr>
+        <tr><td><strong>Three-Bedroom Suite</strong></td><td>150 m²</td><td>6 (4A + 4C max)</td><td><strong>BHD 96</strong> / night</td><td>+1 adult, BHD 18</td></tr>
+      </tbody>
+    </table>
+    <p>All include kitchenette, 55" Smart TV, soundproofed windows. Rates <strong>exclude 10% taxes</strong> (5% VAT + 5% service). Capacity model enforced in the booking engine.</p>
+    <div class="page">10</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">The booking engine</div>
+    <h2>Four steps, then a confirmation</h2>
+    <p><strong>Step 1 — Dates.</strong> Check-in / check-out / adults / children. Calendar enforces ≥ 1 night and no past dates.</p>
+    <p><strong>Step 2 — Suite.</strong> Multi-room cart. Per-room +/- stepper. Auto-applied capacity rules. Eligible-offer chips appear if the dates qualify for an active package. Per-room offer pricing shown side-by-side with rack rate.</p>
+    <p><strong>Step 3 — Extras.</strong> Airport Transfer, Welcome Hamper, Late Check-out, Spa Voucher, Crib, etc. Pricing scales with party size or nights as configured.</p>
+    <p><strong>Step 4 — Confirm.</strong> Name (required) · Country · Email · Phone (with country code). Required-field validation with red asterisks. Choose <strong>Pay now (5% off, non-refundable)</strong> or <strong>Pay on arrival</strong> (with or without a card on file).</p>
+    <p><strong>Step 5</strong> is the success page — booking reference, summary, "Add to calendar," next steps.</p>
+    <div class="page">11</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Pay-now vs. Pay-on-arrival</div>
+    <h2>Two payment paths, clear consequences</h2>
+    <table>
+      <thead><tr><th></th><th>Pay now</th><th>Pay on arrival (card)</th><th>Pay on arrival (no card)</th></tr></thead>
+      <tbody>
+        <tr><td>Discount</td><td><strong>5% off</strong></td><td>—</td><td>—</td></tr>
+        <tr><td>Refundable?</td><td><strong>No</strong></td><td>Yes — 24h before arrival</td><td>Yes</td></tr>
+        <tr><td>Card captured?</td><td>Yes — charged at booking</td><td>Yes — held only</td><td>No</td></tr>
+        <tr><td>Hotel guarantee</td><td>Confirmed</td><td>Confirmed</td><td><strong>Held until 15:00 on arrival day</strong></td></tr>
+        <tr><td>Folio status</td><td><code>paid</code></td><td><code>deposit</code></td><td><code>pending</code></td></tr>
+      </tbody>
+    </table>
+    <p>Front-office tip: a non-guaranteed booking that hasn't checked in by 3 PM is auto-released to walk-ins.</p>
+    <div class="page">12</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">LS Privilege — loyalty program</div>
+    <h2>Three tiers, stackable with Pay-now</h2>
+    <table>
+      <thead><tr><th>Tier</th><th>Member rate</th><th>Pts/BHD</th><th>Welcome</th><th>Upgrade</th><th>Late check-out</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Silver</strong> (1–9 nights)</td><td><strong>5% off</strong></td><td>1.0</td><td>Bottle of water</td><td>When available</td><td>—</td></tr>
+        <tr><td><strong>Gold</strong> (10–24 nights)</td><td><strong>10% off</strong></td><td>1.5</td><td>In-suite amenity</td><td>When available</td><td>To 14:00</td></tr>
+        <tr><td><strong>Platinum</strong> (25+ nights/yr)</td><td><strong>15% off</strong></td><td>2.0</td><td>Premium + flowers</td><td><strong>Guaranteed</strong></td><td><strong>Guaranteed to 16:00</strong></td></tr>
+      </tbody>
+    </table>
+    <p>Auto-detection: when a guest enters their email at step 4, the system recognises existing members and applies their tier rate before they confirm.</p>
+    <div class="page">13</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Offers (packages)</div>
+    <h2>Configurable from Admin → Offers</h2>
+    <ul>
+      <li><strong>Spa &amp; Stay</strong> — From BHD 79 / night · room + 1× spa voucher / day</li>
+      <li><strong>Bed &amp; Breakfast</strong> — From BHD 52 / night · room + breakfast for two</li>
+      <li><strong>Romantic Escape</strong> — From BHD 99 first night · room + chocolates + late check-out</li>
+      <li><strong>Long Stay (14+ nights)</strong> — Auto-discount tier</li>
+      <li><strong>Eid / F1 / National Day</strong> — Event-window supplements</li>
+    </ul>
+    <h3>Each offer carries</h3>
+    <ul>
+      <li>Eligible suites (whitelist)</li>
+      <li>Min/max guests, min/max nights, valid date windows</li>
+      <li>Pricing mode — per-night · first-night flat · whole-stay flat</li>
+      <li>Auto-applied vs. promo-code-only</li>
+    </ul>
+    <div class="page">14</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Multilingual support</div>
+    <h2>English &amp; Arabic, native RTL</h2>
+    <ul>
+      <li><strong>English</strong> (default, LTR)</li>
+      <li><strong>Arabic</strong> (RTL — full right-to-left flip, including iconography and number formatting)</li>
+    </ul>
+    <p>Every string lives in <code>src/i18n/translations.js</code>. To add a third language: add a new key set, add the language to the picker in the Header, test direction.</p>
+    <p>Every section, modal, and email template is fully translated.</p>
+    <div class="page">15</div>
+  </section>
+
+  <!-- ═══ PART 3 ═══ -->
+  <section class="slide divider">
+    <div>
+      <div class="label">Part Three</div>
+      <h2>Partner <em>Portal</em></h2>
+    </div>
+    <div class="page">16</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Portal layout</div>
+    <h2>Three top-level tabs, role-aware</h2>
+    <table>
+      <thead><tr><th>Tab</th><th>Who signs in</th><th>What they do</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Corporate</strong></td><td>BAPCO / GFH / etc. bookers</td><td>Submit RFPs · view contract · folio history</td></tr>
+        <tr><td><strong>Travel Agent</strong></td><td>Agency partners</td><td>Raise invoices · check commission · upload vouchers</td></tr>
+        <tr><td><strong>Admin</strong></td><td>Hotel staff (Owner / GM / FOM…)</td><td>Run the entire operation</td></tr>
+      </tbody>
+    </table>
+    <p>Each surface has its own colour palette and navigation, but the underlying React app and data store are shared.</p>
+    <div class="page">17</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Corporate Tab</div>
+    <h2>For B2B bookers at named accounts</h2>
+    <h3>Sample seeded accounts (placeholders)</h3>
+    <ul>
+      <li><strong>BAPCO</strong> — Bahrain Petroleum Company</li>
+      <li><strong>GFH</strong> — Investment bank</li>
+      <li><strong>Investcorp Air</strong> — Crew layovers (rooms blocked Wed/Sat)</li>
+      <li><strong>Ministry of Interior</strong> — Government</li>
+    </ul>
+    <h3>What a corporate user can do</h3>
+    <ul>
+      <li>View their <strong>negotiated rates</strong> by suite type</li>
+      <li>See their <strong>active rate sheet</strong> and seasonal supplements</li>
+      <li>Submit a new <strong>RFP</strong> for a future engagement</li>
+      <li>Browse <strong>booking history</strong> and folio status</li>
+    </ul>
+    <div class="page">18</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Travel Agent Tab</div>
+    <h2>Clean, agent-friendly self-service</h2>
+    <ul>
+      <li>View their <strong>commission bracket</strong> (typically 10–15%, depending on production)</li>
+      <li>Raise an <strong>invoice</strong> for a stay, attach the voucher, submit</li>
+      <li>See <strong>pending vs. paid</strong> invoice status</li>
+      <li>Pull a <strong>commission statement</strong> for a date range</li>
+      <li>Upload a <strong>rate-confirmation PDF</strong> for the booker on the other end</li>
+    </ul>
+    <p>The agent surface is intentionally clean — no operations clutter, just bookings, invoices, statements.</p>
+    <div class="page">19</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Admin sidebar map</div>
+    <h2>18 sections, six functional groups</h2>
+    <p><strong>Operations</strong> — Dashboard · Calendar · Bookings · Stop-Sale &amp; OTA · Maintenance</p>
+    <p><strong>Inventory</strong> — Rooms &amp; Rates · Offers &amp; Packages · Extras</p>
+    <p><strong>Sales</strong> — Corporate Accounts · Travel Agents · RFPs in flight</p>
+    <p><strong>Guest</strong> — LS Privilege (members CRM)</p>
+    <p><strong>Finance</strong> — Invoices · Payments · Tax Setup</p>
+    <p><strong>Comms</strong> — Email Templates · Email SMTP · Site Content (CMS)</p>
+    <p><strong>Admin</strong> — Staff &amp; Access · Audit Log · Hotel Info</p>
+    <p>Sections you can see depend on your role permissions.</p>
+    <div class="page">20</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Admin → Dashboard</div>
+    <h2>Front-page KPIs at a glance</h2>
+    <ul>
+      <li><strong>Today</strong> — arrivals, departures, in-house, occupancy %</li>
+      <li><strong>This week</strong> — RevPAR, ADR, total revenue (BHD)</li>
+      <li><strong>Pipeline</strong> — RFPs in negotiation, prospects by stage</li>
+      <li><strong>Operational</strong> — open maintenance jobs, stop-sale gaps, channel-sync errors</li>
+      <li><strong>Notifications</strong> — recent booking activity, member sign-ups, password resets</li>
+    </ul>
+    <p>Designed so a GM walking in at 9 AM has the entire previous-day picture on one screen.</p>
+    <div class="page">21</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Admin → Calendar</div>
+    <h2>30-day occupancy heat map</h2>
+    <ul>
+      <li>Each cell = one date × one suite type</li>
+      <li>Colour shows availability: green (open) · amber (limited) · red (sold out) · grey (stop-sale)</li>
+      <li>Click a cell → override the price, close out, or block for maintenance</li>
+      <li>Event templates (Eid, F1, Saudi National Day) auto-apply seasonal supplements</li>
+      <li>Pull-forward / push-back by clicking the date headers</li>
+    </ul>
+    <p>This is the <strong>single source of truth</strong> for stop-sale, rate overrides, and event pricing.</p>
+    <div class="page">22</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Admin → Bookings</div>
+    <h2>Where the front desk lives</h2>
+    <ul>
+      <li>Filter by <strong>status</strong> (confirmed · paid · deposit · pending · cancelled · no-show)</li>
+      <li>Filter by <strong>arrival date</strong>, channel, suite type, member tier</li>
+      <li>Click a row → drawer with full folio, guest details, payment history, comms log</li>
+      <li>Quick actions — modify dates · add extras · cancel · upgrade · email confirmation</li>
+      <li>Export filtered set to CSV</li>
+    </ul>
+    <div class="page">23</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Admin → Stop-Sale &amp; OTA channels</div>
+    <h2>One-click rate &amp; availability push</h2>
+    <h3>Configured channels</h3>
+    <ul>
+      <li><strong>Booking.com</strong></li>
+      <li><strong>Expedia</strong></li>
+      <li><strong>Agoda</strong></li>
+      <li><strong>Hotelbeds</strong></li>
+      <li><strong>Almosafer</strong> — <em>dominant Saudi/GCC OTA — never skip it</em></li>
+    </ul>
+    <h3>For each channel</h3>
+    <ul>
+      <li>Connection status (last sync, success/error)</li>
+      <li>Rate parity check (vs. direct)</li>
+      <li>Stop-sale push / lift</li>
+      <li>30-day allotment visibility</li>
+    </ul>
+    <p>A composer at the bottom sends a <strong>batch update email</strong> to all channels at once when a major change is needed.</p>
+    <div class="page">24</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Admin → Rooms &amp; Rates</div>
+    <h2>Inline editor for the suite catalogue</h2>
+    <ul>
+      <li>Edit rack rate, occupancy, max adults / max children, square metres</li>
+      <li>Toggle extra-bed availability and configure fee + capacity adders</li>
+      <li>Reorder photography (drag &amp; drop)</li>
+      <li>Mark a suite as "popular" for the homepage badge</li>
+      <li>Soft-delete a suite type (hidden from public, kept for historical bookings)</li>
+    </ul>
+    <p>Changes propagate <strong>immediately</strong> to the booking engine. No publish step.</p>
+    <div class="page">25</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Admin → Offers &amp; Packages</div>
+    <h2>Build promotions without code</h2>
+    <ul>
+      <li><strong>Title, hero image, description</strong></li>
+      <li><strong>Eligible suites</strong> — checkbox list</li>
+      <li><strong>Date validity windows</strong> — multiple ranges allowed</li>
+      <li><strong>Pricing mode</strong> — per-night flat · first-night flat · whole-stay flat</li>
+      <li><strong>Min/max nights, min/max guests</strong></li>
+      <li><strong>Auto-apply</strong> when eligible, or <strong>promo-code only</strong></li>
+      <li><strong>Inclusions</strong> — free text list (e.g. "1 spa voucher · daily breakfast")</li>
+    </ul>
+    <p>Activate / deactivate with one toggle. The homepage Offers section reads from this catalogue live.</p>
+    <div class="page">26</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Admin → Extras</div>
+    <h2>Booking-modal add-ons catalogue</h2>
+    <ul>
+      <li>Title (translated)</li>
+      <li>Pricing rule — per booking · per night · per guest · per night per guest</li>
+      <li>Active toggle</li>
+      <li>Default selected (yes/no)</li>
+      <li>Eligible suites (whitelist)</li>
+    </ul>
+    <p>Examples that ship today: Airport Transfer · Welcome Hamper · Crib · Late Check-out · Spa Voucher · Daily Housekeeping Top-up.</p>
+    <div class="page">27</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Admin → LS Privilege</div>
+    <h2>Full-fledged member CRM</h2>
+    <ul>
+      <li><strong>Search</strong> by name, email, phone, member code</li>
+      <li>View <strong>points balance</strong>, lifetime nights, tier history</li>
+      <li><strong>Award / redeem points</strong> manually with a reason note</li>
+      <li><strong>Move tier</strong> with audit trail</li>
+      <li><strong>Suspend / reinstate</strong> member</li>
+      <li><strong>Verify ID</strong> (CPR / passport upload)</li>
+      <li><strong>Email member</strong> directly (uses templates)</li>
+      <li>See full <strong>booking history</strong> in a side drawer</li>
+    </ul>
+    <p>Owner has a "Log in as member" feature — opens the Guest Portal as that member for support escalations.</p>
+    <div class="page">28</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Admin → Email Templates</div>
+    <h2>Every transactional email lives here</h2>
+    <ul>
+      <li>Booking confirmation · cancellation · modification</li>
+      <li>Pre-arrival check-in instructions</li>
+      <li>Loyalty enrolment · tier upgrade · points statement</li>
+      <li>Corporate RFP intake · proposal sent · contract executed</li>
+      <li>Travel agent: rate sheet · invoice issued · commission paid</li>
+      <li>OTA channel: rate update · stop-sale notice · allotment refresh</li>
+    </ul>
+    <h3>Each template</h3>
+    <ul>
+      <li>HTML editor with <code>{{merge_tags}}</code></li>
+      <li>Live preview pane</li>
+      <li>Test-send to your own inbox</li>
+      <li>Translation pair (English + Arabic)</li>
+    </ul>
+    <div class="page">29</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Admin → Email SMTP <em>(new)</em></div>
+    <h2>Configure the outbound email transport</h2>
+    <p><strong>Status banner</strong> at the top — green when verified, amber if untested, red on failure.</p>
+    <h3>Four configuration cards</h3>
+    <ol>
+      <li><strong>Server</strong> — host, port, encryption (TLS/SSL/none)</li>
+      <li><strong>Authentication</strong> — username, password (eye-toggle to reveal)</li>
+      <li><strong>Sender identity</strong> — From name, From email, Reply-to</li>
+      <li><strong>Test &amp; verify</strong> — sends a test email and reports success/failure</li>
+    </ol>
+    <h3>Quick-setup chip strip</h3>
+    <p>One-click presets for <strong>Gmail · Outlook · Yahoo · SendGrid · Mailgun · Amazon SES · Zoho Mail · Postmark</strong>. Each preset auto-fills the right host/port/encryption.</p>
+    <div class="page">30</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Admin → Maintenance</div>
+    <h2>Defect tracker for the property</h2>
+    <ul>
+      <li>Log a job — title, description, suite affected, severity, photo</li>
+      <li>Status pipeline: <strong>Reported → Triaged → Dispatched → In Progress → Done → Verified</strong></li>
+      <li>Assign to a <strong>vendor</strong> from the directory (HVAC · electrical · plumbing · IT · housekeeping)</li>
+      <li>Capture <strong>parts cost + labor cost</strong> on completion</li>
+      <li>Maintain a vendor scorecard (response time, repeat-issue rate)</li>
+      <li>Block the suite in inventory until verified — auto-stops sale</li>
+    </ul>
+    <p>Front office submits jobs from the Bookings drawer; housekeeping closes them.</p>
+    <div class="page">31</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Admin → Invoices, Payments, Tax</div>
+    <h2>Finance, with proper audit hygiene</h2>
+    <p><strong>Invoices</strong> — folios for guests, partner invoices for corporate / agent accounts. Issue, void, credit-note, email.</p>
+    <p><strong>Payments</strong> — receipts, refunds, settlements. Card-vault entries are 30-day retained, role-gated (Owner / GM / FOM / Accounts only).</p>
+    <p><strong>Tax Setup</strong> — Bahrain VAT (5%) + service charge (5%). Configurable per-booking or per-suite-type if rules ever diverge. Pattern-based system means a new tax can be added without touching pricing logic.</p>
+    <div class="page">32</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Admin → RFPs in flight</div>
+    <h2>Sales pipeline in one screen</h2>
+    <p>Pipeline stages: <strong>Identified → Qualified → Contacted → Discovery → Proposal → Negotiation → Won / Lost</strong></p>
+    <h3>For each prospect</h3>
+    <ul>
+      <li>Aging timer (e.g. 5 days at Proposal)</li>
+      <li>Suggested <strong>next action</strong> (system-recommended)</li>
+      <li>Notes, attachments, scheduled follow-ups</li>
+      <li>Convert to <strong>active corporate / agent account</strong> on Won</li>
+    </ul>
+    <p>Visualised as a Kanban board, sortable by aging or value.</p>
+    <div class="page">33</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Admin → Staff &amp; Access</div>
+    <h2>Role-based access control</h2>
+    <table>
+      <thead><tr><th>Role</th><th>Sections</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Owner</strong></td><td>All 18 sections</td></tr>
+        <tr><td><strong>General Manager</strong></td><td>All except Staff &amp; Access</td></tr>
+        <tr><td><strong>Front Office Manager</strong></td><td>Ops + Inventory + Members + Comms</td></tr>
+        <tr><td><strong>Reservations</strong></td><td>Dashboard · Calendar · Bookings · Members</td></tr>
+        <tr><td><strong>Housekeeping</strong></td><td>Dashboard · Calendar · Rooms · Maintenance</td></tr>
+        <tr><td><strong>Sales / B2B</strong></td><td>Dashboard · Corporate · Agents · RFPs · Comms</td></tr>
+        <tr><td><strong>Accounts</strong></td><td>Dashboard · Invoices · Payments · Tax · Corporate · Agents</td></tr>
+        <tr><td><strong>Marketing</strong></td><td>Dashboard · Offers · Comms · Members</td></tr>
+        <tr><td><strong>Read-only</strong></td><td>Dashboard only (auditors, family)</td></tr>
+      </tbody>
+    </table>
+    <p>Every role can be cloned and tweaked. Permissions are scoped per section.</p>
+    <div class="page">34</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Admin → Audit Log</div>
+    <h2>Every privileged action recorded</h2>
+    <ul>
+      <li>Sign-in / sign-out with IP + device</li>
+      <li>Permission changes</li>
+      <li>Impersonation start / end</li>
+      <li>Booking created / modified / cancelled</li>
+      <li>Prospect converted</li>
+      <li>Vendor dispatched</li>
+      <li>Email template edited</li>
+      <li>SMTP config updated</li>
+      <li>Tax pattern changed</li>
+    </ul>
+    <p>Filterable by actor, kind, date range. Read-only — cannot be edited or deleted by anyone except Owner-class accounts.</p>
+    <div class="page">35</div>
+  </section>
+
+  <!-- ═══ PART 4 ═══ -->
+  <section class="slide divider">
+    <div>
+      <div class="label">Part Four</div>
+      <h2>Operational <em>Workflows</em></h2>
+    </div>
+    <div class="page">36</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Workflow A — Direct booking</div>
+    <h2>From homepage to confirmation in 90 seconds</h2>
+    <ol>
+      <li>Guest lands on homepage from Google or Instagram</li>
+      <li>Sets dates + party in the Hero booking widget · clicks <strong>FIND SUITE</strong></li>
+      <li>Lands on Step 2 — sees per-room offer chips and a smart capacity hint</li>
+      <li>Picks a One-Bedroom Suite + 1 extra bed → clicks <strong>Continue</strong></li>
+      <li>Selects Airport Transfer extra</li>
+      <li>Enters contact details — system auto-detects Silver-tier match → 5% applied</li>
+      <li>Chooses <strong>Pay now (5% off non-refundable)</strong> → Step 5 confirmation</li>
+      <li>Receives transactional email; reservation appears in Admin → Bookings within 1 second</li>
+    </ol>
+    <p><strong>KPI:</strong> time from landing to confirmation &lt; 90 seconds for a standard stay.</p>
+    <div class="page">37</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Workflow B — Corporate RFP</div>
+    <h2>Identified → Won, with a system memory</h2>
+    <ol>
+      <li>Booker at BAPCO signs in → sees their net-rate contract</li>
+      <li>Submits a new RFP for a 3-month project (12 engineers, 1-Bed suites, weekly stays)</li>
+      <li>Admin receives a notification → RFP appears in <strong>RFPs in flight</strong> at <em>Identified</em></li>
+      <li>Sales user qualifies + drafts a proposal → moves to <em>Proposal</em></li>
+      <li>After agreement, marks <strong>Won</strong> → system creates an active corporate contract</li>
+      <li>Future bookings against this contract auto-apply the negotiated rate</li>
+    </ol>
+    <p><strong>KPI:</strong> RFP response time &lt; 24h. Proposal-to-Won conversion target: 35%.</p>
+    <div class="page">38</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Workflow C — Stop-sale push to OTAs</div>
+    <h2>F1 weekend, one operator</h2>
+    <ol>
+      <li>F1 weekend hits the calendar — demand spikes 90 days out</li>
+      <li>GM opens the Calendar, selects 10 April – 12 April, raises rate by 20%</li>
+      <li>Opens <strong>Stop-Sale &amp; OTA</strong> → ticks Booking.com, Expedia, Agoda, Hotelbeds, Almosafer</li>
+      <li>Hits <strong>Push</strong> → system queues the rate update, syncs over the next 60s</li>
+      <li>Each channel reports back with success/error</li>
+      <li>Audit log records the push: actor, channel, payload size, timestamps</li>
+    </ol>
+    <p><strong>KPI:</strong> rate parity drift &lt; 1% across all channels at any time.</p>
+    <div class="page">39</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Workflow D — Maintenance ticket</div>
+    <h2>From "no hot water" call to verified suite</h2>
+    <ol>
+      <li>Front desk takes a call — Suite 502 reports no hot water</li>
+      <li>Reservations user opens the Bookings drawer for that folio → <strong>Log maintenance</strong></li>
+      <li>Job auto-pre-fills with suite + guest details → severity <em>High</em> → photo upload</li>
+      <li>System dispatches to plumbing vendor + suspends the suite from sale</li>
+      <li>Vendor arrives, replaces a heater unit, marks job <em>Done</em> with parts cost</li>
+      <li>Housekeeping verifies the suite the next morning → marks <em>Verified</em></li>
+      <li>Suite released back to inventory; full audit trail kept on the folio</li>
+    </ol>
+    <p><strong>KPI:</strong> Reported → Verified in &lt; 6 hours for "no hot water" class issues.</p>
+    <div class="page">40</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Workflow E — OTA email composer</div>
+    <h2>Allotment refresh in 3 minutes</h2>
+    <ol>
+      <li>Allotments dropping for next week — GM wants a quick refresh push</li>
+      <li>Opens the OTA composer → recipient toggle group: Booking.com, Expedia, Agoda, Hotelbeds, <strong>Almosafer</strong></li>
+      <li>Loads the "Allotment refresh" template</li>
+      <li>Merge tags auto-fill from current inventory: rates, allotments, valid dates</li>
+      <li>Preview pane shows the final email side-by-side per recipient</li>
+      <li><strong>Test send</strong> to GM's own inbox → review → <strong>Send</strong></li>
+      <li>Audit log records each transmission</li>
+    </ol>
+    <p><strong>KPI:</strong> ≤ 3 minutes from "I need to refresh allotments" to "email sent".</p>
+    <div class="page">41</div>
+  </section>
+
+  <!-- ═══ PART 5 ═══ -->
+  <section class="slide divider">
+    <div>
+      <div class="label">Part Five</div>
+      <h2>Business <em>Development</em></h2>
+    </div>
+    <div class="page">42</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Why one-stop matters</div>
+    <h2>Direct-first, in software</h2>
+    <p>Most boutique hotels run on a generic PMS dashboard plus three or four point-tools (channel manager, CRM, emailer). The result:</p>
+    <ul>
+      <li>Data lives in five systems → manual reconciliation</li>
+      <li>Every staff role has a learning curve per tool</li>
+      <li>Ownership has no single view of the property</li>
+      <li>Adding a new corporate account or OTA touches three tools</li>
+    </ul>
+    <p><strong>The Lodge Suites system collapses this into one operator surface</strong> with role-gated access. One sign-in, one source of truth, one audit trail.</p>
+    <div class="page">43</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Audience: corporate buyer</div>
+    <h2>Self-serve, no email loop</h2>
+    <h3>Pain points</h3>
+    <ul>
+      <li>"I don't want to email my booker every time someone needs a room."</li>
+      <li>"I need folio history to reconcile against AP."</li>
+      <li>"I want a contract, not a rate quote per booking."</li>
+    </ul>
+    <h3>What the system gives them</h3>
+    <ul>
+      <li>Self-serve corporate portal with their negotiated rate</li>
+      <li>Bookings hit their account in real time — no email loop</li>
+      <li>Statement export by month, employee, cost centre</li>
+      <li>Single point of contact (their account manager) visible from the portal</li>
+    </ul>
+    <p><em>"Your bookers manage Lodge stays the way they manage their own calendar — no friction, no waiting."</em></p>
+    <div class="page">44</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Audience: travel agency / FIT desk</div>
+    <h2>Live rates, transparent commission</h2>
+    <h3>Pain points</h3>
+    <ul>
+      <li>"Hotels make me email rate sheets — they're stale by the time I quote."</li>
+      <li>"Commission tracking is a black box."</li>
+      <li>"Voucher uploads via WhatsApp are a mess."</li>
+    </ul>
+    <h3>What the system gives them</h3>
+    <ul>
+      <li>Live rate sheet inside the Travel Agent tab</li>
+      <li>Commission visible per booking the moment it confirms</li>
+      <li>Voucher upload = drag-and-drop into the booking</li>
+      <li>Statement export per month</li>
+    </ul>
+    <p><em>"You see your production, your commission, and your invoices in real time."</em></p>
+    <div class="page">45</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Audience: OTA channel manager</div>
+    <h2>One screen, five clicks, full audit</h2>
+    <h3>Pain points</h3>
+    <ul>
+      <li>"Hotels don't push updates in time — we lose conversions to stale inventory."</li>
+      <li>"Rate parity drifts — we get complaints from guests."</li>
+      <li>"Allotment communication is over WhatsApp."</li>
+    </ul>
+    <h3>What the system gives them</h3>
+    <ul>
+      <li>One-click push from Stop-Sale to all five channels</li>
+      <li>Rate parity check baked into the dashboard</li>
+      <li>Audit log for every push (forensic when a complaint comes in)</li>
+      <li>Almosafer treated as a first-class peer of Booking.com (Saudi/GCC weight)</li>
+    </ul>
+    <div class="page">46</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Audience: hotel ownership / asset manager</div>
+    <h2>Trust, but verify</h2>
+    <h3>Pain points</h3>
+    <ul>
+      <li>"I want a single screen for the property, not five logins."</li>
+      <li>"I need to see RFP pipeline next to actual revenue."</li>
+      <li>"I want to log in as a guest to see what they see."</li>
+    </ul>
+    <h3>What the system gives them</h3>
+    <ul>
+      <li>Dashboard with operational + sales + finance KPIs in one place</li>
+      <li>Pipeline value alongside booked revenue</li>
+      <li>"Log in as member" / "Log in as staff" impersonation with audit trail</li>
+      <li>Read-only role for family-office stakeholders or auditors</li>
+    </ul>
+    <div class="page">47</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Differentiators</div>
+    <h2>Versus Bahrain serviced-apartment competitors</h2>
+    <table>
+      <thead><tr><th>Capability</th><th>Lodge Suites</th><th>Typical competitor</th></tr></thead>
+      <tbody>
+        <tr><td>Direct-booking discount logic</td><td><strong>5% pay-now + 5/10/15% loyalty stack</strong></td><td>Flat 5% or none</td></tr>
+        <tr><td>Multi-room cart in one flow</td><td><strong>Yes</strong></td><td>Sequential workflow</td></tr>
+        <tr><td>Auto-detect existing member at email</td><td><strong>Yes</strong></td><td>Manual sign-in</td></tr>
+        <tr><td>OTA composer with batch send</td><td><strong>Yes</strong></td><td>External tool</td></tr>
+        <tr><td>Maintenance → auto-stopsale</td><td><strong>Yes</strong></td><td>Manual coordination</td></tr>
+        <tr><td>Operator + corporate + agent in one app</td><td><strong>Yes</strong></td><td>Three logins</td></tr>
+        <tr><td>Public-facing Arabic RTL</td><td><strong>Native</strong></td><td>Often poor or partial</td></tr>
+      </tbody>
+    </table>
+    <div class="page">48</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Pricing levers (sales toolkit)</div>
+    <h2>Five levers, weakest to strongest</h2>
+    <ol>
+      <li><strong>Best Rate Guarantee</strong> banner on the public site (always visible)</li>
+      <li><strong>Pay-now 5% off non-refundable</strong> — direct-booking incentive</li>
+      <li><strong>LS Privilege</strong> — 5/10/15% by tier, stacks on Pay-now</li>
+      <li><strong>Active offers</strong> (Spa &amp; Stay, B&amp;B, Romantic Escape, Long-Stay)</li>
+      <li><strong>Corporate / Agent net rates</strong> — bespoke contract pricing</li>
+    </ol>
+    <p>The system <strong>enforces stacking rules</strong> — Platinum 15% + Pay-now 5% can stack, but a corporate net rate can't be combined with member discount (the operator picks the better of the two on confirmation).</p>
+    <div class="page">49</div>
+  </section>
+
+  <!-- ═══ PART 6 ═══ -->
+  <section class="slide divider">
+    <div>
+      <div class="label">Part Six</div>
+      <h2>Roadmap &amp; <em>Mocked List</em></h2>
+    </div>
+    <div class="page">50</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Honest disclosure</div>
+    <h2>What's mocked, where it goes</h2>
+    <table>
+      <thead><tr><th>Feature</th><th>Mocked → wired to</th></tr></thead>
+      <tbody>
+        <tr><td>Booking submission</td><td>→ <strong>PMS API</strong> (Cloudbeds / Mews / Opera)</td></tr>
+        <tr><td>Payments</td><td>→ <strong>Payment gateway</strong> (Benefit Pay locally · Stripe + 3DS globally)</td></tr>
+        <tr><td>Travel agent invoicing</td><td>→ <strong>Accounting integration</strong> (Xero / Zoho Books)</td></tr>
+        <tr><td>Corporate RFP</td><td>→ <strong>CRM</strong> (HubSpot / native) + email</td></tr>
+        <tr><td>Stop-sale manager</td><td>→ <strong>Channel manager API</strong> (SiteMinder / RateGain)</td></tr>
+        <tr><td>OTA email composer</td><td>→ <strong>Transactional email</strong> (SendGrid / Postmark / Amazon SES)</td></tr>
+        <tr><td>Loyalty enrolment</td><td>→ <strong>Loyalty backend</strong> (custom or Salesforce Loyalty)</td></tr>
+        <tr><td>Live availability / pricing</td><td>→ <strong>PMS API</strong></td></tr>
+      </tbody>
+    </table>
+    <p>The brand-color object, design tokens, and component library are <strong>production-ready</strong>.</p>
+    <div class="page">51</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Roadmap</div>
+    <h2>Three horizons</h2>
+    <h3>Near-term (next 90 days)</h3>
+    <ul>
+      <li>PMS integration (booking + availability + rates)</li>
+      <li>Payment gateway (Benefit Pay + Stripe)</li>
+      <li>Transactional email service (SendGrid recommended)</li>
+    </ul>
+    <h3>Medium-term (90–180 days)</h3>
+    <ul>
+      <li>Channel manager wiring</li>
+      <li>Real loyalty backend with points expiry</li>
+      <li>Native mobile-app shell (PWA → optional native)</li>
+    </ul>
+    <h3>Long-term (180+ days)</h3>
+    <ul>
+      <li>Full i18n expansion (add at least 1 European + 1 Asian language)</li>
+      <li>AI concierge (in-suite voice assistant)</li>
+      <li>Smart dynamic pricing (yield management based on occupancy + lead time)</li>
+    </ul>
+    <div class="page">52</div>
+  </section>
+
+  <!-- ═══ PART 7 ═══ -->
+  <section class="slide divider">
+    <div>
+      <div class="label">Part Seven</div>
+      <h2><em>Appendix</em></h2>
+    </div>
+    <div class="page">53</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Cheat sheet — front office daily</div>
+    <h2>From 07:30 to end-of-day</h2>
+    <h3>Morning (07:30)</h3>
+    <ul>
+      <li>Open Admin → Dashboard → review yesterday's check-outs and today's arrivals</li>
+      <li>Check Maintenance — any open jobs that affect today's check-ins?</li>
+      <li>Review the Stop-sale push log — any failed channel sync overnight?</li>
+    </ul>
+    <h3>During the day</h3>
+    <ul>
+      <li>Bookings register sorted by arrival time</li>
+      <li>Process modifications and cancellations through the booking drawer</li>
+      <li>Log every guest issue as a maintenance job (even if minor)</li>
+    </ul>
+    <h3>Afternoon (15:00)</h3>
+    <ul>
+      <li>Walk-in release — non-guaranteed bookings that haven't checked in</li>
+      <li>Review tomorrow's arrivals — any VIPs flagged in member CRM?</li>
+    </ul>
+    <h3>End of day</h3>
+    <ul>
+      <li>Reconcile payments → mark settlements</li>
+      <li>Close the day on the dashboard</li>
+    </ul>
+    <div class="page">54</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Cheat sheet — sales daily</div>
+    <h2>Pipeline hygiene, every day</h2>
+    <h3>Morning</h3>
+    <ul>
+      <li>Admin → RFPs in flight → sort by aging</li>
+      <li>Reach out to anything &gt; 7 days at Proposal stage</li>
+      <li>Review yesterday's incoming corporate inquiries</li>
+    </ul>
+    <h3>During the day</h3>
+    <ul>
+      <li>Move prospects through the pipeline as conversations happen</li>
+      <li>Log every call / email as an activity (with notes)</li>
+    </ul>
+    <h3>End of day</h3>
+    <ul>
+      <li>Update forecast (any new Won / Lost?)</li>
+      <li>Schedule tomorrow's follow-ups</li>
+    </ul>
+    <div class="page">55</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Glossary</div>
+    <h2>Hotel-tech vocabulary</h2>
+    <ul>
+      <li><strong>PMS</strong> — Property Management System (system of record for bookings)</li>
+      <li><strong>OTA</strong> — Online Travel Agency (Booking.com, Expedia, Agoda, etc.)</li>
+      <li><strong>RFP</strong> — Request for Proposal (a corporate buyer's formal rate inquiry)</li>
+      <li><strong>FIT</strong> — Fully Independent Traveler (vs. group / package)</li>
+      <li><strong>ADR</strong> — Average Daily Rate</li>
+      <li><strong>RevPAR</strong> — Revenue per Available Room</li>
+      <li><strong>Stop-sale</strong> — Closing inventory to a specific channel or date</li>
+      <li><strong>Allotment</strong> — Pre-allocated rooms held for a partner (negotiated)</li>
+      <li><strong>Net rate</strong> — Wholesale rate (without commission baked in)</li>
+      <li><strong>Folio</strong> — A guest's full bill at check-out</li>
+      <li><strong>Card on file</strong> — Captured card held against a booking; never auto-charged</li>
+    </ul>
+    <div class="page">56</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Frequently asked questions</div>
+    <h2>Operator FAQ</h2>
+    <p><strong>Q: Can a guest book without an account?</strong><br>Yes. Step 4 captures the minimum required (name, country, email, phone). LS Privilege enrolment is optional.</p>
+    <p><strong>Q: What if Almosafer is missing from the OTA composer?</strong><br>Re-add via Admin → Stop-Sale → Channels → "Add channel". Almosafer is <strong>mandatory</strong> for the GCC market — never ship without it.</p>
+    <p><strong>Q: How do I add an Arabic-only offer?</strong><br>Offer copy is bilingual by default — fill in English, then Arabic. Public site shows the right language based on the visitor's selection.</p>
+    <p><strong>Q: Can the front desk see saved card numbers?</strong><br>Only the last four digits, only within 30 days, and only roles Owner / GM / FOM / Accounts. Audit log records every access.</p>
+    <p><strong>Q: How do I add a new staff role?</strong><br>Admin → Staff &amp; Access → "New role" → clone the closest existing role → tweak permissions → save.</p>
+    <div class="page">57</div>
+  </section>
+
+  <section class="slide cover">
+    <h1>Thank <em>you</em></h1>
+    <div class="subtitle">Questions? Reach the technical lead or open an issue against the project repository.</div>
+    <div class="meta">The Lodge Suites · Juffair · We Speak Your Language</div>
+    <div class="page">58</div>
+  </section>
+
+</div>
+
+<script>
+  // Toolbar: Back / Close handlers.
+  // ─────────────────────────────────────────────────────────────────────
+  // The deck is opened from the admin portal via `window.open(...)` so the
+  // common case is a popup-style tab where window.close() works. But the
+  // file may also be loaded directly (bookmark, deep-link from email) — in
+  // that case modern browsers block window.close() for security, so we
+  // fall back to going home.
+  function goBack() {
+    // history.length is at least 1 on every page (the current entry). A
+    // value of 1 means there's nothing to go back TO — that happens when
+    // the deck was opened in a fresh tab. Treat that the same as Close.
+    if (window.history.length > 1) {
+      window.history.back();
+    } else {
+      closeWindow();
+    }
+  }
+  function closeWindow() {
+    // Try the script-close first. Browsers only honour this when the tab
+    // was opened by a script — which is the path from the admin "Open"
+    // button. If we're still here after the call, fall back to /.
+    try { window.close(); } catch (_) {}
+    // If window.close() succeeded, this timer never fires (the page is
+    // gone). If it was blocked, navigate home as a graceful default so
+    // the user doesn't get stuck on a deck they wanted to dismiss.
+    window.setTimeout(function () { window.location.href = "/"; }, 100);
+  }
+
+  // Keyboard shortcut: Esc closes the deck — matches the convention that
+  // any modal-ish surface should respect Esc.
+  window.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape") closeWindow();
+  });
+</script>
+</body>
+</html>

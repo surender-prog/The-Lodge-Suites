@@ -1,0 +1,22 @@
+// Brand color tokens — refined luxury, art-deco influenced.
+export const C = {
+  bgDeep:     "#15161A",
+  bgCharcoal: "#1E2024",
+  bgElev:     "#26282E",
+  bgPanel:    "#2D2F36",
+  border:     "rgba(201,169,97,0.18)",
+  borderSoft: "rgba(245,241,232,0.08)",
+  gold:       "#C9A961",
+  goldBright: "#DDC183",
+  goldDeep:   "#9A7E40",
+  cream:      "#F5F1E8",
+  paper:      "#FAF7F0",
+  textOnDark: "#E8E2D4",
+  textMuted:  "#9B9588",
+  textDim:    "#6B665C",
+  navy:       "#1B3A5C",
+  burgundy:   "#5C2A2F",
+  success:    "#7FA970",
+  warn:       "#D4A04A",
+  danger:     "#B5564B",
+};

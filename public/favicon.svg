@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="10" fill="#15161A"/>
+  <g stroke="#9A7E40" stroke-width="0.6" opacity="0.5">
+    <line x1="0" y1="16" x2="64" y2="-16"/>
+    <line x1="0" y1="32" x2="64" y2="0"/>
+    <line x1="0" y1="48" x2="64" y2="16"/>
+    <line x1="0" y1="64" x2="64" y2="32"/>
+    <line x1="0" y1="80" x2="64" y2="48"/>
+    <line x1="0" y1="-16" x2="64" y2="16"/>
+    <line x1="0" y1="0" x2="64" y2="32"/>
+    <line x1="0" y1="16" x2="64" y2="48"/>
+    <line x1="0" y1="32" x2="64" y2="64"/>
+    <line x1="0" y1="48" x2="64" y2="80"/>
+  </g>
+  <text x="50%" y="50%" text-anchor="middle" dy=".34em"
+        font-family="Georgia, 'Cormorant Garamond', serif"
+        font-weight="600" font-size="28" fill="#C9A961"
+        letter-spacing="-0.5">LS</text>
+</svg>

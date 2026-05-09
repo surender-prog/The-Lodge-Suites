@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #15161A;
+  color: #E8E2D4;
+}
+
+/* In Arabic / RTL mode, swap font stacks so the brand serif/sans pair maps to */
+/* Amiri (display) + Tajawal (body) — both have proper Arabic glyph coverage. */
+html[dir="rtl"] body,
+html[lang="ar"] body {
+  font-family: "Tajawal", "Manrope", ui-sans-serif, system-ui, sans-serif;
+}
+
+html[dir="rtl"] *[style*="Cormorant Garamond"],
+html[lang="ar"] *[style*="Cormorant Garamond"] {
+  font-family: "Amiri", "Cormorant Garamond", serif !important;
+}
+
+html[dir="rtl"] *[style*="Manrope"],
+html[lang="ar"] *[style*="Manrope"] {
+  font-family: "Tajawal", "Manrope", sans-serif !important;
+}
+
+/* Tighter letter-spacing in Arabic — uppercase tracking looks awkward on Arabic glyphs. */
+html[dir="rtl"] *[style*="textTransform"],
+html[lang="ar"] *[style*="text-transform"] {
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: #15161A;
+}
+::-webkit-scrollbar-thumb {
+  background: #2D2F36;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #9A7E40;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7) sepia(1) saturate(3) hue-rotate(15deg);
+}
