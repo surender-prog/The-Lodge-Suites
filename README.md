@@ -130,9 +130,12 @@ cp .env.example .env.local
 #    VITE_SUPABASE_ANON_KEY=<your anon/public key>
 #    Both are visible at Supabase Studio → Project Settings → API.
 
-# 4. Apply the schema. Either:
-#    a) Open Supabase Studio → SQL Editor → New query → paste supabase/schema.sql → Run
-#    b) Or via CLI: supabase db push --file supabase/schema.sql
+# 4. Apply migrations in order. Either:
+#    a) Open Supabase Studio → SQL Editor → New query → paste each file:
+#       - supabase/migrations/001_phase1_core_booking_flow.sql  (typed rooms + 4 seeded suites)
+#       - supabase/migrations/002_phase2_full.sql                (singletons + 24 JSONB entity tables)
+#       - supabase/migrations/003_rls_anon_writes.sql            (anon insert policies for bookings + members)
+#    b) Or via CLI: supabase db push
 
 # 5. Restart the dev server — Vite reads env vars only on boot
 npm run dev
@@ -145,10 +148,14 @@ Confirm the connection by opening the browser console — you should *not* see t
 ```
 .env.example              # Template — committed to git
 .env.local                # Your real keys — gitignored, never commit
-src/lib/supabase.js       # Singleton client + withSupabase() guard
+src/lib/supabase.js       # Singleton client + cached session
+src/lib/dataSync.js       # Generic JSONB helpers + persistence hooks
+src/lib/rooms.js          # Typed-table mappers for the rooms slice
 supabase/
-  └── schema.sql          # Phase 1 schema (rooms, packages, extras,
-                          #   members, bookings, payments + RLS)
+  └── migrations/
+      ├── 001_phase1_core_booking_flow.sql   # Typed rooms (4 seeded)
+      ├── 002_phase2_full.sql                # singletons + 24 JSONB entity tables
+      └── 003_rls_anon_writes.sql            # Anon insert for bookings + members
 ```
 
 ### Phased migration plan
@@ -167,7 +174,7 @@ Each phase has its own `supabase/migrations/NNN_*.sql` file (to be created when 
 
 ### RLS notice
 
-The starter Row-Level Security policies in `schema.sql` are intentionally permissive (any authenticated user is treated as staff). **Tighten them before exposing the project to the public internet.** Specifically:
+The starter Row-Level Security policies in `001_phase1_*.sql` and `002_phase2_*.sql` are intentionally permissive (any authenticated user is treated as staff). **Tighten them before exposing the project to the public internet.** Specifically:
 
 - Replace `auth.role() = 'authenticated'` with a real staff/role check
 - The `bookings_anon_insert` policy lets any client create a booking; rate-limit it via Supabase Edge Functions or move booking creation behind an authenticated guest-portal flow
