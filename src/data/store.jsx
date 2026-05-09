@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useState, useCallback } from "react";
+import React, { createContext, useContext, useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { ROOMS as INITIAL_ROOMS } from "./rooms.js";
 import {
   notifyBookingCreated, notifyBookingStatusChange,
@@ -6,6 +6,13 @@ import {
   notifyPaymentReceived,
 } from "../utils/notifications.js";
 import { PACKAGES as INITIAL_PACKAGES } from "./packages.js";
+import { supabase, SUPABASE_CONFIGURED } from "../lib/supabase.js";
+import { fetchRooms, persistRoomPatch } from "../lib/rooms.js";
+import {
+  fetchAll, fetchSingleton,
+  useSlicePersistence, useSingletonPersistence,
+  upsertRow,
+} from "../lib/dataSync.js";
 
 // Loyalty tiers — fully self-contained shape so the admin can CRUD them.
 // Each tier carries its own name/intro/nightsLabel/icon/color/earnRate plus
@@ -3247,6 +3254,19 @@ export function describePackageConditions(pkg, roomLabelFor = (id) => id) {
 
 export function DataProvider({ children }) {
   const [rooms,     setRooms]     = useState(INITIAL_ROOMS);
+  // Hydrate rooms from Supabase on mount when configured. The bundled
+  // INITIAL_ROOMS stays as the source of truth for first paint (so the
+  // homepage never flashes empty), then we replace it with whatever the
+  // DB has. If the fetch fails or Supabase isn't set up, we silently keep
+  // the mock data — the warning lives in src/lib/supabase.js.
+  useEffect(() => {
+    let cancelled = false;
+    fetchRooms().then((rs) => {
+      if (cancelled || !rs) return;
+      setRooms(rs);
+    });
+    return () => { cancelled = true; };
+  }, []);
   const [packages,  setPackages]  = useState(INITIAL_PACKAGES.map(p => ({ ...p, active: true })));
   const [tiers,     setTiers]     = useState(INITIAL_TIERS);
   const [tax,         setTax]         = useState(INITIAL_TAX);
@@ -3440,8 +3460,109 @@ export function DataProvider({ children }) {
   const [maintenanceJobs,    setMaintenanceJobs]    = useState(SAMPLE_MAINTENANCE_JOBS);
   const [roomUnits,          setRoomUnits]          = useState(SAMPLE_ROOM_UNITS);
 
+  // ─── Supabase hydration + auto-persistence ─────────────────────────────
+  // Phase 2 wiring. Every slice below is mirrored to a JSONB-entity table
+  // (`bookings`, `invoices`, …) or a row in `singletons` (configs). On
+  // mount we fetch each one and replace local state. After hydration, any
+  // change to the slice is debounced (600ms) and bulk-replaced into its
+  // table — the operator sees instant local updates while the DB catches
+  // up in the background. When Supabase isn't configured everything
+  // short-circuits silently and the app stays on its bundled mock data.
+  const hydrated = useRef(false);
+  useEffect(() => {
+    if (!SUPABASE_CONFIGURED) { hydrated.current = true; return; }
+    let cancelled = false;
+    Promise.all([
+      // Entity slices
+      fetchAll("packages")           .then(d => { if (!cancelled && d && d.length > 0) setPackages(d); }),
+      fetchAll("extras")             .then(d => { if (!cancelled && d && d.length > 0) setExtras(d); }),
+      fetchAll("members")            .then(d => { if (!cancelled && d && d.length > 0) setMembers(d); }),
+      fetchAll("bookings")           .then(d => { if (!cancelled && d && d.length > 0) setBookings(d); }),
+      fetchAll("payments")           .then(d => { if (!cancelled && d && d.length > 0) setPayments(d); }),
+      fetchAll("invoices")           .then(d => { if (!cancelled && d && d.length > 0) setInvoices(d); }),
+      fetchAll("agreements")         .then(d => { if (!cancelled && d && d.length > 0) setAgreements(d); }),
+      fetchAll("agencies")           .then(d => { if (!cancelled && d && d.length > 0) setAgencies(d); }),
+      fetchAll("email_templates")    .then(d => { if (!cancelled && d && d.length > 0) setEmailTemplates(d); }),
+      fetchAll("rfps")               .then(d => { if (!cancelled && d && d.length > 0) setRfps(d); }),
+      fetchAll("channels")           .then(d => { if (!cancelled && d && d.length > 0) setChannels(d); }),
+      fetchAll("admin_users")        .then(d => { if (!cancelled && d && d.length > 0) setAdminUsers(d); }),
+      fetchAll("audit_logs")         .then(d => { if (!cancelled && d && d.length > 0) setAuditLogs(d); }),
+      fetchAll("prospects")          .then(d => { if (!cancelled && d && d.length > 0) setProspects(d); }),
+      fetchAll("activities")         .then(d => { if (!cancelled && d && d.length > 0) setActivities(d); }),
+      fetchAll("report_schedules")   .then(d => { if (!cancelled && d && d.length > 0) setReportSchedules(d); }),
+      fetchAll("maintenance_vendors").then(d => { if (!cancelled && d && d.length > 0) setMaintenanceVendors(d); }),
+      fetchAll("maintenance_jobs")   .then(d => { if (!cancelled && d && d.length > 0) setMaintenanceJobs(d); }),
+      fetchAll("room_units")         .then(d => { if (!cancelled && d && d.length > 0) setRoomUnits(d); }),
+      fetchAll("notifications")      .then(d => { if (!cancelled && d && d.length > 0) setNotifications(d); }),
+      fetchAll("messages")           .then(d => { if (!cancelled && d && d.length > 0) setMessages(d); }),
+      fetchAll("calendar_overrides") .then(d => { if (!cancelled && d && d.length > 0) setCalendar(d); }),
+      fetchAll("tax_patterns")       .then(d => { if (!cancelled && d && d.length > 0) setTaxPatterns(d); }),
+      // Singletons
+      fetchSingleton("hotel_info")        .then(v => { if (!cancelled && v) setHotelInfo(v); }),
+      fetchSingleton("smtp_config")       .then(v => { if (!cancelled && v) setSmtpConfig(v); }),
+      fetchSingleton("site_content")      .then(v => { if (!cancelled && v) setSiteContent(v); }),
+      fetchSingleton("loyalty")           .then(v => { if (!cancelled && v) setLoyalty(v); }),
+      fetchSingleton("tiers")             .then(v => { if (!cancelled && v) setTiers(v); }),
+      fetchSingleton("tax")               .then(v => { if (!cancelled && v) setTax(v); }),
+      fetchSingleton("active_tax_pattern").then(v => { if (!cancelled && v) setActivePatternId(v.id || v); }),
+      // Gallery — items are managed via setGalleryItems below; we treat
+      // it as an entity slice keyed off id for convenience.
+      // (The slice itself is initialised inside siteContent in this
+      // codebase; persistence is handled below at the slice level.)
+    ]).finally(() => {
+      if (!cancelled) hydrated.current = true;
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Slice → table mirroring. Each call below watches one piece of state
+  // and pushes changes to its table after hydration. Order matters only
+  // for clarity — hooks fire in declared order but the persistence is
+  // independent per slice.
+  useSlicePersistence("packages",            packages,           hydrated);
+  useSlicePersistence("extras",              extras,             hydrated);
+  useSlicePersistence("members",             members,            hydrated);
+  useSlicePersistence("bookings",            bookings,           hydrated);
+  useSlicePersistence("payments",            payments,           hydrated);
+  useSlicePersistence("invoices",            invoices,           hydrated);
+  useSlicePersistence("agreements",          agreements,         hydrated);
+  useSlicePersistence("agencies",            agencies,           hydrated);
+  useSlicePersistence("email_templates",     emailTemplates,     hydrated);
+  useSlicePersistence("rfps",                rfps,               hydrated);
+  useSlicePersistence("channels",            channels,           hydrated);
+  useSlicePersistence("admin_users",         adminUsers,         hydrated);
+  useSlicePersistence("audit_logs",          auditLogs,          hydrated);
+  useSlicePersistence("prospects",           prospects,          hydrated);
+  useSlicePersistence("activities",          activities,         hydrated);
+  useSlicePersistence("report_schedules",    reportSchedules,    hydrated);
+  useSlicePersistence("maintenance_vendors", maintenanceVendors, hydrated);
+  useSlicePersistence("maintenance_jobs",    maintenanceJobs,    hydrated);
+  useSlicePersistence("room_units",          roomUnits,          hydrated);
+  useSlicePersistence("notifications",       notifications,      hydrated);
+  useSlicePersistence("messages",            messages,           hydrated);
+  useSlicePersistence("calendar_overrides",  calendar,           hydrated);
+  useSlicePersistence("tax_patterns",        taxPatterns,        hydrated);
+  // Singletons
+  useSingletonPersistence("hotel_info",         hotelInfo,         hydrated);
+  useSingletonPersistence("smtp_config",        smtpConfig,        hydrated);
+  useSingletonPersistence("site_content",       siteContent,       hydrated);
+  useSingletonPersistence("loyalty",            loyalty,           hydrated);
+  useSingletonPersistence("tiers",              tiers,             hydrated);
+  useSingletonPersistence("tax",                tax,               hydrated);
+  // Store the bare string id; the hydration path already handles
+  // both { id: "..." } and "..." shapes for backward compat.
+  useSingletonPersistence("active_tax_pattern", activePatternId, hydrated);
+
   // Helpers — keep update logic centralized so admin components stay terse.
-  const updateRoom    = useCallback((id, patch) => setRooms(rs => rs.map(r => r.id === id ? { ...r, ...patch } : r)), []);
+  // Optimistic local update + fire-and-forget Supabase persistence.
+  // The UI feels instant; the DB write happens in the background. If the
+  // write fails (RLS, network, missing auth) the warning lands in the
+  // browser console and the local state stays — admin code can later
+  // surface a toast by awaiting the returned promise.
+  const updateRoom    = useCallback((id, patch) => {
+    setRooms(rs => rs.map(r => r.id === id ? { ...r, ...patch } : r));
+    return persistRoomPatch(id, patch);
+  }, []);
   const upsertPackage = useCallback((pkg) => setPackages(ps => {
     const i = ps.findIndex(p => p.id === pkg.id);
     if (i >= 0) { const next = [...ps]; next[i] = { ...next[i], ...pkg }; return next; }
@@ -3659,6 +3780,22 @@ export function DataProvider({ children }) {
       avatarColor: user.avatarColor, signedInAt: new Date().toISOString(),
     };
     setStaffSession(session);
+    // Best-effort Supabase auth so RLS-gated writes (rooms, bookings,
+    // members, etc.) actually land in the DB. We fire-and-forget so the
+    // local UI sign-in stays snappy; if Supabase auth fails the user is
+    // still logged in to the demo, just in degraded "writes won't
+    // persist" mode. The warning in the browser console tells the dev
+    // exactly what went wrong (commonly: matching auth.users row not
+    // created yet, or password mismatch).
+    if (SUPABASE_CONFIGURED) {
+      supabase.auth.signInWithPassword({ email: user.email, password }).then(({ error }) => {
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.warn("[supabase] auth failed for", user.email, "—", error.message,
+            "\nWrites to RLS-gated tables (rooms, bookings, etc.) will fall back to local state until you create a matching Supabase Auth user.");
+        }
+      });
+    }
     // Update lastLogin on the user record + write audit
     setAdminUsers(us => us.map(u => u.id === user.id ? { ...u, lastLogin: session.signedInAt } : u));
     setAuditLogs(ls => {
@@ -3679,6 +3816,11 @@ export function DataProvider({ children }) {
   }, [adminUsers]);
 
   const signOutStaff = useCallback(() => {
+    // Mirror the local sign-out into Supabase so the next visitor doesn't
+    // inherit the previous operator's session.
+    if (SUPABASE_CONFIGURED) {
+      supabase.auth.signOut().catch(() => { /* best-effort */ });
+    }
     setStaffSession((current) => {
       if (!current) return null;
       const startedAt = current.signedInAt ? new Date(current.signedInAt) : null;
@@ -3997,12 +4139,18 @@ export function DataProvider({ children }) {
 
   // Member CRUD. Member id encodes the tier letter (S/G/P) + a random suffix
   // so the format stays consistent with the seed data.
-  const addMember = useCallback((member) => setMembers(ms => {
+  const addMember = useCallback((member) => {
     const tierLetter = (member.tier || "silver")[0].toUpperCase();
     const id = member.id || `LS-${tierLetter}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
     const joined = member.joined || new Date().toISOString().slice(0, 10);
-    return [{ ...member, id, joined, points: member.points || 0, lifetimeNights: member.lifetimeNights || 0 }, ...ms];
-  }), []);
+    const saved = { ...member, id, joined, points: member.points || 0, lifetimeNights: member.lifetimeNights || 0 };
+    setMembers(ms => [saved, ...ms]);
+    // Direct write — anon LS Privilege joins go straight to DB (the bulk
+    // sync's UPDATE branch is anon-disallowed, so we can't rely on it
+    // for new-row inserts).
+    upsertRow("members", saved);
+    return saved;
+  }, []);
   const updateMember = useCallback((id, patch) => setMembers(ms => ms.map(m => m.id === id ? { ...m, ...patch } : m)), []);
   const removeMember = useCallback((id) => setMembers(ms => ms.filter(m => m.id !== id)), []);
 
@@ -4025,19 +4173,23 @@ export function DataProvider({ children }) {
   // since they're seeded from a constant — that's the safety net.
   const removeTaxPattern = useCallback((id) => setTaxPatterns(ps => ps.filter(p => p.id !== id)), []);
 
-  // Add a booking record (used by "Book on behalf" flows).
+  // Add a booking record (used by "Book on behalf" flows + the public
+  // walk-up booking modal).
   const addBooking = useCallback((booking) => {
-    let saved;
-    setBookings(bs => {
-      const id = booking.id || `LS-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-      saved = { ...booking, id };
-      return [saved, ...bs];
-    });
+    const id = booking.id || `LS-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const saved = { ...booking, id };
+    setBookings(bs => [saved, ...bs]);
+    // Direct write — anon homepage bookings go straight to DB (the bulk
+    // sync's UPDATE branch is anon-disallowed, so we can't rely on it).
+    // For authenticated callers this is also fine — they get the same
+    // row written + the eventual bulk-sync as a cleanup pass.
+    upsertRow("bookings", saved);
     // Emit notifications using the latest agreements/agencies/members so the
     // recipient resolver matches by accountId / agencyId / email correctly.
     setTimeout(() => {
       appendNotifications(notifyBookingCreated(saved, { agreements, agencies, members }));
     }, 0);
+    return saved;
   }, [agreements, agencies, members, appendNotifications]);
 
   // Booking update — diff status before/after to emit a status-change
@@ -4131,7 +4283,7 @@ export function DataProvider({ children }) {
     setTiers, updateTier, toggleBenefit,
     addTier, removeTier, moveTier,
     addBenefit, updateBenefit, removeBenefit,
-    setTax, taxPatterns, activePatternId, applyTaxPattern, saveTaxPattern, removeTaxPattern,
+    setTax, setTaxPatterns, taxPatterns, activePatternId, applyTaxPattern, saveTaxPattern, removeTaxPattern,
     setBookings,
     setInvoices, addInvoice, updateInvoice, removeInvoice,
     setPayments, addPayment, updatePayment,

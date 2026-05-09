@@ -4,14 +4,30 @@ import { C } from "../data/tokens.js";
 import { Field, GoldBtn, Input } from "../components/primitives.jsx";
 import { PhoneInput } from "../components/PhoneInput.jsx";
 import { useT } from "../i18n/LanguageContext.jsx";
+import { useData } from "../data/store.jsx";
 
 export const JoinModal = ({ open, onClose }) => {
   const t = useT();
+  const { addMember } = useData();
   const [data, setData] = useState({ name: "", email: "", phone: "", country: "Bahrain" });
   const [done, setDone] = useState(false);
+  const [memberId, setMemberId] = useState(null);
 
   if (!open) return null;
-  const submit = () => setDone(true);
+  const submit = () => {
+    // Persist the new Silver-tier member. addMember writes both to local
+    // state (so the booking modal's email-match auto-detect picks it up
+    // immediately) and to Supabase (anon insert allowed by RLS).
+    const saved = addMember({
+      name: data.name?.trim(),
+      email: data.email?.trim().toLowerCase(),
+      phone: data.phone,
+      country: data.country,
+      tier: "silver",
+    });
+    setMemberId(saved?.id || null);
+    setDone(true);
+  };
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto" style={{ backgroundColor: "rgba(0,0,0,0.85)", backdropFilter: "blur(8px)" }}>
@@ -32,7 +48,7 @@ export const JoinModal = ({ open, onClose }) => {
                 </div>
                 <h4 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.8rem", color: C.cream, marginTop: 8 }}>{t("join.successTitle")}</h4>
                 <p style={{ fontFamily: "'Manrope', sans-serif", color: C.textMuted, fontSize: "0.88rem", marginTop: 6, lineHeight: 1.6 }}>
-                  {t("join.successBody1")} <span style={{ color: C.gold, fontWeight: 600, direction: "ltr", display: "inline-block" }}>LS-S-{Math.random().toString(36).slice(2, 8).toUpperCase()}</span>. {t("join.successBody2")}
+                  {t("join.successBody1")} <span style={{ color: C.gold, fontWeight: 600, direction: "ltr", display: "inline-block" }}>{memberId || "—"}</span>. {t("join.successBody2")}
                 </p>
                 <div className="mt-6"><GoldBtn onClick={onClose}>{t("join.startBrowsing")}</GoldBtn></div>
               </div>

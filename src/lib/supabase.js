@@ -24,6 +24,14 @@ const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 let supabase = null;
 export const SUPABASE_CONFIGURED = Boolean(url && anonKey);
 
+// Live auth-session cache so synchronous code paths (the persistence
+// debouncer, mostly) can decide whether a Supabase write is worth
+// attempting. We populate it on boot and keep it in sync via the
+// onAuthStateChange listener — so signing in/out flips this without
+// any extra wiring in store.jsx.
+let cachedSession = null;
+export function hasSupabaseSession() { return !!cachedSession; }
+
 if (SUPABASE_CONFIGURED) {
   supabase = createClient(url, anonKey, {
     auth: {
@@ -35,6 +43,9 @@ if (SUPABASE_CONFIGURED) {
       detectSessionInUrl: true,
     },
   });
+  // Hydrate the session cache asynchronously and keep it current.
+  supabase.auth.getSession().then(({ data }) => { cachedSession = data?.session || null; });
+  supabase.auth.onAuthStateChange((_event, session) => { cachedSession = session || null; });
 } else if (typeof window !== "undefined") {
   // Visible warning in the browser console, but the app keeps running on
   // its in-memory mock data. This is the right default for the current
