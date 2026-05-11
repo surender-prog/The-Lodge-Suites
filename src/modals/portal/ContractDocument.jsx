@@ -312,7 +312,7 @@ export function ContractDocumentView({ contract, kind }) {
       {/* Signatures */}
       <div style={{ marginTop: 40, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 56 }}>
         <div>
-          <div style={{ borderTop: "1px solid #15161A", paddingTop: 6, fontSize: "0.7rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "#666", fontWeight: 700 }}>For The Lodge Suites</div>
+          <div style={{ borderTop: "1px solid #15161A", paddingTop: 6, fontSize: "0.7rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "#666", fontWeight: 700 }}>For {HOTEL.name}</div>
           <div style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: "1.1rem", fontWeight: 600, marginTop: 18 }}>Aparajeet Mathad</div>
           <div style={{ fontSize: "0.78rem", color: "#444" }}>Front Office Manager</div>
           <div style={{ fontSize: "0.78rem", color: "#444" }}>{HOTEL.phone} · {HOTEL.emailFom}</div>
@@ -530,7 +530,7 @@ export function buildContractHtml(contract, kind, { hotel } = {}) {
 
   <div class="sig">
     <div>
-      <div class="line">For The Lodge Suites</div>
+      <div class="line">For ${escapeHtml(HOTEL.name)}</div>
       <div class="display" style="font-size:1.1rem; margin-top:18px;">Aparajeet Mathad</div>
       <div class="muted" style="font-size:0.78rem;">Front Office Manager</div>
       <div class="muted" style="font-size:0.78rem;">${escapeHtml(HOTEL.phone)} · ${escapeHtml(HOTEL.emailFom)}</div>

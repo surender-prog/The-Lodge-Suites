@@ -100,7 +100,14 @@ const PAYMENT_TERM_OPTIONS = [
 ];
 
 export const RfpModal = ({ open, onClose }) => {
-  const { addRfp } = useData();
+  const { addRfp, hotelInfo } = useData();
+  // Sidebar "Prefer to talk first?" contact pulls from the live property
+  // identity so admin edits in Property Info reach this page. Existing
+  // hardcoded strings are kept as fallbacks.
+  const phoneDisplay = hotelInfo?.phone || "+973 1616 8146";
+  const phoneHref    = `tel:${phoneDisplay.replace(/[^+\d]/g, "")}`;
+  const salesEmail   = hotelInfo?.emailSales || "sales@thelodgesuites.com";
+  const salesHref    = `mailto:${salesEmail}`;
   const [draft, setDraft] = useState({
     account: "", industry: "",
     contactName: "", contactRole: "",
@@ -587,13 +594,13 @@ export const RfpModal = ({ open, onClose }) => {
                   }}>Prefer to talk first?</div>
                   <div className="mt-2 flex flex-col gap-1.5"
                     style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem", color: C.bgDeep }}>
-                    <a href="tel:+97316168146" className="inline-flex items-center gap-2"
+                    <a href={phoneHref} className="inline-flex items-center gap-2"
                       style={{ color: C.goldDeep, textDecoration: "none" }}>
-                      <Phone size={12} /> +973 1616 8146
+                      <Phone size={12} /> {phoneDisplay}
                     </a>
-                    <a href="mailto:sales@thelodgesuites.com" className="inline-flex items-center gap-2"
+                    <a href={salesHref} className="inline-flex items-center gap-2"
                       style={{ color: C.goldDeep, textDecoration: "none" }}>
-                      <Mail size={12} /> sales@thelodgesuites.com
+                      <Mail size={12} /> {salesEmail}
                     </a>
                   </div>
                 </div>

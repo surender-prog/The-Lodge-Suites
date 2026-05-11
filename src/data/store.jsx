@@ -3468,10 +3468,22 @@ export function DataProvider({ children }) {
   // table — the operator sees instant local updates while the DB catches
   // up in the background. When Supabase isn't configured everything
   // short-circuits silently and the app stays on its bundled mock data.
+  //
+  // Re-hydration on auth state change: most entity tables are RLS-gated,
+  // so an anon fetch returns []. We treat that as "keep local mock" so
+  // first paint isn't empty — but it means the local view is stale after
+  // sign-in until we re-fetch. The `hydrationVersion` counter below
+  // bumps on Supabase auth events; the effect re-runs and replays every
+  // fetch under the new (authenticated) session, replacing mock with
+  // the real DB content.
   const hydrated = useRef(false);
+  const [hydrationVersion, setHydrationVersion] = useState(0);
   useEffect(() => {
     if (!SUPABASE_CONFIGURED) { hydrated.current = true; return; }
     let cancelled = false;
+    // Pause persistence while we replay the fetches — otherwise a slice
+    // re-render mid-fetch could trigger a stray bulkReplace.
+    hydrated.current = false;
     Promise.all([
       // Entity slices
       fetchAll("packages")           .then(d => { if (!cancelled && d && d.length > 0) setPackages(d); }),
@@ -3513,6 +3525,36 @@ export function DataProvider({ children }) {
       if (!cancelled) hydrated.current = true;
     });
     return () => { cancelled = true; };
+  }, [hydrationVersion]);
+
+  // When the Supabase auth state changes (sign-in / sign-out / initial
+  // session restore from localStorage), bump the version so the
+  // hydration effect above replays every fetch under the new session.
+  //
+  // Gotcha: Supabase fires INITIAL_SESSION as soon as the module-level
+  // client resolves getSession(), which is BEFORE React effects run. So
+  // a listener registered in this useEffect always misses INITIAL_SESSION.
+  // We work around that by explicitly calling getSession() once at
+  // registration time — if there's already a session, we re-hydrate
+  // immediately. The listener then catches all subsequent transitions
+  // (SIGNED_IN after explicit sign-in, SIGNED_OUT on sign-out, etc.).
+  useEffect(() => {
+    if (!SUPABASE_CONFIGURED) return;
+    let stillMounted = true;
+    const sub = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "TOKEN_REFRESHED") {
+        setHydrationVersion((v) => v + 1);
+      }
+    });
+    supabase.auth.getSession().then(({ data }) => {
+      if (stillMounted && data?.session) {
+        setHydrationVersion((v) => v + 1);
+      }
+    });
+    return () => {
+      stillMounted = false;
+      sub?.data?.subscription?.unsubscribe?.();
+    };
   }, []);
 
   // Slice → table mirroring. Each call below watches one piece of state

@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { C } from "../data/tokens.js";
 import { IMG } from "../data/images.js";
+import { useData } from "../data/store.jsx";
 import { EditorialPage, PageSection } from "./EditorialPage.jsx";
 import { pushToast } from "./portal/admin/ui.jsx";
 import {
@@ -125,6 +126,14 @@ const ASSETS = [
 ];
 
 export const PressModal = ({ open, onClose }) => {
+  const { hotelInfo } = useData();
+  // Press relations contact card is rendered from the live hotelInfo so an
+  // admin edit in Property Info propagates to this page. Hardcoded strings
+  // remain as fallbacks for the rare case where hotelInfo isn't loaded.
+  const phoneDisplay    = hotelInfo?.phone    || "+973 1616 8146";
+  const phoneHref       = `tel:${phoneDisplay.replace(/[^+\d]/g, "")}`;
+  const whatsappDisplay = hotelInfo?.whatsapp || "+973 3306 9641";
+  const whatsappHref    = `https://wa.me/${whatsappDisplay.replace(/[^\d]/g, "")}`;
   // Per-asset busy state so the photo ZIP can show a "Bundling N/M images" hint.
   const [busyId, setBusyId] = useState(null);
   const [photoProgress, setPhotoProgress] = useState(null);
@@ -410,11 +419,11 @@ export const PressModal = ({ open, onClose }) => {
               </div>
               <div>
                 <div style={{ color: C.gold, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>Phone</div>
-                <a href="tel:+97316168146" style={{ color: C.cream, direction: "ltr", textDecoration: "none" }}>+973 1616 8146</a>
+                <a href={phoneHref} style={{ color: C.cream, direction: "ltr", textDecoration: "none" }}>{phoneDisplay}</a>
               </div>
               <div>
                 <div style={{ color: C.gold, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>WhatsApp</div>
-                <a href="https://wa.me/97333069641" target="_blank" rel="noopener noreferrer" style={{ color: C.cream, direction: "ltr", textDecoration: "none" }}>+973 3306 9641</a>
+                <a href={whatsappHref} target="_blank" rel="noopener noreferrer" style={{ color: C.cream, direction: "ltr", textDecoration: "none" }}>{whatsappDisplay}</a>
               </div>
               <div>
                 <div style={{ color: C.gold, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>Hours</div>

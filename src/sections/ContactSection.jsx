@@ -7,9 +7,22 @@ import { Crosshatch } from "../components/Crosshatch.jsx";
 import { Icon } from "../components/Icon.jsx";
 import { SectionLabel, SectionTitle } from "../components/primitives.jsx";
 import { useT } from "../i18n/LanguageContext.jsx";
+import { useData } from "../data/store.jsx";
 
 export const ContactSection = () => {
   const t = useT();
+  const { hotelInfo } = useData();
+  // Live values from Property Info admin override the i18n defaults. Each
+  // field falls back to the translation string so the page never goes blank
+  // mid-render if `hotelInfo` is somehow unavailable.
+  const address1     = hotelInfo?.address || t("contact.addressLine1");
+  const address2     = hotelInfo?.area    || t("contact.addressLine2");
+  const address3     = hotelInfo?.country || t("contact.addressLine3");
+  const phoneDisplay = hotelInfo?.phone   || "+973 1616 8146";
+  const phoneHref    = `tel:${phoneDisplay.replace(/[^+\d]/g, "")}`;
+  const emailDisplay = hotelInfo?.emailReservations || hotelInfo?.email || "reservations@thelodgesuites.bh";
+  const emailHref    = `mailto:${emailDisplay}`;
+  const mapName      = hotelInfo?.name    || t("contact.mapName");
   return (
     <section id="contact" className="py-24 px-6 relative" style={{ backgroundColor: C.bgDeep }}>
       <Crosshatch opacity={0.07} />
@@ -22,19 +35,19 @@ export const ContactSection = () => {
               <div>
                 <div style={{ color: C.gold, fontFamily: "'Manrope', sans-serif", fontSize: "0.65rem", letterSpacing: "0.28em", textTransform: "uppercase", marginBottom: 8, fontWeight: 600 }}>{t("contact.addressLabel")}</div>
                 <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.3rem", color: C.cream, lineHeight: 1.4 }}>
-                  {t("contact.addressLine1")}<br />
-                  {t("contact.addressLine2")}<br />
-                  {t("contact.addressLine3")}
+                  {address1}<br />
+                  {address2}<br />
+                  {address3}
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <div style={{ color: C.gold, fontFamily: "'Manrope', sans-serif", fontSize: "0.65rem", letterSpacing: "0.28em", textTransform: "uppercase", marginBottom: 8, fontWeight: 600 }}>{t("contact.phoneLabel")}</div>
-                  <a href="tel:+97316168146" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", color: C.cream, direction: "ltr", display: "inline-block" }}>+973 1616 8146</a>
+                  <a href={phoneHref} style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", color: C.cream, direction: "ltr", display: "inline-block" }}>{phoneDisplay}</a>
                 </div>
                 <div>
                   <div style={{ color: C.gold, fontFamily: "'Manrope', sans-serif", fontSize: "0.65rem", letterSpacing: "0.28em", textTransform: "uppercase", marginBottom: 8, fontWeight: 600 }}>{t("contact.reservationsLabel")}</div>
-                  <a href="mailto:reservations@thelodgesuites.bh" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.05rem", color: C.cream, direction: "ltr", display: "inline-block" }}>reservations@thelodgesuites.bh</a>
+                  <a href={emailHref} style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.05rem", color: C.cream, direction: "ltr", display: "inline-block" }}>{emailDisplay}</a>
                 </div>
               </div>
               <div>
@@ -59,7 +72,7 @@ export const ContactSection = () => {
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="text-center p-8" style={{ backgroundColor: "rgba(21,22,26,0.92)", border: `1px solid ${C.gold}` }}>
                   <MapPin size={28} style={{ color: C.gold, margin: "0 auto" }} />
-                  <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: C.cream, marginTop: 12 }}>{t("contact.mapName")}</div>
+                  <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: C.cream, marginTop: 12 }}>{mapName}</div>
                   <div style={{ fontFamily: "'Manrope', sans-serif", color: C.textMuted, fontSize: "0.78rem", marginTop: 4 }}>{t("contact.mapCoords")}</div>
                   <a href="#" style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 14, color: C.gold, fontSize: "0.7rem", letterSpacing: "0.2em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 600 }}>
                     {t("contact.openMaps")} <ArrowUpRight size={12} />

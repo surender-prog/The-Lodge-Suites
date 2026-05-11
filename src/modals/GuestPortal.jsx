@@ -276,7 +276,10 @@ function GuestPortalInner({ onClose }) {
 // ---------------------------------------------------------------------------
 function LoginPanel({ data, onSignIn }) {
   const p = usePalette();
-  const { agreements, agencies, members } = data;
+  const { agreements, agencies, members, hotelInfo } = data;
+  // Forgot-password mailto uses the live front-desk email from Property
+  // Info, falling back to the historic mailbox if hotelInfo isn't loaded.
+  const supportEmail = (hotelInfo && hotelInfo.email) || "frontoffice@thelodgesuites.com";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -426,7 +429,7 @@ function LoginPanel({ data, onSignIn }) {
               <LogIn size={14} /> Sign in
             </button>
             <div className="text-center" style={{ color: p.textMuted, fontSize: "0.78rem", marginTop: 4 }}>
-              Forgot password? <a href={`mailto:frontoffice@thelodgesuites.com?subject=Portal%20password%20reset`} style={{ color: p.accent, fontWeight: 700 }}>Email front office →</a>
+              Forgot password? <a href={`mailto:${supportEmail}?subject=Portal%20password%20reset`} style={{ color: p.accent, fontWeight: 700 }}>Email front office →</a>
             </div>
           </form>
         </div>
@@ -1428,8 +1431,21 @@ function BookingDetail({
           {payments.length > 0 && onOpenReceipts && (
             <QuickAction icon={ReceiptIcon} label={`Payment receipts · ${payments.length}`} hint={`Captured ${fmtBhd(totalPaidPayments)}`} onClick={onOpenReceipts} />
           )}
-          <QuickAction icon={Phone} label="Call the front desk" hint="+973 1616 8146 · 24h" onClick={() => { window.location.href = "tel:+97316168146"; }} />
-          <QuickAction icon={Mail} label="Email reservations" hint="reservations@thelodgesuites.com" onClick={() => { window.location.href = "mailto:reservations@thelodgesuites.com?subject=" + encodeURIComponent(`Booking ${booking.id}`); }} />
+          {(() => {
+            // Derive live property contact details so an admin edit in
+            // Property Info shows up on every booking detail page. Falls
+            // back to the historic literals when hotelInfo isn't loaded.
+            const frontDeskPhone = (hotelInfo && hotelInfo.phone) || "+973 1616 8146";
+            const frontDeskTel   = `tel:${frontDeskPhone.replace(/[^+\d]/g, "")}`;
+            const reservationsEmail = (hotelInfo && (hotelInfo.emailReservations || hotelInfo.email)) || "reservations@thelodgesuites.com";
+            const reservationsMail  = `mailto:${reservationsEmail}?subject=${encodeURIComponent(`Booking ${booking.id}`)}`;
+            return (
+              <>
+                <QuickAction icon={Phone} label="Call the front desk" hint={`${frontDeskPhone} · 24h`} onClick={() => { window.location.href = frontDeskTel; }} />
+                <QuickAction icon={Mail} label="Email reservations" hint={reservationsEmail} onClick={() => { window.location.href = reservationsMail; }} />
+              </>
+            );
+          })()}
           {policyText && (
             <div className="mt-4 p-3" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
               <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700 }}>
@@ -1972,6 +1988,11 @@ function MemberProfileTab({ session, member, updateMember, setSession }) {
 // ---------------------------------------------------------------------------
 function MembershipPassCard({ member, tierMeta }) {
   const p = usePalette();
+  const { hotelInfo } = useData();
+  // Property name shown next to the member ID — read from the live admin
+  // record so a rename in Property Info propagates here. Falls back to the
+  // membership-pass stub when hotelInfo isn't available.
+  const hotelName = (hotelInfo && hotelInfo.name) || hotel.name;
   const tier = tierVisuals(member.tier);
   const [busy, setBusy] = useState(null); // "pkpass" | "png" | "share"
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
@@ -2161,7 +2182,7 @@ function MembershipPassCard({ member, tierMeta }) {
         <div>
           <p style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.92rem", lineHeight: 1.6 }}>
             Save your LS Privilege card as an image and share it anywhere. Front-desk colleagues at{" "}
-            <strong style={{ color: p.textPrimary }}>{hotel.name}</strong> will look you up by the QR code or your member ID{" "}
+            <strong style={{ color: p.textPrimary }}>{hotelName}</strong> will look you up by the QR code or your member ID{" "}
             <strong style={{ color: p.accent, letterSpacing: "0.04em" }}>{member.id}</strong>.
           </p>
 

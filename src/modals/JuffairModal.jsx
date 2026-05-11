@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { C } from "../data/tokens.js";
 import { IMG } from "../data/images.js";
+import { useData } from "../data/store.jsx";
 import { EditorialPage, PageSection } from "./EditorialPage.jsx";
 
 // ---------------------------------------------------------------------------
@@ -48,6 +49,20 @@ const RHYTHMS = [
 ];
 
 export const JuffairModal = ({ open, onClose }) => {
+  const { hotelInfo } = useData();
+  // Live property identity from the admin Property Info section, with the
+  // hardcoded strings preserved as fallbacks so the page never goes blank.
+  const phoneDisplay = hotelInfo?.phone || "+973 1616 8146";
+  const phoneHref    = `tel:${phoneDisplay.replace(/[^+\d]/g, "")}`;
+  const emailDisplay = hotelInfo?.email || "frontoffice@thelodgesuites.com";
+  const emailHref    = `mailto:${emailDisplay}`;
+  const mapName      = hotelInfo?.name  || "The Lodge Suites";
+  // Address shown as a two-line stylized heading: line 1 is the street
+  // address, line 2 the area/district. Best-effort mapping — the Property
+  // Info admin doesn't formally split these for display, so we use the
+  // existing field convention (address = street, area = district).
+  const addressLine1 = hotelInfo?.address || "Building 916, Road 4019";
+  const addressLine2 = hotelInfo?.area    || "Block 340 · Juffair";
   return (
     <EditorialPage
       open={open}
@@ -214,8 +229,8 @@ export const JuffairModal = ({ open, onClose }) => {
               fontFamily: "'Cormorant Garamond', serif", fontSize: "2rem",
               fontWeight: 400, color: C.cream, lineHeight: 1.1, marginTop: 10,
             }}>
-              Building 916, Road 4019<br />
-              <span style={{ fontStyle: "italic", color: C.gold }}>Block 340 · Juffair</span>
+              {addressLine1}<br />
+              <span style={{ fontStyle: "italic", color: C.gold }}>{addressLine2}</span>
             </h3>
             <p style={{ color: C.textOnDark, fontFamily: "'Manrope', sans-serif", fontSize: "0.9rem", lineHeight: 1.75, marginTop: 16, opacity: 0.85 }}>
               On Shabab Avenue, three blocks from the seafront and within walking distance of the embassy quarter. Front desk staffed 24 hours; valet parking available on arrival.
@@ -223,11 +238,11 @@ export const JuffairModal = ({ open, onClose }) => {
             <div className="mt-6 grid grid-cols-2 gap-5" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem" }}>
               <div>
                 <div style={{ color: C.gold, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>Phone</div>
-                <a href="tel:+97316168146" style={{ color: C.cream, direction: "ltr" }}>+973 1616 8146</a>
+                <a href={phoneHref} style={{ color: C.cream, direction: "ltr" }}>{phoneDisplay}</a>
               </div>
               <div>
                 <div style={{ color: C.gold, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>Email</div>
-                <a href="mailto:frontoffice@thelodgesuites.com" style={{ color: C.cream }}>frontoffice@thelodgesuites.com</a>
+                <a href={emailHref} style={{ color: C.cream }}>{emailDisplay}</a>
               </div>
             </div>
             <a href="https://maps.google.com/?q=The+Lodge+Suites+Juffair+Bahrain"
@@ -243,7 +258,7 @@ export const JuffairModal = ({ open, onClose }) => {
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="text-center p-6" style={{ backgroundColor: "rgba(21,22,26,0.92)", border: `1px solid ${C.gold}` }}>
                 <MapPin size={26} style={{ color: C.gold, margin: "0 auto" }} />
-                <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.3rem", color: C.cream, marginTop: 10 }}>The Lodge Suites</div>
+                <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.3rem", color: C.cream, marginTop: 10 }}>{mapName}</div>
                 <div style={{ fontFamily: "'Manrope', sans-serif", color: C.textMuted, fontSize: "0.74rem", marginTop: 2 }}>26.221°N · 50.595°E</div>
               </div>
             </div>
