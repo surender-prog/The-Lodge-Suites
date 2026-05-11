@@ -130,10 +130,14 @@ export const PressModal = ({ open, onClose }) => {
   // Press relations contact card is rendered from the live hotelInfo so an
   // admin edit in Property Info propagates to this page. Hardcoded strings
   // remain as fallbacks for the rare case where hotelInfo isn't loaded.
-  const phoneDisplay    = hotelInfo?.phone    || "+973 1616 8146";
-  const phoneHref       = `tel:${phoneDisplay.replace(/[^+\d]/g, "")}`;
-  const whatsappDisplay = hotelInfo?.whatsapp || "+973 3306 9641";
-  const whatsappHref    = `https://wa.me/${whatsappDisplay.replace(/[^\d]/g, "")}`;
+  const phoneDisplay     = hotelInfo?.phone    || "+973 1616 8146";
+  const phoneHref        = `tel:${phoneDisplay.replace(/[^+\d]/g, "")}`;
+  const whatsappDisplay  = hotelInfo?.whatsapp || "+973 3306 9641";
+  const whatsappHref     = `https://wa.me/${whatsappDisplay.replace(/[^\d]/g, "")}`;
+  const pressEmail       = hotelInfo?.emailPress       || "press@thelodgesuites.com";
+  const pressMailtoHref  = `mailto:${pressEmail}?subject=Press%20enquiry`;
+  const spokespersonName  = hotelInfo?.spokespersonName  || "Aparajeet Mathad";
+  const spokespersonTitle = hotelInfo?.spokespersonTitle || "Front Office Manager";
   // Per-asset busy state so the photo ZIP can show a "Bundling N/M images" hint.
   const [busyId, setBusyId] = useState(null);
   const [photoProgress, setPhotoProgress] = useState(null);
@@ -158,7 +162,7 @@ export const PressModal = ({ open, onClose }) => {
         await asset.download();
       }
     } catch (e) {
-      pushToast({ message: `Couldn't generate ${asset.title.toLowerCase()}. Try again or email press@thelodgesuites.com.`, kind: "warn" });
+      pushToast({ message: `Couldn't generate ${asset.title.toLowerCase()}. Try again or email ${pressEmail}.`, kind: "warn" });
     } finally {
       setBusyId(null);
       setPhotoProgress(null);
@@ -176,7 +180,7 @@ export const PressModal = ({ open, onClose }) => {
       heroImage={IMG.lobbyReception}
       cta={
         <a
-          href="mailto:press@thelodgesuites.com?subject=Press%20enquiry"
+          href={pressMailtoHref}
           style={{
             padding: "0.95rem 1.6rem", backgroundColor: C.gold, color: C.bgDeep,
             fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem",
@@ -213,7 +217,7 @@ export const PressModal = ({ open, onClose }) => {
                 backgroundColor: `${C.gold}1F`, border: `1px solid ${C.gold}`,
                 color: C.goldDeep,
               }}><User2 size={16} /></span>
-              <span><strong style={{ color: C.bgDeep }}>Aparajeet Mathad</strong> · Front Office Manager, The Lodge Suites</span>
+              <span><strong style={{ color: C.bgDeep }}>{spokespersonName}</strong> · {spokespersonTitle}, {hotelInfo?.name || "The Lodge Suites"}</span>
             </footer>
           </blockquote>
         </div>
@@ -415,7 +419,7 @@ export const PressModal = ({ open, onClose }) => {
             <div className="mt-7 grid grid-cols-1 sm:grid-cols-2 gap-5" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}>
               <div>
                 <div style={{ color: C.gold, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>Email</div>
-                <a href="mailto:press@thelodgesuites.com" style={{ color: C.cream, textDecoration: "none" }}>press@thelodgesuites.com</a>
+                <a href={`mailto:${pressEmail}`} style={{ color: C.cream, textDecoration: "none" }}>{pressEmail}</a>
               </div>
               <div>
                 <div style={{ color: C.gold, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>Phone</div>
@@ -436,10 +440,10 @@ export const PressModal = ({ open, onClose }) => {
               Spokesperson
             </div>
             <h3 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: C.bgDeep, fontWeight: 500, marginTop: 10, lineHeight: 1.15 }}>
-              Aparajeet Mathad
+              {spokespersonName}
             </h3>
             <div style={{ color: C.goldDeep, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginTop: 4 }}>
-              Front Office Manager
+              {spokespersonTitle}
             </div>
             <p style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.88rem", lineHeight: 1.7, marginTop: 14 }}>
               Available for interviews on hospitality operations in Bahrain, long-stay travel, the Juffair district's transformation, and the boutique-five-star category. Comfortable on-record in English and Hindi.

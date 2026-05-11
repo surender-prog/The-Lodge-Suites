@@ -2003,7 +2003,7 @@ function MembershipPassCard({ member, tierMeta }) {
     if (busy) return;
     setBusy("pkpass");
     try {
-      const blob = await buildPkpassBlob(member, tierMeta);
+      const blob = await buildPkpassBlob({ member, tierMeta, hotel: hotelInfo });
       downloadBlob(blob, `${slug}-${member.id}.pkpass`);
       pushToast({ message: "Membership pass downloaded · open it on iPhone to add to Wallet" });
     } catch (e) {
@@ -2015,7 +2015,7 @@ function MembershipPassCard({ member, tierMeta }) {
     if (busy) return;
     setBusy("png");
     try {
-      const bytes = await buildMembershipCardPng(member, tierMeta);
+      const bytes = await buildMembershipCardPng({ member, tierMeta, hotel: hotelInfo });
       const blob = new Blob([bytes], { type: "image/png" });
       downloadBlob(blob, `${slug}-${member.id}-card.png`);
       pushToast({ message: "Card image downloaded" });
@@ -2030,11 +2030,11 @@ function MembershipPassCard({ member, tierMeta }) {
     try {
       // Build both the pkpass and the PNG so the system share sheet has
       // attachable files on platforms that support `navigator.canShare({files})`.
-      const passBlob = await buildPkpassBlob(member, tierMeta);
-      const pngBytes = await buildMembershipCardPng(member, tierMeta);
+      const passBlob = await buildPkpassBlob({ member, tierMeta, hotel: hotelInfo });
+      const pngBytes = await buildMembershipCardPng({ member, tierMeta, hotel: hotelInfo });
       const passFile = new File([passBlob], `${slug}-${member.id}.pkpass`, { type: "application/vnd.apple.pkpass" });
       const pngFile  = new File([pngBytes], `${slug}-${member.id}.png`,    { type: "image/png" });
-      const ok = await nativeShare(member, [passFile, pngFile]);
+      const ok = await nativeShare({ member, files: [passFile, pngFile], hotel: hotelInfo });
       if (!ok) {
         // Fallback: open the share menu so the operator picks WhatsApp/Email/etc.
         setShareMenuOpen(true);
@@ -2047,20 +2047,20 @@ function MembershipPassCard({ member, tierMeta }) {
   };
 
   const openWhatsApp = () => {
-    window.open(whatsAppShareUrl(member), "_blank", "noopener,noreferrer");
+    window.open(whatsAppShareUrl({ member, hotel: hotelInfo }), "_blank", "noopener,noreferrer");
     setShareMenuOpen(false);
     pushToast({ message: "Tip · download the .pkpass first to attach in WhatsApp" });
   };
 
   const openEmail = () => {
-    window.location.href = emailShareUrl(member);
+    window.location.href = emailShareUrl({ member, hotel: hotelInfo });
     setShareMenuOpen(false);
     pushToast({ message: "Tip · download the .pkpass first to attach to the email" });
   };
 
   const copyShareText = async () => {
     try {
-      await navigator.clipboard.writeText(buildShareText(member));
+      await navigator.clipboard.writeText(buildShareText({ member, hotel: hotelInfo }));
       pushToast({ message: "Copied to clipboard" });
     } catch {
       pushToast({ message: "Clipboard not available — copy manually", kind: "warn" });
@@ -2101,7 +2101,7 @@ function MembershipPassCard({ member, tierMeta }) {
           <div className="px-5 pt-5 flex items-start justify-between">
             <div>
               <div style={{ color: tier.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.56rem", letterSpacing: "0.3em", textTransform: "uppercase", fontWeight: 700 }}>
-                The Lodge Suites
+                {hotelName}
               </div>
               <div style={{ color: "#FEF8E6", fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic", fontSize: "1.45rem", marginTop: 2, lineHeight: 1 }}>
                 LS Privilege
@@ -2197,7 +2197,7 @@ function MembershipPassCard({ member, tierMeta }) {
             <AlertCircle size={14} style={{ color: p.warn, marginTop: 2, flexShrink: 0 }} />
             <div style={{ color: p.textSecondary, fontSize: "0.82rem", lineHeight: 1.55 }}>
               <strong style={{ color: p.textPrimary }}>Apple Wallet pending.</strong> Adding to Wallet needs a signature from
-              The Lodge Suites' Apple Pass Type ID certificate, which lives on a hotel signing service that isn't wired up yet.
+              {" "}{hotelName}'s Apple Pass Type ID certificate, which lives on a hotel signing service that isn't wired up yet.
               Until then, use <em>Save as image</em> or <em>Share</em> below — they work on every device.
             </div>
           </div>

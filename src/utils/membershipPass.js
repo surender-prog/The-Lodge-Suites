@@ -13,19 +13,31 @@
 // generated manifest.json. No other UI changes required.
 //
 // Per CLAUDE.md the project is mocked — this stays consistent with that.
+//
+// Hotel identity is passed in by the caller via the `hotel` argument so the
+// live `useData().hotelInfo` flows into the pass, the PNG card, and every
+// share helper. A `FALLBACK_HOTEL` is kept as a defensive default for the
+// rare boot-time case where the data store isn't yet hydrated — it matches
+// the values that used to live as inline constants here so an unmodified
+// caller renders identical output pre/post-refactor.
 
 import { encodeZip, sha1Hex, downloadBlob as zipDownloadBlob } from "./zipEncoder.js";
 
 // ---------------------------------------------------------------------------
-// Hotel + brand constants
+// Fallback hotel identity — used when the caller doesn't pass `hotel`, or
+// when an individual field is missing on the supplied object. Keeping this
+// in lock-step with the original literals ensures parity with the pre-
+// refactor output for unmodified consumers.
 // ---------------------------------------------------------------------------
-const HOTEL = {
+const FALLBACK_HOTEL = {
   name: "The Lodge Suites",
   tagline: "We Speak Your Language",
   address: "Building 916 · Road 4019 · Block 340 · Juffair · Manama · Bahrain",
   phone: "+973 1616 8146",
   email: "frontoffice@thelodgesuites.com",
   website: "https://www.thelodgesuites.com",
+  passTypeId: "pass.com.thelodgesuites.privilege",
+  appleTeamId: "TEAM_PLACEHOLDER",
 };
 
 // Tier visuals for the wallet pass body. The accent comes through as the
@@ -36,9 +48,32 @@ const TIER_VISUALS = {
   platinum: { label: "Platinum", accent: "#E5E4E2", deep: "#A0A6AC" },
 };
 
-const PASS_TYPE_ID    = "pass.com.thelodgesuites.privilege";
-const ORG_NAME        = HOTEL.name;
-const TEAM_IDENTIFIER = "TEAM_PLACEHOLDER"; // server-side signing flow swaps this in
+// Resolve a hotel-info-shaped object into the fields this module needs. We
+// accept whatever shape the caller hands us (typically `useData().hotelInfo`)
+// and merge in fallbacks per-field so a partial record never produces blank
+// strings on the generated pass.
+//
+// `useData().hotelInfo` stores address pieces as separate fields (address /
+// area / country) — we join them into a single comma-separated line for the
+// pass's "Address" back field and the card-image footer.
+function resolveHotel(input) {
+  const h = input || {};
+  const addressLine = [h.address, h.area, h.country].filter(Boolean).join(" · ")
+    || FALLBACK_HOTEL.address;
+  const website = h.website
+    ? (/^https?:\/\//.test(h.website) ? h.website : `https://${h.website}`)
+    : FALLBACK_HOTEL.website;
+  return {
+    name:        h.name        || FALLBACK_HOTEL.name,
+    tagline:     h.tagline     || FALLBACK_HOTEL.tagline,
+    address:     addressLine,
+    phone:       h.phone       || FALLBACK_HOTEL.phone,
+    email:       h.email       || FALLBACK_HOTEL.email,
+    website,
+    passTypeId:  h.passTypeId  || FALLBACK_HOTEL.passTypeId,
+    appleTeamId: h.appleTeamId || FALLBACK_HOTEL.appleTeamId,
+  };
+}
 
 // ZIP encoding + SHA-1 are now in zipEncoder.js (re-exported above).
 
@@ -75,33 +110,35 @@ function drawMonogram(ctx, w, h) {
   ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
 }
 
-function drawWordmark(ctx, w, h) {
-  ctx.fillStyle = "#15161A";
-  ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = "#C9A961";
-  ctx.font = `italic ${Math.floor(h * 0.55)}px "Cormorant Garamond", Georgia, serif`;
-  ctx.textBaseline = "middle";
-  ctx.textAlign = "left";
-  ctx.fillText("The Lodge Suites", w * 0.04, h / 2);
+function makeWordmarkDrawer(hotelName) {
+  return function drawWordmark(ctx, w, h) {
+    ctx.fillStyle = "#15161A";
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = "#C9A961";
+    ctx.font = `italic ${Math.floor(h * 0.55)}px "Cormorant Garamond", Georgia, serif`;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    ctx.fillText(hotelName, w * 0.04, h / 2);
+  };
 }
 
-async function buildIcon()      { return pngFromCanvas(58,  58,  drawMonogram, 2); }
-async function buildLogo()      { return pngFromCanvas(160, 50,  drawWordmark, 2); }
+async function buildIcon()              { return pngFromCanvas(58,  58,  drawMonogram, 2); }
+async function buildLogo(hotelName)     { return pngFromCanvas(160, 50,  makeWordmarkDrawer(hotelName), 2); }
 
 // ---------------------------------------------------------------------------
 // pass.json — the wallet card payload. Pass-type assets are referenced
 // by name so the Wallet client knows which image to render.
 // ---------------------------------------------------------------------------
-function buildPassJson(member, tierMeta) {
+function buildPassJson(member, tierMeta, hotel) {
   const tier = TIER_VISUALS[member.tier] || TIER_VISUALS.gold;
   return {
     formatVersion: 1,
-    passTypeIdentifier: PASS_TYPE_ID,
+    passTypeIdentifier: hotel.passTypeId,
     serialNumber: member.id,
-    teamIdentifier: TEAM_IDENTIFIER,
-    organizationName: ORG_NAME,
-    description: `${HOTEL.name} · LS Privilege ${tier.label}`,
-    logoText: HOTEL.name,
+    teamIdentifier: hotel.appleTeamId,
+    organizationName: hotel.name,
+    description: `${hotel.name} · LS Privilege ${tier.label}`,
+    logoText: hotel.name,
     foregroundColor: "rgb(254, 248, 230)",
     backgroundColor: "rgb(20, 21, 26)",
     labelColor: rgbFromHex(tier.accent),
@@ -122,11 +159,11 @@ function buildPassJson(member, tierMeta) {
       ],
       backFields: [
         { key: "perks",   label: "Tier benefits", value: tierBenefitsText(tierMeta) },
-        { key: "phone",   label: "Hotel",         value: HOTEL.phone },
-        { key: "email",   label: "Front office",  value: HOTEL.email },
-        { key: "address", label: "Address",       value: HOTEL.address },
-        { key: "website", label: "Website",       value: HOTEL.website },
-        { key: "tagline", label: "",              value: HOTEL.tagline },
+        { key: "phone",   label: "Hotel",         value: hotel.phone },
+        { key: "email",   label: "Front office",  value: hotel.email },
+        { key: "address", label: "Address",       value: hotel.address },
+        { key: "website", label: "Website",       value: hotel.website },
+        { key: "tagline", label: "",              value: hotel.tagline },
         { key: "terms",   label: "Terms",         value: "Show this pass at check-in. Member rate, perks and points are subject to LS Privilege programme rules. Non-transferable." },
       ],
     },
@@ -161,15 +198,18 @@ function humanDate(iso) {
 }
 
 // ---------------------------------------------------------------------------
-// .pkpass blob builder
+// .pkpass blob builder. Signature accepts an options object so the call site
+// can read like `buildPkpassBlob({ member, tierMeta, hotel: hotelInfo })`.
 // ---------------------------------------------------------------------------
-export async function buildPkpassBlob(member, tierMeta) {
+export async function buildPkpassBlob({ member, tierMeta, hotel } = {}) {
+  const H = resolveHotel(hotel);
   const enc = new TextEncoder();
-  const passJsonStr = JSON.stringify(buildPassJson(member, tierMeta), null, 2);
+  const passJsonStr = JSON.stringify(buildPassJson(member, tierMeta, H), null, 2);
 
+  const drawWordmark = makeWordmarkDrawer(H.name);
   const iconPng    = await buildIcon();
   const icon2xPng  = await pngFromCanvas(58, 58, drawMonogram, 4); // serve as @2x
-  const logoPng    = await buildLogo();
+  const logoPng    = await buildLogo(H.name);
   const logo2xPng  = await pngFromCanvas(160, 50, drawWordmark, 4);
 
   const filesPreManifest = [
@@ -209,16 +249,17 @@ export async function buildPkpassBlob(member, tierMeta) {
 // "Download card" action and as a graceful fallback when Web Share doesn't
 // support file attachments.
 // ---------------------------------------------------------------------------
-export async function buildMembershipCardPng(member, tierMeta) {
+export async function buildMembershipCardPng({ member, tierMeta, hotel } = {}) {
+  const H = resolveHotel(hotel);
   const tier = TIER_VISUALS[member.tier] || TIER_VISUALS.gold;
-  const W = 720, H = 1140;
-  return pngFromCanvas(W, H, (ctx) => {
+  const W = 720, H_PX = 1140;
+  return pngFromCanvas(W, H_PX, (ctx) => {
     // Background
-    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    const grad = ctx.createLinearGradient(0, 0, 0, H_PX);
     grad.addColorStop(0, "#15161A");
     grad.addColorStop(1, "#1F2026");
     ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillRect(0, 0, W, H_PX);
 
     // Tier band
     ctx.fillStyle = tier.accent;
@@ -229,7 +270,7 @@ export async function buildMembershipCardPng(member, tierMeta) {
     ctx.font = "700 16px Manrope, Arial, sans-serif";
     ctx.textBaseline = "top";
     ctx.textAlign = "left";
-    ctx.fillText("THE LODGE SUITES", 56, 56);
+    ctx.fillText(H.name.toUpperCase(), 56, 56);
 
     ctx.fillStyle = "#FEF8E6";
     ctx.font = "italic 38px 'Cormorant Garamond', Georgia, serif";
@@ -298,10 +339,10 @@ export async function buildMembershipCardPng(member, tierMeta) {
     ctx.fillStyle = "rgba(254,248,230,0.55)";
     ctx.font = "11px Manrope, Arial, sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText(HOTEL.name + "  ·  " + HOTEL.phone + "  ·  " + HOTEL.email, W / 2, H - 80);
+    ctx.fillText(H.name + "  ·  " + H.phone + "  ·  " + H.email, W / 2, H_PX - 80);
     ctx.fillStyle = tier.accent;
     ctx.font = "italic 16px 'Cormorant Garamond', Georgia, serif";
-    ctx.fillText(HOTEL.tagline, W / 2, H - 56);
+    ctx.fillText(H.tagline, W / 2, H_PX - 56);
   }, 2);
 }
 
@@ -355,44 +396,47 @@ function drawDecorativeQR(ctx, x, y, size, seed) {
 }
 
 // ---------------------------------------------------------------------------
-// Share helpers
+// Share helpers — all accept `{ member, hotel }` so the live property identity
+// flows through every share channel.
 // ---------------------------------------------------------------------------
-export function buildShareText(member) {
+export function buildShareText({ member, hotel } = {}) {
+  const H = resolveHotel(hotel);
   const tier = TIER_VISUALS[member.tier] || TIER_VISUALS.gold;
   return [
     `My LS Privilege membership · ${tier.label}`,
     `${member.name} · ${member.id}`,
-    `${HOTEL.name} · ${HOTEL.phone}`,
+    `${H.name} · ${H.phone}`,
   ].join("\n");
 }
 
-export function whatsAppShareUrl(member) {
-  const text = buildShareText(member);
+export function whatsAppShareUrl({ member, hotel } = {}) {
+  const text = buildShareText({ member, hotel });
   return `https://wa.me/?text=${encodeURIComponent(text)}`;
 }
 
-export function emailShareUrl(member) {
+export function emailShareUrl({ member, hotel } = {}) {
+  const H = resolveHotel(hotel);
   const tier = TIER_VISUALS[member.tier] || TIER_VISUALS.gold;
   const subject = `My LS Privilege ${tier.label} membership`;
   const body = [
-    buildShareText(member),
+    buildShareText({ member, hotel }),
     "",
     "I've attached my Apple Wallet pass and a card image.",
     "",
-    `${HOTEL.name}`,
-    HOTEL.address,
-    HOTEL.email,
+    `${H.name}`,
+    H.address,
+    H.email,
   ].join("\n");
   return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
 // Generic system-share via Web Share API. Returns true if share completed.
-export async function nativeShare(member, files /* [File] */) {
+export async function nativeShare({ member, files, hotel } = {}) {
   if (typeof navigator === "undefined" || !navigator.share) return false;
   const tier = TIER_VISUALS[member.tier] || TIER_VISUALS.gold;
   const shareData = {
     title: `LS Privilege · ${tier.label}`,
-    text: buildShareText(member),
+    text: buildShareText({ member, hotel }),
   };
   if (files && files.length > 0 && navigator.canShare && navigator.canShare({ files })) {
     shareData.files = files;
@@ -411,4 +455,6 @@ export async function nativeShare(member, files /* [File] */) {
 export const downloadBlob = zipDownloadBlob;
 
 export const tierVisuals = (tierId) => TIER_VISUALS[tierId] || TIER_VISUALS.gold;
-export const hotel = HOTEL;
+// Legacy: a few call sites still reference `hotel` as an exported constant for
+// preview fallbacks. Re-export the static fallback so those keep working.
+export const hotel = FALLBACK_HOTEL;

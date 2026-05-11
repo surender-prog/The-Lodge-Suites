@@ -2935,12 +2935,24 @@ const DEFAULT_HOTEL_INFO = {
   emailAccounts:     "accounts@thelodgesuites.bh",
   emailFom:          "fom@thelodgesuites.com",
   emailSales:        "sales@exploremena.com",
+  emailPress:        "press@thelodgesuites.com",
   website:           "www.thelodgesuites.com",
   iban:              "BH## NBOB ##############",
   bank:              "National Bank of Bahrain",
   copyrightYear:     "2026",
   checkIn:           "14:00",
   checkOut:          "12:00",
+  // Press / media spokesperson — surfaced on the public Press page and any
+  // press-relations card. Edit when staff changes.
+  spokespersonName:  "Aparajeet Mathad",
+  spokespersonTitle: "Front Office Manager",
+  // Apple Wallet pass identifiers — passTypeId is the reverse-DNS string the
+  // hotel registers in the Apple Developer portal; appleTeamId is the team
+  // identifier on the same account. Both are baked into every generated
+  // .pkpass so the file is structurally Wallet-installable once a real
+  // PKCS#7 signature is dropped in by the signing service.
+  passTypeId:        "pass.com.thelodgesuites.privilege",
+  appleTeamId:       "<your-team-id-once-enrolled>",
 };
 
 // ---------------------------------------------------------------------------

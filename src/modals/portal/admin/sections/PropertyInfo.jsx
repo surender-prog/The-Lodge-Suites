@@ -139,6 +139,44 @@ export const PropertyInfo = () => {
             </div>
           </Card>
 
+          {/* Press & media — surfaces on the public Press page (Footer → Press)
+              for the press-relations contact card and the spokesperson block. */}
+          <Card title="Press & media">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <FormGroup label="Press email" className="sm:col-span-2">
+                <TextField type="email" value={draft.emailPress || ""} onChange={(v) => update({ emailPress: v })} placeholder="press@thelodgesuites.com" />
+              </FormGroup>
+              <FormGroup label="Spokesperson name">
+                <TextField value={draft.spokespersonName || ""} onChange={(v) => update({ spokespersonName: v })} placeholder="Aparajeet Mathad" />
+              </FormGroup>
+              <FormGroup label="Spokesperson title">
+                <TextField value={draft.spokespersonTitle || ""} onChange={(v) => update({ spokespersonTitle: v })} placeholder="Front Office Manager" />
+              </FormGroup>
+            </div>
+          </Card>
+
+          {/* Apple Wallet pass — identifiers baked into the generated .pkpass
+              bundle. Change these only when the hotel's Pass Type ID
+              certificate or developer team account changes. */}
+          <Card title="Membership pass · Apple Wallet">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <FormGroup label="Pass Type ID">
+                <TextField value={draft.passTypeId || ""} onChange={(v) => update({ passTypeId: v })} placeholder="pass.com.thelodgesuites.privilege" />
+              </FormGroup>
+              <FormGroup label="Apple Team ID">
+                <TextField value={draft.appleTeamId || ""} onChange={(v) => update({ appleTeamId: v })} placeholder="<your-team-id-once-enrolled>" />
+              </FormGroup>
+              <div className="sm:col-span-2 mt-1 px-3 py-2.5" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
+                <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                  About these fields
+                </div>
+                <div style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 4, lineHeight: 1.55 }}>
+                  Baked into every generated <code style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>.pkpass</code> for LS Privilege members. The Pass Type ID and Team ID identify the hotel's Apple Developer account on the wallet pass; the signing service uses them to produce a Wallet-installable file.
+                </div>
+              </div>
+            </div>
+          </Card>
+
           {/* Operations */}
           <Card title="Operations">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
