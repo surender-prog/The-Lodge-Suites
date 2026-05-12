@@ -1,4 +1,5 @@
 import React, { forwardRef, useMemo, useRef, useState } from "react";
+import QRCode from "qrcode";
 import {
   AlertCircle, Check, Copy, Download, FileJson, Image as ImageIcon, Mail,
   Printer, QrCode, Share2, Smartphone, Wallet,
@@ -36,66 +37,42 @@ const hexToRgbString = (hex) => {
 };
 
 // ---------------------------------------------------------------------------
-// MockQRGroup — deterministic SVG-based QR mock. Three corner finders plus a
-// hash-seeded random data area give a believable look. Production builds
-// should swap this for a real QR encoder.
+// MockQRGroup — real QR encoder rendered as an SVG <g>. Uses `qrcode` to
+// produce a module matrix from the value, then draws filled cells at the
+// computed grid positions. Drops cleanly into the wallet-card SVG.
+//
+// Encoded value: the member id (e.g. "LS-G-A1B2C3"). Front desk's scanner
+// can decode it and look up the member directly.
 // ---------------------------------------------------------------------------
 function MockQRGroup({ value, size = 100, fg = "#15161A", bg = "#FFFFFF", x = 0, y = 0 }) {
-  const N = 25;
-  const cell = size / N;
-
   const rects = useMemo(() => {
-    let h = 2166136261;
-    const v = value || "x";
-    for (let i = 0; i < v.length; i++) {
-      h ^= v.charCodeAt(i);
-      h = Math.imul(h, 16777619);
+    const v = value || "LS";
+    let qr;
+    try {
+      // M-level ECC is the sweet spot for a member id (short text, ~15% error
+      // tolerance). The matrix is square; `size` per side scales with input
+      // length / version.
+      qr = QRCode.create(v, { errorCorrectionLevel: "M" });
+    } catch {
+      return { N: 1, cells: [] };
     }
-    let s = h >>> 0;
-
-    const isFinder = (cx, cy) => {
-      const corners = [[0, 0], [N - 7, 0], [0, N - 7]];
-      for (const [ox, oy] of corners) {
-        const lx = cx - ox, ly = cy - oy;
-        if (lx >= 0 && lx < 7 && ly >= 0 && ly < 7) {
-          if (lx === 0 || lx === 6 || ly === 0 || ly === 6) return true;
-          if (lx === 1 || lx === 5 || ly === 1 || ly === 5) return false;
-          return true;
-        }
-      }
-      return null;
-    };
-    const inFinderArea = (cx, cy) => {
-      const corners = [[0, 0], [N - 8, 0], [0, N - 8]];
-      for (const [ox, oy] of corners) {
-        const lx = cx - ox, ly = cy - oy;
-        if (lx >= 0 && lx < 8 && ly >= 0 && ly < 8) return true;
-      }
-      return false;
-    };
-
-    const out = [];
+    const N = qr.modules.size;
+    const cells = [];
     for (let yy = 0; yy < N; yy++) {
       for (let xx = 0; xx < N; xx++) {
-        const f = isFinder(xx, yy);
-        let filled;
-        if (f !== null) filled = f;
-        else if (inFinderArea(xx, yy)) filled = false;
-        else {
-          s = (s * 1664525 + 1013904223) >>> 0;
-          filled = (s & 1) === 1;
-        }
-        if (filled) out.push({ x: xx * cell, y: yy * cell });
+        if (qr.modules.get(xx, yy)) cells.push({ x: xx, y: yy });
       }
     }
-    return out;
-  }, [value, cell]);
+    return { N, cells };
+  }, [value]);
+
+  const cell = size / rects.N;
 
   return (
     <g transform={`translate(${x},${y})`} shapeRendering="crispEdges">
       <rect x={0} y={0} width={size} height={size} fill={bg} />
-      {rects.map((r, i) => (
-        <rect key={i} x={r.x} y={r.y} width={cell} height={cell} fill={fg} />
+      {rects.cells.map((r, i) => (
+        <rect key={i} x={r.x * cell} y={r.y * cell} width={cell} height={cell} fill={fg} />
       ))}
     </g>
   );

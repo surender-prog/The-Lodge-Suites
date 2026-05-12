@@ -1,6 +1,8 @@
 // membershipPass.js — generates an Apple-Wallet-compatible .pkpass bundle for
 // LS Privilege members, plus PNG renders of the membership card and
 // share-link helpers (WhatsApp / Email / Web Share / clipboard).
+
+import QRCode from "qrcode";
 //
 // IMPORTANT — signing
 // --------------------
@@ -363,36 +365,36 @@ function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
   if (line) ctx.fillText(line, x, yy);
 }
 
-// Decorative QR-like grid. Not a scannable QR — the actual scannable code is
-// embedded in pass.json so Wallet renders it when the .pkpass is opened.
+// Real scannable QR rendered onto the existing canvas. Encodes `seed` (the
+// member id, e.g. "LS-G-A1B2C3") with M-level error correction so light
+// smudging or low-contrast printing still scans. Background is the same
+// cream as the surrounding card so the QR sits inside its quiet zone.
 function drawDecorativeQR(ctx, x, y, size, seed) {
-  // Outer frame
+  // Frame + cream background — same visual as before so the surrounding
+  // layout doesn't shift.
   ctx.fillStyle = "#FEF8E6";
   ctx.fillRect(x - 10, y - 10, size + 20, size + 20);
-  // Inner cells
-  const cells = 21;
-  const cellSize = size / cells;
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+
+  let qr;
+  try {
+    qr = QRCode.create(seed || "LS", { errorCorrectionLevel: "M" });
+  } catch (_) {
+    // If encoding fails for some reason just leave the cream square —
+    // better than a half-drawn fake. The .pkpass barcode still ships
+    // the correct data, so check-in works either way.
+    return;
+  }
+
+  const N = qr.modules.size;
+  const cellSize = size / N;
   ctx.fillStyle = "#15161A";
-  for (let i = 0; i < cells; i++) {
-    for (let j = 0; j < cells; j++) {
-      h = (h * 1103515245 + 12345) >>> 0;
-      if ((h & 0xFF) < 128) ctx.fillRect(x + i * cellSize, y + j * cellSize, cellSize, cellSize);
+  for (let yy = 0; yy < N; yy++) {
+    for (let xx = 0; xx < N; xx++) {
+      if (qr.modules.get(xx, yy)) {
+        ctx.fillRect(x + xx * cellSize, y + yy * cellSize, cellSize, cellSize);
+      }
     }
   }
-  // Three position-detection squares (top-left, top-right, bottom-left)
-  const drawAnchor = (ax, ay) => {
-    ctx.fillStyle = "#15161A";
-    ctx.fillRect(ax, ay, cellSize * 7, cellSize * 7);
-    ctx.fillStyle = "#FEF8E6";
-    ctx.fillRect(ax + cellSize, ay + cellSize, cellSize * 5, cellSize * 5);
-    ctx.fillStyle = "#15161A";
-    ctx.fillRect(ax + cellSize * 2, ay + cellSize * 2, cellSize * 3, cellSize * 3);
-  };
-  drawAnchor(x, y);
-  drawAnchor(x + size - cellSize * 7, y);
-  drawAnchor(x, y + size - cellSize * 7);
 }
 
 // ---------------------------------------------------------------------------
