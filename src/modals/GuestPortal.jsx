@@ -2860,13 +2860,15 @@ function BookStayTab({ session, kind, account, onComplete }) {
         const total = Math.round((roomTotal + lineExtras + lineTax) * 1000) / 1000;
         const bookedByOther = bookFor === "other";
         // Payment status mapping mirrors the public BookingModal contract.
-        // For pre-payment-contracted partners, the operator's pay-now choice
-        // captures the funds and the booking is marked non-refundable.
+        // For pre-payment-contracted partners, pay-now captures the card
+        // and marks the stay non-refundable, but the actual charge is
+        // recorded afterwards from the admin Card on File panel ("Mark as
+        // charged"). Until then the booking sits at "pending" with paid 0.
         let lineStatus, linePaid;
         if (kind === "member") {
           lineStatus = "paid"; linePaid = total;
         } else if (isPrepay && paymentTiming === "now") {
-          lineStatus = "paid"; linePaid = total;
+          lineStatus = "pending"; linePaid = 0;
         } else if (isPrepay && paymentTiming === "later") {
           lineStatus = "pending"; linePaid = 0;
         } else if (kind === "corporate") {

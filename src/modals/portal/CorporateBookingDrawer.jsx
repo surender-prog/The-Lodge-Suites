@@ -150,18 +150,17 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
     // Payment-status / paid mapping mirrors the B2C BookingModal contract.
     // For accounts on Net terms (anything other than pre-payment) we keep
     // the historical "invoiced" status so AR continues to chase the
-    // contract's payment-terms days. For pre-payment, "paid" or "pending"
-    // depending on the operator's selection.
+    // contract's payment-terms days. For pre-payment, both pay-now and
+    // pay-on-arrival start as "pending" — capturing the card is not the
+    // same as charging it. The operator records the actual transaction
+    // via the Card on File panel ("Mark as charged") once the gateway
+    // confirms; that flip rolls `paid` up to total and `paymentStatus`
+    // to "paid".
     let paymentStatus = "invoiced";
     let paid = 0;
     if (isPrepay) {
-      if (draft.paymentTiming === "now") {
-        paymentStatus = "paid";
-        paid = total;
-      } else {
-        paymentStatus = "pending";
-        paid = 0;
-      }
+      paymentStatus = "pending";
+      paid = 0;
     }
     // Card-on-file — captured only when Pay-now is active. Stored masked /
     // last-4 by buildCardOnFile so the raw PAN never lives in the store.

@@ -497,12 +497,20 @@ export const BookingModal = ({ open, onClose, initial }) => {
         guests: partySize,
         rate: pkg ? Math.round(pkgCharge / Math.max(1, nights)) : (lead?.price || 0),
         total,
-        paid: data.paymentTiming === "now" ? total : 0,
+        // Pay-now no longer means "money received". Capturing the card
+        // is not the same as charging it — the hotel records the actual
+        // transaction afterwards (Card on File panel → "Mark as charged"),
+        // at which point `paid` rolls up to total and `paymentStatus`
+        // flips to "paid". Until then, Pay-now sits at zero just like
+        // Pay-on-arrival.
+        paid: 0,
         status: "confirmed",
         // Non-guaranteed bookings stay "pending" on the payment ledger
         // (no deposit, no card) so dashboards can flag them quickly. Pay-
         // on-arrival WITH a card stays "deposit" (the existing default).
-        paymentStatus: data.paymentTiming === "now" ? "paid"
+        // Pay-now also sits at "pending" until the operator records the
+        // actual charge via the Card on File panel.
+        paymentStatus: data.paymentTiming === "now" ? "pending"
                       : guaranteed                   ? "deposit"
                       :                                 "pending",
         paymentTiming: data.paymentTiming || "later",

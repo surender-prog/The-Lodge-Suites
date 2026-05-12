@@ -333,10 +333,23 @@ export const Bookings = ({ onNavigate, params, clearParams }) => {
                 <Td align="end">{b.nights}</Td>
                 <Td align="end" className="font-semibold">{t("common.bhd")} {b.total.toLocaleString()}</Td>
                 <Td>
-                  <span style={paymentChip(b.paymentStatus)}>
-                    <span style={paymentDot(b.paymentStatus)} />
-                    {PAYMENT_LABEL[b.paymentStatus]}
-                  </span>
+                  {/* Distinguish "Pay-now, card captured, awaiting the
+                      operator's Mark-as-charged" from a plain pending
+                      pay-on-arrival booking. Both render in amber, but
+                      the awaiting-charge variant labels the card-on-
+                      file action explicitly so the AR team knows to
+                      run the gateway and record the transaction. */}
+                  {b.paymentStatus === "pending" && b.cardOnFile ? (
+                    <span style={chipStyle(PAYMENT_BASE.deposit)}>
+                      <span style={dotStyle(PAYMENT_BASE.deposit)} />
+                      Card · awaiting charge
+                    </span>
+                  ) : (
+                    <span style={paymentChip(b.paymentStatus)}>
+                      <span style={paymentDot(b.paymentStatus)} />
+                      {PAYMENT_LABEL[b.paymentStatus]}
+                    </span>
+                  )}
                 </Td>
                 <Td>
                   <span style={statusChip(b.status)}>
@@ -1436,6 +1449,7 @@ function BookingEditor({ booking, onClose }) {
               staffSession={staffSession}
               appendAuditLog={appendAuditLog}
               updateBooking={updateBooking}
+              addPayment={addPayment}
             />
 
             {/* Quick contact */}
@@ -1616,12 +1630,18 @@ function SnapRow({ p, label, value, children, accent, success, warn }) {
 // FOM / Accounts) can reveal the unmasked PAN; every reveal writes an
 // audit-log entry for traceability.
 // ---------------------------------------------------------------------------
-function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLog, updateBooking }) {
+function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLog, updateBooking, addPayment }) {
   const card = draft.cardOnFile;
   const role = (staffSession?.role || "").toLowerCase();
   const allowed = canViewCardOnFile(role);
   const expired = card ? cardOnFileExpired(card) : false;
   const [revealed, setRevealed] = React.useState(false);
+  // Charge-recording state machine. "idle" → primary "Mark as charged"
+  // button. "form" → inline transaction-id form. After confirm we flip
+  // back to "idle" and the panel renders the charged-summary row.
+  const [chargeMode, setChargeMode] = React.useState("idle");
+  const [txId, setTxId] = React.useState("");
+  const [chargeNotes, setChargeNotes] = React.useState("");
 
   // Auto-purge on render once the retention window passes. The booking
   // hits the store with `cardOnFile: null` and an audit-log entry so the
@@ -1693,11 +1713,76 @@ function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLo
     }
   };
 
+  // Confirm the charge entered in the inline form. Records a payment,
+  // flips the booking to paid, stamps the transaction metadata, and
+  // appends an audit-log entry. The hotel actually charges the card
+  // outside the app (Benefit Pay terminal or a gateway), so this step
+  // is purely "transcribe what just happened".
+  const recordCharge = () => {
+    if (!allowed) return;
+    const trimmed = (txId || "").trim();
+    if (trimmed.length < 4) {
+      pushToast({ message: "Enter a transaction ID (4+ characters)", kind: "warn" });
+      return;
+    }
+    const chargedAt = new Date().toISOString();
+    const chargedBy = staffSession?.name || staffSession?.email || "—";
+    const amount = Number(booking.total) || Number(draft.total) || 0;
+    const notes = (chargeNotes || "").trim() || null;
+    try {
+      updateBooking?.(booking.id, {
+        paymentStatus: "paid",
+        paid: amount,
+        paymentTransactionId: trimmed,
+        paymentChargedAt: chargedAt,
+        paymentChargedBy: chargedBy,
+      });
+      update?.({
+        paymentStatus: "paid",
+        paid: amount,
+        paymentTransactionId: trimmed,
+        paymentChargedAt: chargedAt,
+        paymentChargedBy: chargedBy,
+      });
+    } catch (_) {}
+    try {
+      addPayment?.({
+        id: `PAY-${Date.now()}`,
+        bookingId: booking.id,
+        kind: "charge",
+        method: "card",
+        amount,
+        currency: "BHD",
+        reference: trimmed,
+        notes,
+        capturedBy: staffSession?.id || "system",
+        capturedByName: chargedBy,
+      });
+    } catch (_) {}
+    try {
+      appendAuditLog?.({
+        ts: chargedAt,
+        actor: staffSession?.id || "anon",
+        actorName: chargedBy,
+        action: "payment.charge-recorded",
+        target: { kind: "booking", id: booking.id },
+        note: `Recorded card-on-file charge of BHD ${amount.toLocaleString()} · txn ${trimmed}${notes ? ` · ${notes}` : ""}`,
+      });
+    } catch (_) {}
+    pushToast({ message: `Charge recorded · ${trimmed}`, kind: "success" });
+    setTxId("");
+    setChargeNotes("");
+    setChargeMode("idle");
+  };
+
   // Days remaining until the card auto-purges (negative = already
   // expired, but we render the purged state below).
   const daysLeft = card?.expiresAt
     ? Math.max(0, Math.ceil((new Date(card.expiresAt).getTime() - Date.now()) / 86400000))
     : null;
+
+  const charged = draft.paymentStatus === "paid" && !!draft.paymentTransactionId;
+  const canMarkCharged = card && draft.paymentStatus === "pending";
 
   return (
     <div style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}` }}>
@@ -1740,13 +1825,111 @@ function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLo
               warn={daysLeft != null && daysLeft <= 3}
             />
             <SnapRow p={p} label="Charge timing"
-              value={(draft.paymentTiming === "now" ? "Charged at booking" : "Hold only · charged on arrival")} />
+              value={(draft.paymentTiming === "now"
+                ? (charged ? "Charged" : "Pay-now · awaiting charge")
+                : "Hold only · charged on arrival")} />
+
+            {/* Charged summary — once the operator has flipped the
+                booking to paid via "Mark as charged", surface the
+                transaction id + who/when as a read-only row so the
+                audit trail is visible inline. */}
+            {charged && (
+              <div className="mt-1 p-2.5" style={{ backgroundColor: `${p.success}10`, border: `1px solid ${p.success}40`, fontSize: "0.74rem", lineHeight: 1.5 }}>
+                <div className="flex items-center gap-2" style={{ color: p.success, fontWeight: 700 }}>
+                  <Check size={12} />
+                  <span>Charged · {draft.paymentTransactionId}</span>
+                </div>
+                <div style={{ color: p.textMuted, fontSize: "0.68rem", marginTop: 2 }}>
+                  {fmtDate(draft.paymentChargedAt) || "—"} · by {draft.paymentChargedBy || "—"}
+                </div>
+              </div>
+            )}
 
             {/* Reveal warning when active */}
             {revealed && allowed && (
               <div className="mt-2 p-2 flex items-start gap-2" style={{ backgroundColor: `${p.warn}10`, border: `1px solid ${p.warn}40`, color: p.warn, fontSize: "0.7rem", lineHeight: 1.5 }}>
                 <Eye size={11} style={{ marginTop: 2, flexShrink: 0 }} />
                 <span>Full card visible for 20 seconds — this view has been logged to the audit trail.</span>
+              </div>
+            )}
+
+            {/* Mark-as-charged inline form. Operator has clicked the
+                primary button; we collect a transaction id (mandatory)
+                and optional gateway notes, then flip the booking to
+                paid + stamp the metadata + write an audit entry. */}
+            {allowed && chargeMode === "form" && (
+              <div className="mt-1 p-3" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.accent}`, fontFamily: "'Manrope', sans-serif" }}>
+                <div style={{ color: p.accent, fontSize: "0.62rem", letterSpacing: "0.28em", textTransform: "uppercase", fontWeight: 700, marginBottom: 8 }}>
+                  Record charge
+                </div>
+                <label style={{ display: "block", color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>
+                  Transaction ID
+                </label>
+                <input
+                  type="text"
+                  value={txId}
+                  onChange={(e) => setTxId(e.target.value)}
+                  placeholder="e.g. BNF-2026-04829"
+                  autoFocus
+                  style={{
+                    width: "100%", padding: "0.55rem 0.7rem",
+                    fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem",
+                    backgroundColor: p.inputBg, color: p.textPrimary,
+                    border: `1px solid ${p.border}`, outline: "none",
+                  }}
+                  onFocus={(e) => { e.currentTarget.style.borderColor = p.accent; }}
+                  onBlur={(e) => { e.currentTarget.style.borderColor = p.border; }}
+                />
+                <label style={{ display: "block", color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginTop: 10, marginBottom: 4 }}>
+                  Gateway / notes (optional)
+                </label>
+                <input
+                  type="text"
+                  value={chargeNotes}
+                  onChange={(e) => setChargeNotes(e.target.value)}
+                  placeholder="Benefit Pay terminal · auth 8421"
+                  style={{
+                    width: "100%", padding: "0.55rem 0.7rem",
+                    fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem",
+                    backgroundColor: p.inputBg, color: p.textPrimary,
+                    border: `1px solid ${p.border}`, outline: "none",
+                  }}
+                  onFocus={(e) => { e.currentTarget.style.borderColor = p.accent; }}
+                  onBlur={(e) => { e.currentTarget.style.borderColor = p.border; }}
+                />
+                <div className="flex gap-2 mt-3">
+                  <button
+                    onClick={recordCharge}
+                    style={{
+                      backgroundColor: p.accent,
+                      color: p.theme === "light" ? "#FFFFFF" : "#15161A",
+                      border: `1px solid ${p.accent}`,
+                      padding: "0.45rem 0.95rem",
+                      fontFamily: "'Manrope', sans-serif",
+                      fontSize: "0.66rem", fontWeight: 700,
+                      letterSpacing: "0.2em", textTransform: "uppercase",
+                      cursor: "pointer",
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                    }}
+                  >
+                    <Check size={11} /> Confirm charge
+                  </button>
+                  <button
+                    onClick={() => { setChargeMode("idle"); setTxId(""); setChargeNotes(""); }}
+                    style={{
+                      backgroundColor: "transparent",
+                      color: p.textMuted,
+                      border: `1px solid ${p.border}`,
+                      padding: "0.45rem 0.95rem",
+                      fontFamily: "'Manrope', sans-serif",
+                      fontSize: "0.66rem", fontWeight: 600,
+                      letterSpacing: "0.18em", textTransform: "uppercase",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1760,6 +1943,25 @@ function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLo
                     <SidebarBtn p={p} icon={<Eye size={12} />} label="Reveal full card" onClick={reveal} />
                   )}
                   <SidebarBtn p={p} icon={<Copy size={12} />} label="Copy masked" onClick={copyMasked} />
+                  {canMarkCharged && chargeMode !== "form" && (
+                    <button
+                      onClick={() => { setChargeMode("form"); setTxId(""); setChargeNotes(""); }}
+                      style={{
+                        backgroundColor: p.accent,
+                        color: p.theme === "light" ? "#FFFFFF" : "#15161A",
+                        border: `1px solid ${p.accent}`,
+                        padding: "0.5rem 0.85rem",
+                        fontFamily: "'Manrope', sans-serif",
+                        fontSize: "0.66rem", fontWeight: 700,
+                        letterSpacing: "0.2em", textTransform: "uppercase",
+                        cursor: "pointer",
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <Check size={12} /> Mark as charged
+                    </button>
+                  )}
                   <SidebarBtn p={p} icon={<Trash2 size={12} />} label="Remove card on file" onClick={removeCard} danger />
                 </>
               ) : (
