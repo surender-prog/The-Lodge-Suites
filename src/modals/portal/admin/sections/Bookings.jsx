@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Ban, Briefcase, Building2, Calculator, CalendarCheck, Check, CheckCircle2, ChevronDown, Coins, Copy, CreditCard, Edit2, Eye, EyeOff, FileText, Globe, Hotel as HotelIcon, Lock, LogIn, LogOut, Mail, MoreHorizontal, Phone, Plus, Printer, Receipt, RotateCcw, Save, Search, ShieldCheck, Sparkles, Trash2, User as UserIcon, Users as UsersIcon } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
@@ -141,7 +141,10 @@ export const Bookings = ({ onNavigate, params, clearParams }) => {
 
   const filtered = useMemo(() => {
     const ql = q.trim().toLowerCase();
-    return bookings.filter((b) => {
+    // Newest first — sort by createdAt when present, fall back to checkIn
+    // date (older seeded records lack createdAt). Strings compare lex which
+    // is correct for ISO-8601 timestamps and YYYY-MM-DD dates.
+    const matches = bookings.filter((b) => {
       if (source !== "all" && b.source !== source) return false;
       if (status !== "all" && b.status !== status) return false;
       if (room !== "all" && b.roomId !== room) return false;
@@ -149,7 +152,27 @@ export const Bookings = ({ onNavigate, params, clearParams }) => {
       if (!ql) return true;
       return b.id.toLowerCase().includes(ql) || b.guest.toLowerCase().includes(ql) || b.email.toLowerCase().includes(ql);
     });
+    return matches.slice().sort((a, b) => {
+      const aKey = a.createdAt || a.checkIn || "";
+      const bKey = b.createdAt || b.checkIn || "";
+      if (aKey || bKey) return String(bKey).localeCompare(String(aKey));
+      return String(b.id || "").localeCompare(String(a.id || ""));
+    });
   }, [bookings, q, source, status, room, payment]);
+
+  // Pagination — operator chooses page size; new bookings appear at the top
+  // of page 1 because the list is sorted newest-first above.
+  const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+  const [pageSize, setPageSize] = useState(20);
+  const [page, setPage] = useState(0);
+  // Reset to page 0 when filters change so the operator doesn't end up on
+  // an empty trailing page after narrowing the result set.
+  useEffect(() => { setPage(0); }, [q, source, status, room, payment, pageSize]);
+  const totalPages   = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage     = Math.min(page, totalPages - 1);
+  const pageStart    = safePage * pageSize;
+  const pageEnd      = Math.min(pageStart + pageSize, filtered.length);
+  const pageItems    = filtered.slice(pageStart, pageEnd);
 
   const totalValue = filtered.reduce((s, b) => s + b.total, 0);
   const totalPaid = filtered.reduce((s, b) => s + b.paid, 0);
@@ -274,7 +297,7 @@ export const Bookings = ({ onNavigate, params, clearParams }) => {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((b) => (
+            {pageItems.map((b) => (
               <tr key={b.id}>
                 <Td>
                   <button
@@ -367,6 +390,78 @@ export const Bookings = ({ onNavigate, params, clearParams }) => {
             )}
           </tbody>
         </TableShell>
+        {/* Pagination footer — only render when there's more than one page's
+            worth of data; the page-size selector still shows up so the
+            operator can switch their preferred density on smaller filtered
+            sets too. */}
+        {filtered.length > 0 && (
+          <div
+            className="flex items-center justify-between gap-3 flex-wrap px-4 py-3"
+            style={{ borderTop: `1px solid ${p.border}`, backgroundColor: p.bgPanelAlt }}
+          >
+            <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", color: p.textMuted }}>
+              Showing <strong style={{ color: p.textPrimary }}>{pageStart + 1}</strong>
+              –<strong style={{ color: p.textPrimary }}>{pageEnd}</strong>
+              {" "}of <strong style={{ color: p.textPrimary }}>{filtered.length}</strong>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                <span style={{
+                  fontFamily: "'Manrope', sans-serif",
+                  fontSize: "0.62rem", letterSpacing: "0.22em",
+                  textTransform: "uppercase", color: p.textMuted, fontWeight: 700,
+                }}>Rows per page</span>
+                {PAGE_SIZE_OPTIONS.map((n) => (
+                  <button
+                    key={n}
+                    onClick={() => setPageSize(n)}
+                    style={{
+                      fontFamily: "'Manrope', sans-serif",
+                      fontSize: "0.72rem", fontWeight: 700,
+                      padding: "4px 10px",
+                      backgroundColor: pageSize === n ? p.accent : "transparent",
+                      color: pageSize === n ? (p.theme === "light" ? "#FFFFFF" : "#15161A") : p.textSecondary,
+                      border: `1px solid ${pageSize === n ? p.accent : p.border}`,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-1.5" style={{ borderInlineStart: `1px solid ${p.border}`, paddingInlineStart: 12 }}>
+                <button
+                  onClick={() => setPage((x) => Math.max(0, x - 1))}
+                  disabled={safePage === 0}
+                  style={{
+                    fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", fontWeight: 700,
+                    padding: "4px 10px",
+                    color: safePage === 0 ? p.textMuted : p.textPrimary,
+                    border: `1px solid ${p.border}`, backgroundColor: "transparent",
+                    cursor: safePage === 0 ? "not-allowed" : "pointer",
+                  }}
+                >‹ Prev</button>
+                <span style={{
+                  fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem",
+                  color: p.textSecondary, padding: "0 8px",
+                }}>
+                  Page <strong style={{ color: p.textPrimary }}>{safePage + 1}</strong> of {totalPages}
+                </span>
+                <button
+                  onClick={() => setPage((x) => Math.min(totalPages - 1, x + 1))}
+                  disabled={safePage >= totalPages - 1}
+                  style={{
+                    fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", fontWeight: 700,
+                    padding: "4px 10px",
+                    color: safePage >= totalPages - 1 ? p.textMuted : p.textPrimary,
+                    border: `1px solid ${p.border}`, backgroundColor: "transparent",
+                    cursor: safePage >= totalPages - 1 ? "not-allowed" : "pointer",
+                  }}
+                >Next ›</button>
+              </div>
+            </div>
+          </div>
+        )}
       </Card>
 
       {creating && <BookingCreator onClose={() => setCreating(false)} />}

@@ -4340,7 +4340,11 @@ export function DataProvider({ children }) {
   // walk-up booking modal).
   const addBooking = useCallback((booking) => {
     const id = booking.id || `LS-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-    const saved = { ...booking, id };
+    // Stamp a creation timestamp so the admin booking list can sort
+    // newest-first without falling back to id heuristics. Preserve any
+    // caller-supplied value (e.g. when re-creating a deleted record).
+    const createdAt = booking.createdAt || new Date().toISOString();
+    const saved = { ...booking, id, createdAt };
     setBookings(bs => [saved, ...bs]);
     // Direct write — anon homepage bookings go straight to DB (the bulk
     // sync's UPDATE branch is anon-disallowed, so we can't rely on it).
