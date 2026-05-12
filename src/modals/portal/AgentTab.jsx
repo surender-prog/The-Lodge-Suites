@@ -62,7 +62,7 @@ export const AgentTab = () => {
   const t = useT();
   const p = usePalette();
   const { lang } = useLang();
-  const { agencies, upsertAgency, removeAgency, prospects, hotelInfo } = useData();
+  const { agencies, upsertAgency, removeAgency, prospects, hotelInfo, tax } = useData();
   const [bookings] = useState(SAMPLE_BOOKINGS);
   const [selected, setSelected] = useState({});
   const [view, setView] = useState("dashboard");
@@ -349,13 +349,13 @@ export const AgentTab = () => {
                         <RowIconBtn
                           title="Download contract (HTML)"
                           icon={Download}
-                          onClick={() => downloadContract(a, "agent", { hotel: hotelInfo })}
+                          onClick={() => downloadContract(a, "agent", { hotel: hotelInfo, tax })}
                           p={p}
                         />
                         <RowIconBtn
                           title={(a.pocEmail || a.contact) ? `Email to ${a.pocEmail || a.contact}` : "No email on file"}
                           icon={Mail}
-                          onClick={() => emailContract(a, "agent", hotelInfo)}
+                          onClick={() => emailContract(a, "agent", hotelInfo, tax)}
                           p={p}
                           disabled={!(a.pocEmail || a.contact)}
                         />
@@ -829,11 +829,11 @@ export const AgentTab = () => {
                     <td className="px-6 py-3 text-end">
                       <div className="inline-flex items-center gap-1 justify-end">
                         <RowIconBtn title="Preview rate sheet" icon={Eye}      onClick={() => setPreviewing(a)} p={p} />
-                        <RowIconBtn title="Download contract"  icon={Download} onClick={() => downloadContract(a, "agent", { hotel: hotelInfo })} p={p} />
+                        <RowIconBtn title="Download contract"  icon={Download} onClick={() => downloadContract(a, "agent", { hotel: hotelInfo, tax })} p={p} />
                         <RowIconBtn
                           title={(a.pocEmail || a.contact) ? `Email to ${a.pocEmail || a.contact}` : "No email on file"}
                           icon={Mail}
-                          onClick={() => emailContract(a, "agent", hotelInfo)}
+                          onClick={() => emailContract(a, "agent", hotelInfo, tax)}
                           disabled={!(a.pocEmail || a.contact)}
                           p={p}
                         />

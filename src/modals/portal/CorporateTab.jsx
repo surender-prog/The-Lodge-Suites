@@ -45,7 +45,7 @@ export const CorporateTab = () => {
   const {
     agreements, upsertAgreement, removeAgreement,
     rfps, addRfp, upsertRfp, removeRfp,
-    prospects, hotelInfo,
+    prospects, hotelInfo, tax,
   } = useData();
   const [view, setView] = useState("dashboard");
   const [submitted, setSubmitted] = useState(false);
@@ -455,13 +455,13 @@ export const CorporateTab = () => {
                         <RowIconBtn
                           title="Download contract (HTML)"
                           icon={Download}
-                          onClick={() => downloadContract(a, "corporate", { hotel: hotelInfo })}
+                          onClick={() => downloadContract(a, "corporate", { hotel: hotelInfo, tax })}
                           p={p}
                         />
                         <RowIconBtn
                           title={a.pocEmail ? `Email to ${a.pocEmail}` : "No POC email on file"}
                           icon={Mail}
-                          onClick={() => emailContract(a, "corporate", hotelInfo)}
+                          onClick={() => emailContract(a, "corporate", hotelInfo, tax)}
                           p={p}
                           disabled={!a.pocEmail}
                         />

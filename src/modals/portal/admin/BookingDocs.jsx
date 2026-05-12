@@ -1,7 +1,7 @@
 import React from "react";
 import { Download, FileText, Mail, Printer, Receipt, X } from "lucide-react";
 import { usePalette } from "../theme.jsx";
-import { applyTaxes, inverseApplyTaxes, legalLine, useData } from "../../../data/store.jsx";
+import { applyTaxes, inverseApplyTaxes, legalLine, summarizeTax, useData } from "../../../data/store.jsx";
 
 // ---------------------------------------------------------------------------
 // BookingDocs — printable Invoice + Receipt documents for an individual
@@ -287,7 +287,7 @@ export function BookingDocView({ booking, kind, tax, rooms, extras }) {
           </>
         ) : (
           <>
-            <p>All amounts are in <strong>Bahraini Dinars</strong> and inclusive of statutory taxes (10% Service Charge · 5% Government Levy · 10% VAT) where applicable.</p>
+            <p>All amounts are in <strong>Bahraini Dinars</strong> and inclusive of statutory taxes ({summarizeTax(tax) || "10% Service Charge · 5% Government Levy · 10% VAT"}) where applicable.</p>
             {(booking.source === "corporate" || booking.source === "agent") && (
               <p style={{ marginTop: 8 }}>
                 <strong>Payment terms:</strong> {booking.paymentStatus === "invoiced" ? "Net 30" : "On departure"}.
@@ -325,6 +325,7 @@ const tdNumStyle = { ...tdStyle, fontVariantNumeric: "tabular-nums", fontWeight:
 export function buildBookingDocHtml(booking, kind, { tax, rooms, hotel } = {}) {
   const HOTEL = hotel || FALLBACK_HOTEL;
   const folio = buildFolio(booking, tax, rooms);
+  const TAX_LABEL = summarizeTax(tax) || "10% Service Charge · 5% Government Levy · 10% VAT";
   const isConfirm = kind === "confirmation";
   const isReceipt = kind === "receipt";
   const docNo = isReceipt ? `RCP-${booking.id}` : isConfirm ? `CNF-${booking.id}` : `INV-${booking.id}`;
@@ -467,7 +468,7 @@ export function buildBookingDocHtml(booking, kind, { tax, rooms, hotel } = {}) {
       ? `<p>This receipt confirms payment of <strong>${escapeHtml(fmtBhd(folio.paid))}</strong> received against booking <strong>${escapeHtml(booking.id)}</strong>. ${folio.balance > 0 ? `An outstanding balance of ${escapeHtml(fmtBhd(folio.balance))} remains and will be billed on the master folio.` : "Your folio is fully settled — thank you."}</p>`
       : isConfirm
         ? `<p>All amounts are in <strong>Bahraini Dinars</strong> and inclusive of statutory taxes where applicable. Please retain this confirmation for arrival.</p><p style="margin-top:8px;"><strong>Cancellation:</strong> Free cancellation up to 24h before arrival. Late cancellations or no-shows are subject to a one-night charge.</p>${booking.notes ? `<p style="margin-top:8px;"><strong>Special requests on file:</strong> ${escapeHtml(booking.notes)}</p>` : ""}`
-        : `<p>All amounts are in <strong>Bahraini Dinars</strong> and inclusive of statutory taxes (10% Service Charge · 5% Government Levy · 10% VAT) where applicable.</p>${(booking.source === "corporate" || booking.source === "agent") ? `<p style="margin-top:8px;"><strong>Payment terms:</strong> ${booking.paymentStatus === "invoiced" ? "Net 30" : "On departure"}. Pay by bank transfer to <strong>${escapeHtml(HOTEL.bank)}</strong>, IBAN <strong>${escapeHtml(HOTEL.iban)}</strong>, quoting reference <strong>${escapeHtml(booking.id)}</strong>.</p>` : ""}`}
+        : `<p>All amounts are in <strong>Bahraini Dinars</strong> and inclusive of statutory taxes (${escapeHtml(TAX_LABEL)}) where applicable.</p>${(booking.source === "corporate" || booking.source === "agent") ? `<p style="margin-top:8px;"><strong>Payment terms:</strong> ${booking.paymentStatus === "invoiced" ? "Net 30" : "On departure"}. Pay by bank transfer to <strong>${escapeHtml(HOTEL.bank)}</strong>, IBAN <strong>${escapeHtml(HOTEL.iban)}</strong>, quoting reference <strong>${escapeHtml(booking.id)}</strong>.</p>` : ""}`}
   </div>
 
   <p style="margin-top:22px; font-size:0.86rem; line-height:1.7;">

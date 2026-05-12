@@ -1,7 +1,7 @@
 import React from "react";
 import { Download, Mail, Printer, Send, X } from "lucide-react";
 import { usePalette } from "./theme.jsx";
-import { legalLine, useData } from "../../data/store.jsx";
+import { legalLine, summarizeTax, useData } from "../../data/store.jsx";
 
 // ---------------------------------------------------------------------------
 // ContractDocument — printable contract layout shared between Corporate and
@@ -75,6 +75,9 @@ const hasAnyRates = (m) => Object.values(m || {}).some(v => Number(v) > 0);
 export function ContractDocumentView({ contract, kind }) {
   const data = useData();
   const HOTEL = data?.hotelInfo || FALLBACK_HOTEL;
+  // Tax summary pulled live from the configured Tax Setup pattern so any
+  // rate / name / component change in admin updates every contract.
+  const TAX_LABEL = summarizeTax(data?.tax) || "10% Service Charge, 5% Government Levy, 10% VAT";
   const r = readRates(contract, kind);
   const isCorp = kind === "corporate";
   const showWeekday = hasAnyRates(r.daily);
@@ -197,8 +200,8 @@ export function ContractDocumentView({ contract, kind }) {
       <div style={{ marginTop: 14, fontSize: "0.84rem", lineHeight: 1.7, color: "#222" }}>
         <p>
           {contract.taxIncluded
-            ? <>All rates above are in <strong>Bahraini Dinars</strong>, <strong>inclusive</strong> of 10% Service Charge, 5% Government Levy and 10% VAT, on a per-room, per-night basis (room only).</>
-            : <>All rates above are in <strong>Bahraini Dinars</strong>, exclusive of taxes (10% Service Charge, 5% Government Levy, 10% VAT) which will be added at invoicing.</>
+            ? <>All rates above are in <strong>Bahraini Dinars</strong>, <strong>inclusive</strong> of {TAX_LABEL}, on a per-room, per-night basis (room only).</>
+            : <>All rates above are in <strong>Bahraini Dinars</strong>, exclusive of taxes ({TAX_LABEL}) which will be added at invoicing.</>
           }
         </p>
         {Number(contract.accommodationFee) > 0 && (
@@ -344,7 +347,12 @@ const tdNumStyle = { ...tdStyle, fontVariantNumeric: "tabular-nums", fontWeight:
 // Self-contained HTML for download — produces a styled, printable single
 // HTML file that mirrors <ContractDocumentView />.
 // ---------------------------------------------------------------------------
-export function buildContractHtml(contract, kind, { hotel } = {}) {
+export function buildContractHtml(contract, kind, { hotel, tax } = {}) {
+  // Pull the live tax-summary string from the current Tax Setup if a
+  // `tax` config was passed by the caller; otherwise fall back to the
+  // bundled-default label so non-React callers (legacy exports) still
+  // produce a sane document.
+  const TAX_LABEL = summarizeTax(tax) || "10% Service Charge, 5% Government Levy, 10% VAT";
   const HOTEL = hotel || FALLBACK_HOTEL;
   const r = readRates(contract, kind);
   const isCorp = kind === "corporate";
@@ -474,8 +482,8 @@ export function buildContractHtml(contract, kind, { hotel } = {}) {
 
   <div style="margin-top:14px; font-size:0.84rem; line-height:1.7; color:#222;">
     <p>${contract.taxIncluded
-      ? `All rates above are in <strong>Bahraini Dinars</strong>, <strong>inclusive</strong> of 10% Service Charge, 5% Government Levy and 10% VAT, on a per-room, per-night basis (room only).`
-      : `All rates above are in <strong>Bahraini Dinars</strong>, exclusive of taxes (10% Service Charge, 5% Government Levy, 10% VAT) which will be added at invoicing.`}</p>
+      ? `All rates above are in <strong>Bahraini Dinars</strong>, <strong>inclusive</strong> of ${TAX_LABEL}, on a per-room, per-night basis (room only).`
+      : `All rates above are in <strong>Bahraini Dinars</strong>, exclusive of taxes (${TAX_LABEL}) which will be added at invoicing.`}</p>
     ${Number(contract.accommodationFee) > 0
       ? `<p style="margin-top:6px;">A <strong>Hotel Accommodation Fee of BHD ${Number(contract.accommodationFee).toFixed(3)} net per room per night</strong> is additional and not included in the contracted rates.</p>`
       : ""}
@@ -587,8 +595,9 @@ export function printContract(contract, kind, opts = {}) {
   return true;
 }
 
-export function emailContract(contract, kind, hotel) {
+export function emailContract(contract, kind, hotel, tax) {
   const HOTEL = hotel || FALLBACK_HOTEL;
+  const TAX_LABEL = summarizeTax(tax) || "10% Service Charge, 5% Gov. Levy and 10% VAT";
   const r = readRates(contract, kind);
   const isCorp = kind === "corporate";
   const subject = `${HOTEL.name} · ${isCorp ? "Corporate Rate Agreement" : "Wholesaler Contract"} · ${contract.id}`;
@@ -628,7 +637,7 @@ export function emailContract(contract, kind, hotel) {
     lines.push(`Plus Hotel Accommodation Fee of BHD ${Number(contract.accommodationFee).toFixed(3)} per room per night.`);
   }
   if (contract.taxIncluded) {
-    lines.push("All rates inclusive of 10% Service Charge, 5% Gov. Levy and 10% VAT.");
+    lines.push(`All rates inclusive of ${TAX_LABEL}.`);
   }
 
   if ((contract.eventSupplements || []).length > 0) {

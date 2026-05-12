@@ -205,6 +205,29 @@ export function priceLabelFor(extra) {
   }
 }
 
+// Human-readable summary of the configured tax components. Used to render
+// the "(10% Service Charge · 5% Government Levy · 10% VAT)" line on
+// contracts, folios and receipts — pulls from the live Tax Setup so
+// renaming a component or changing a rate updates every printed surface.
+//
+// Percentage components → "<rate>% <name>"   (e.g. "10% VAT")
+// Fixed components      → "BHD <amount> <name> / <unit>"
+//                         (e.g. "BHD 3 Tourism fee / night")
+// Joined with " · ". Empty config → "" (caller can fall back if needed).
+export function summarizeTax(tax) {
+  if (!tax?.components || tax.components.length === 0) return "";
+  return tax.components.map((c) => {
+    if (c.type === "percentage") {
+      return `${c.rate}% ${c.name}`;
+    }
+    if (c.type === "fixed") {
+      const unit = c.chargePer === "stay" ? "" : " / night";
+      return `BHD ${c.amount} ${c.name}${unit}`;
+    }
+    return c.name || "";
+  }).filter(Boolean).join(" · ");
+}
+
 // Apply the tax components to a net rate. Returns gross + the per-line
 // breakdown for display. `nights` is used by per-night fixed components.
 //
