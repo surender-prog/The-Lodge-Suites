@@ -3,7 +3,7 @@ import { Ban, Briefcase, Building2, Calculator, CalendarCheck, Check, CheckCircl
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween } from "../../../../utils/date.js";
-import { useData, roomFitsParty, canViewCardOnFile, maskCardNumber, cardOnFileExpired, CARD_VAULT_RETENTION_DAYS, describePackageConditions, packagePriceSuffix, getPackageRoomPrice } from "../../../../data/store.jsx";
+import { useData, applyTaxes, roomFitsParty, canViewCardOnFile, maskCardNumber, cardOnFileExpired, CARD_VAULT_RETENTION_DAYS, describePackageConditions, packagePriceSuffix, getPackageRoomPrice } from "../../../../data/store.jsx";
 import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 import { BookingDocPreviewModal, emailBookingDoc, printBookingDoc } from "../BookingDocs.jsx";
 
@@ -985,7 +985,7 @@ function BookingEditor({ booking, onClose }) {
   const t = useT();
   const p = usePalette();
   const data = useData();
-  const { rooms, agreements, agencies, members, invoices, payments, packages, tax, extras, hotelInfo, staffSession, updateBooking, addInvoice, addPayment, appendAuditLog } = data;
+  const { rooms, agreements, agencies, members, invoices, payments, packages, tax, taxPatterns, activePatternId, extras, hotelInfo, staffSession, updateBooking, addInvoice, addPayment, appendAuditLog } = data;
   const [draft, setDraft] = useState(booking);
   const [docPreview, setDocPreview] = useState(null); // "confirmation" | "invoice" | "receipt" | null
   const [recordingPayment, setRecordingPayment] = useState(false);
@@ -1004,10 +1004,27 @@ function BookingEditor({ booking, onClose }) {
   const subtotal    = (Number(draft.rate)  || 0) * (nights || 0);
   const extrasList  = Array.isArray(draft.extras) ? draft.extras : [];
   const extrasTotal = extrasList.reduce((s, e) => s + (Number(e.price) || 0), 0);
+  // Live tax calculation — runs the configured tax pattern (Settings →
+  // Tax Setup) against the room subtotal + extras. The result drives the
+  // "Tax (BHD)" row, the live total, and the breakdown shown on Save so
+  // booking.taxLines / taxAmount on the record stay in sync with edits.
+  const liveTaxBase = +(subtotal + extrasTotal).toFixed(3);
+  const liveTaxResult = applyTaxes(liveTaxBase, tax, Math.max(1, nights || 1));
+  const liveTaxAmount = liveTaxResult.totalTax;
+  const liveTaxLines  = liveTaxResult.lines;
+  const liveTotal     = liveTaxResult.gross;
   const grandTotal  = Number(draft.total) || 0;
   const paid        = Number(draft.paid)  || 0;
   const balance     = Math.max(0, +(grandTotal - paid).toFixed(3));
-  const taxAmount   = Math.max(0, +(grandTotal - subtotal - extrasTotal).toFixed(3));
+  // When the stored breakdown is missing (older bookings), fall back to
+  // the legacy "total − subtotal − extras" implied-tax estimate so the row
+  // doesn't go blank on records taken before the unified engine landed.
+  const storedTaxAmount = Number(draft.taxAmount);
+  const storedTaxLines  = Array.isArray(draft.taxLines) ? draft.taxLines : null;
+  const hasStoredBreakdown = Number.isFinite(storedTaxAmount) || (storedTaxLines && storedTaxLines.length > 0);
+  const taxAmount   = hasStoredBreakdown
+    ? Math.max(0, +(storedTaxAmount || 0).toFixed(3))
+    : Math.max(0, +(grandTotal - subtotal - extrasTotal).toFixed(3));
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(booking);
   const hasInvoice  = invoices.some((i) => i.bookingId === booking.id);
@@ -1015,10 +1032,20 @@ function BookingEditor({ booking, onClose }) {
 
   const update = (patch) => setDraft((d) => ({ ...d, ...patch }));
 
+  // Recalc — runs the tax engine against the current rate / extras, then
+  // updates total, taxAmount, taxLines and the pattern stamp on the draft
+  // so subsequent saves persist the new breakdown.
   const recalcTotal = () => {
-    const newTotal = +(subtotal + extrasTotal).toFixed(3);
-    update({ total: newTotal });
-    pushToast({ message: `Total recalculated · ${t("common.bhd")} ${newTotal.toLocaleString()}` });
+    const activePattern = (taxPatterns || []).find((p) => p.id === activePatternId);
+    update({
+      total: +liveTotal.toFixed(3),
+      taxAmount: liveTaxAmount,
+      taxBase: liveTaxBase,
+      taxLines: liveTaxLines,
+      taxPatternId: activePatternId || draft.taxPatternId || null,
+      taxPatternName: activePattern?.name || draft.taxPatternName || null,
+    });
+    pushToast({ message: `Total recalculated · ${t("common.bhd")} ${liveTotal.toLocaleString()} · tax ${t("common.bhd")} ${liveTaxAmount.toLocaleString()}` });
   };
 
   const removeExtra = (idx) => {
@@ -1041,6 +1068,14 @@ function BookingEditor({ booking, onClose }) {
       paid:  Number(draft.paid)  || 0,
       rate:  Number(draft.rate)  || 0,
       guests: Number(draft.guests) || 0,
+      // Persist whatever tax breakdown the draft carries (set by Recalc
+      // or untouched from the original record). Numbers coerced so the
+      // Reports aggregation doesn't trip on string-typed legacy values.
+      taxAmount:  Number(draft.taxAmount)  || 0,
+      taxBase:    Number(draft.taxBase)    || 0,
+      taxLines:   Array.isArray(draft.taxLines) ? draft.taxLines : [],
+      taxPatternId:   draft.taxPatternId   || null,
+      taxPatternName: draft.taxPatternName || null,
     });
     pushToast({ message: `${booking.id} saved` });
     onClose();
@@ -1270,12 +1305,56 @@ function BookingEditor({ booking, onClose }) {
                   <ReadOnlyField p={p} value={`${t("common.bhd")} ${extrasTotal.toLocaleString()}`} hint={`${extrasList.length} item${extrasList.length === 1 ? "" : "s"}`} />
                 </FormGroup>
               )}
-              {taxAmount > 0 && (
-                <FormGroup label="Taxes & service">
-                  <ReadOnlyField p={p} value={`${t("common.bhd")} ${taxAmount.toLocaleString()}`} hint="Implied · total − subtotal − extras" />
-                </FormGroup>
-              )}
+              <FormGroup label="Tax (BHD)">
+                <ReadOnlyField
+                  p={p}
+                  value={`${t("common.bhd")} ${taxAmount.toLocaleString()}`}
+                  hint={hasStoredBreakdown
+                    ? (storedTaxLines && storedTaxLines.length > 0
+                        ? `${storedTaxLines.length} component${storedTaxLines.length === 1 ? "" : "s"} · ${draft.taxPatternName || "stored"}`
+                        : "Stored on record")
+                    : "Implied · total − subtotal − extras"}
+                />
+              </FormGroup>
+              <FormGroup label="Live tax (Recalc)">
+                <ReadOnlyField
+                  p={p}
+                  value={`${t("common.bhd")} ${liveTaxAmount.toLocaleString()}`}
+                  hint={liveTaxLines.length > 0
+                    ? liveTaxLines.map((l) => {
+                        const r = l.type === "percentage"
+                          ? `${l.rate}%${l.calculation === "compound" ? " comp" : ""}`
+                          : `BHD ${l.amount}/n`;
+                        return `${l.name} ${r}`;
+                      }).join(" · ")
+                    : "No tax components configured"}
+                />
+              </FormGroup>
             </div>
+
+            {/* Stored tax breakdown — one row per component so operators
+                can see what the booking was originally taxed on. Hidden
+                when the record predates the unified engine (no taxLines). */}
+            {storedTaxLines && storedTaxLines.length > 0 && (
+              <div className="mt-4 p-3" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
+                <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", color: p.accent, fontWeight: 700, marginBottom: 6 }}>
+                  Tax breakdown {draft.taxPatternName ? `· ${draft.taxPatternName}` : ""}
+                </div>
+                <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem" }}>
+                  {storedTaxLines.map((line, i) => {
+                    const rateLabel = line.type === "percentage"
+                      ? `${line.rate}%${line.calculation === "compound" ? " · compound" : ""}`
+                      : `BHD ${line.amount}/night`;
+                    return (
+                      <div key={line.id || i} className="flex items-center justify-between py-1" style={{ color: p.textSecondary }}>
+                        <span>{line.name} <span style={{ color: p.textMuted, fontSize: "0.7rem" }}>· {rateLabel}</span></span>
+                        <span style={{ color: p.textPrimary, fontWeight: 600 }}>{t("common.bhd")} {Number(line.taxAmount || 0).toLocaleString()}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {draft.source === "agent" && (
               <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1359,6 +1438,12 @@ function BookingEditor({ booking, onClose }) {
                 </SnapRow>
                 <SnapRow p={p} label="Stay" value={`${nights} ${nights === 1 ? "night" : "nights"} · ${draft.guests || 0} ${draft.guests === 1 ? "guest" : "guests"}`} />
                 <SnapRow p={p} label="Total" value={`${t("common.bhd")} ${grandTotal.toLocaleString()}`} accent />
+                {draft.taxPatternName && (
+                  <div className="flex justify-between" style={{ fontSize: "0.66rem", color: p.textMuted, fontFamily: "'Manrope', sans-serif", letterSpacing: "0.02em" }}>
+                    <span style={{ color: p.textMuted }}>Tax pattern</span>
+                    <span style={{ color: p.textSecondary }}>{draft.taxPatternName}</span>
+                  </div>
+                )}
                 <SnapRow p={p} label="Paid"  value={`${t("common.bhd")} ${paid.toLocaleString()}`} success={paid > 0} />
                 <SnapRow p={p} label="Balance" value={`${t("common.bhd")} ${balance.toLocaleString()}`} warn={balance > 0} success={balance === 0 && paid > 0} />
               </div>

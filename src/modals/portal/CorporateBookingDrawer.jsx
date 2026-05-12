@@ -45,7 +45,7 @@ const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString("en-GB", { day: 
 export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
   const p = usePalette();
   const t = useT();
-  const { rooms, addBooking, calendar, tax } = useData();
+  const { rooms, addBooking, calendar, tax, taxPatterns, activePatternId } = useData();
 
   // When the contracted payment term is "Pre-payment (cash)", surface the
   // same Pay-on-arrival / Pay-now-save-5% choice the public booking modal
@@ -124,12 +124,14 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
     const net = Math.max(0, room_subtotal - payNowDiscount);
     let total = net + accFee;
     let taxLines = [];
+    let totalTax = 0;
     if (!agreement.taxIncluded && tax) {
-      const taxed = applyTaxes(net, tax, nights);
-      taxLines = taxed.components || [];
+      const taxed = applyTaxes(net, tax, Math.max(1, nights));
+      taxLines = taxed.lines || [];
+      totalTax = taxed.totalTax;
       total = taxed.gross + accFee;
     }
-    return { room_subtotal, accFee, net, total, taxLines, payNowDiscount };
+    return { room_subtotal, accFee, net, total, taxLines, totalTax, payNowDiscount };
   }, [avgRate, nights, agreement.accommodationFee, agreement.taxIncluded, tax, isPrepay, draft.paymentTiming]);
 
   // Pay-now bookings require a card-on-file; the operator can't confirm
@@ -170,6 +172,10 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
       ? buildCardOnFile({ name: draft.cardName, number: draft.cardNum, exp: draft.cardExp })
       : null;
     const guaranteed = cardOnFile != null;
+    // Pattern lookup for the booking ledger — stamped on the record so
+    // the admin Tax Report can group historical bookings by pattern even
+    // after Settings → Tax Setup is updated.
+    const activePattern = (taxPatterns || []).find((p) => p.id === activePatternId);
     const booking = {
       id,
       guest:       draft.guestName.trim(),
@@ -195,6 +201,16 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
       guaranteed,
       guaranteeMode: guaranteed ? "card" : "none",
       notes:       draft.notes,
+      // Tax breakdown stamped at booking time. `taxBase` is the net (room
+      // subtotal − pay-now discount); the accommodation fee sits outside
+      // the tax calculation so it's not included in `taxBase`. When the
+      // contract is tax-inclusive the lines array is empty and `taxAmount`
+      // is 0 — the Tax Report skips zero-tax bookings.
+      taxAmount: pricing.totalTax || 0,
+      taxBase: pricing.net || 0,
+      taxLines: pricing.taxLines || [],
+      taxPatternId: agreement.taxIncluded ? null : (activePatternId || null),
+      taxPatternName: agreement.taxIncluded ? "Inclusive (corporate)" : (activePattern?.name || null),
     };
     addBooking(booking);
     onSaved?.(booking);
@@ -483,9 +499,14 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
                   {pricing.accFee > 0 && (
                     <SummaryRow label={`Hotel accommodation fee · ${nights} nt`} value={fmtBhd(pricing.accFee)} p={p} />
                   )}
-                  {pricing.taxLines.map((line, i) => (
-                    <SummaryRow key={i} label={line.label} value={fmtBhd(line.amount)} muted p={p} />
-                  ))}
+                  {pricing.taxLines.map((line, i) => {
+                    const rateLabel = line.type === "percentage"
+                      ? `${line.rate}%${line.calculation === "compound" ? " · compound" : ""}`
+                      : `BHD ${line.amount}/night`;
+                    return (
+                      <SummaryRow key={line.id || i} label={`${line.name} · ${rateLabel}`} value={fmtBhd(line.taxAmount)} muted p={p} />
+                    );
+                  })}
                   {agreement.taxIncluded && (
                     <SummaryRow label="Tax handling" value="Inclusive" muted p={p} />
                   )}

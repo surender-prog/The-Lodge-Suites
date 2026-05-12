@@ -8,12 +8,12 @@ import { CountrySelect } from "../components/CountrySelect.jsx";
 import { findCountryByCode, parsePhone, DEFAULT_COUNTRY_CODE } from "../data/countryCodes.js";
 import { useT, useLang } from "../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween, todayISO } from "../utils/date.js";
-import { priceExtra, priceLabelFor, useData, evalPackageEligibility, describePackageConditions, roomFitsParty, computePackageCharge, computePackageSaving, packagePriceSuffix, getPackageRoomPrice, getPackageMinPrice, buildCardOnFile, CARD_VAULT_RETENTION_DAYS } from "../data/store.jsx";
+import { priceExtra, priceLabelFor, useData, evalPackageEligibility, describePackageConditions, roomFitsParty, computePackageCharge, computePackageSaving, packagePriceSuffix, getPackageRoomPrice, getPackageMinPrice, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, applyTaxes } from "../data/store.jsx";
 
 export const BookingModal = ({ open, onClose, initial }) => {
   const t = useT();
   const { lang } = useLang();
-  const { rooms: ROOMS, activeExtras, activePackages, addBooking, members, addMember, tiers, loyalty } = useData();
+  const { rooms: ROOMS, activeExtras, activePackages, addBooking, members, addMember, tiers, loyalty, tax, taxPatterns, activePatternId } = useData();
   // Tier discount table — single source of truth for both the booking-
   // modal's "register me as Silver" flow and the existing-member welcome-
   // back path. Mirrors what the customer portal uses.
@@ -320,8 +320,16 @@ export const BookingModal = ({ open, onClose, initial }) => {
     ? Math.round(stayCharge * (PAY_NOW_DISCOUNT_PCT / 100))
     : 0;
   const subtotal = Math.max(0, stayCharge + addOnTotal - memberDiscount - payNowDiscount);
-  const tax = Math.round(subtotal * 0.10);
-  const total = subtotal + tax;
+  // Run the configured tax pattern (Settings → Tax Setup) instead of a
+  // hardcoded 10%. `tax` here is the tax-config object from useData() —
+  // shadowed by the previous local `tax` variable, now renamed to
+  // `taxAmount`. `applyTaxes` returns the gross, the total tax, and the
+  // per-component breakdown that we both render below and persist on the
+  // booking record for the Tax Report.
+  const taxResult = applyTaxes(subtotal, tax, Math.max(1, nights));
+  const taxAmount = taxResult.totalTax;
+  const taxLines  = taxResult.lines;
+  const total     = taxResult.gross;
 
   // ─ Multi-room helpers used by step 2 ────────────────────────────────
   const setRoomQty = (roomId, delta) => {
@@ -483,6 +491,10 @@ export const BookingModal = ({ open, onClose, initial }) => {
         } catch (_) {}
       }
 
+      // Resolve the tax pattern in effect at booking time so the Tax
+      // Report can group historical bookings by pattern even after the
+      // operator switches to a different pattern in Settings.
+      const activePattern = (taxPatterns || []).find((p) => p.id === activePatternId);
       addBooking({
         id: code,
         guest: data.name || "Guest",
@@ -497,6 +509,15 @@ export const BookingModal = ({ open, onClose, initial }) => {
         guests: partySize,
         rate: pkg ? Math.round(pkgCharge / Math.max(1, nights)) : (lead?.price || 0),
         total,
+        // Tax breakdown — stored on every booking so the admin Tax Report
+        // can aggregate components without re-running applyTaxes against a
+        // pattern that may have changed. `taxBase` is the subtotal the tax
+        // was computed against (room + extras − discounts, pre-tax).
+        taxAmount,
+        taxBase: subtotal,
+        taxLines,
+        taxPatternId: activePatternId || null,
+        taxPatternName: activePattern?.name || null,
         // Pay-now no longer means "money received". Capturing the card
         // is not the same as charging it — the hotel records the actual
         // transaction afterwards (Card on File panel → "Mark as charged"),
@@ -1376,7 +1397,37 @@ export const BookingModal = ({ open, onClose, initial }) => {
                     <span>− {t("common.bhd")} {payNowDiscount}</span>
                   </div>
                 )}
-                <div className="flex justify-between pt-2" style={{ borderTop: `1px solid ${C.border}` }}><span style={{ color: C.textMuted }}>{t("booking.taxLine")}</span><span>{t("common.bhd")} {tax}</span></div>
+                {/* Per-component tax breakdown — renders one indented row
+                    per configured component (e.g. VAT 10%, Tourism fee
+                    BHD 3/night, Govt levy 5%) so the guest sees exactly
+                    what makes up the tax line. Mirrors the "Worked example"
+                    card in Settings → Tax Setup. Falls back gracefully to
+                    a single line when no components are configured. */}
+                {taxLines.length > 0 ? (
+                  <div className="pt-2" style={{ borderTop: `1px solid ${C.border}` }}>
+                    {taxLines.map((line, i) => {
+                      const rateLabel = line.type === "percentage"
+                        ? `${line.rate}%${line.calculation === "compound" ? " · compound" : ""}`
+                        : `${t("common.bhd")} ${line.amount}/night`;
+                      return (
+                        <div key={line.id || i} className="flex justify-between"
+                          style={{ color: C.textMuted, fontSize: "0.78rem", paddingInlineStart: 12 }}>
+                          <span>{line.name} <span style={{ color: C.textDim }}>· {rateLabel}</span></span>
+                          <span>{t("common.bhd")} {line.taxAmount}</span>
+                        </div>
+                      );
+                    })}
+                    <div className="flex justify-between mt-1" style={{ color: C.textMuted, fontSize: "0.82rem" }}>
+                      <span>{t("booking.taxLine")}</span>
+                      <span>{t("common.bhd")} {taxAmount}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex justify-between pt-2" style={{ borderTop: `1px solid ${C.border}` }}>
+                    <span style={{ color: C.textMuted }}>{t("booking.taxLine")}</span>
+                    <span>{t("common.bhd")} {taxAmount}</span>
+                  </div>
+                )}
                 <div className="flex justify-between pt-3 mt-2" style={{ borderTop: `1px solid ${C.border}`, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: C.gold }}>
                   <span>{t("booking.total")}</span><span>{t("common.bhd")} {total}</span>
                 </div>

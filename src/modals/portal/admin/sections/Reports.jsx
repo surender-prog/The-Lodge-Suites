@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Activity, CalendarRange, ChevronLeft, ChevronRight, Coins, DoorOpen,
-  Download, ExternalLink, Printer, RefreshCcw, TrendingDown, TrendingUp, Wrench,
+  Download, ExternalLink, Printer, Receipt, RefreshCcw, TrendingDown, TrendingUp, Wrench, X,
 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { MAINTENANCE_CATEGORIES, useData, applyTaxes } from "../../../../data/store.jsx";
@@ -115,6 +115,7 @@ export const Reports = () => {
       <div className="flex gap-2 mb-6 flex-wrap">
         <SubTab active={section === "activities"}    onClick={() => setSection("activities")}    icon={Activity}      p={p}>Activities</SubTab>
         <SubTab active={section === "revenue"}       onClick={() => setSection("revenue")}       icon={Coins}         p={p}>Revenue</SubTab>
+        <SubTab active={section === "tax"}           onClick={() => setSection("tax")}           icon={Receipt}       p={p}>Tax collected</SubTab>
         <SubTab active={section === "availability"}  onClick={() => setSection("availability")}  icon={CalendarRange} p={p}>Availability</SubTab>
         <SubTab active={section === "maintenance"}   onClick={() => setSection("maintenance")}   icon={Wrench}        p={p}>Maintenance</SubTab>
       </div>
@@ -138,6 +139,7 @@ export const Reports = () => {
         </div>
       )}
       {section === "revenue"      && <RevenueReport />}
+      {section === "tax"          && <TaxReport />}
       {section === "availability" && <AvailabilityReport />}
       {section === "maintenance"  && <MaintenanceReport />}
     </div>
@@ -482,6 +484,358 @@ function RevenueReport() {
           </tbody>
         </TableShell>
       </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TaxReport — "Tax collected" dashboard.
+//
+// Aggregates the per-booking tax breakdown (booking.taxAmount + .taxLines)
+// stamped at booking time by the three booking surfaces (B2C BookingModal,
+// CorporateBookingDrawer, GuestPortal BookStayTab) and the admin Bookings
+// edit drawer's Recalc. Bookings are matched by checkIn within the selected
+// window so the report reflects when stays were booked-for rather than
+// when they were created — same semantics the Revenue report uses.
+//
+// Per-component aggregation iterates each booking's taxLines and groups by
+// line.id; falls back to a single implied "Tax" line for legacy records
+// missing the breakdown (taxLines empty, taxAmount > 0). The per-booking
+// detail table lists every match with a "View breakdown" affordance that
+// pops the line-item composition for that record.
+//
+// Slotted between Revenue and Availability in the sub-tab nav because it's
+// the next thing a CFO/operator looks at after revenue.
+// ---------------------------------------------------------------------------
+function TaxReport() {
+  const p = usePalette();
+  const { bookings } = useData();
+  const [period, setPeriod] = useState(PERIODS[2]); // Monthly default
+  const [anchor, setAnchor] = useState(() => new Date());
+  const [paymentFilter, setPaymentFilter] = useState("all");
+  const [sourceFilter, setSourceFilter]   = useState("all");
+  const [detailFor, setDetailFor] = useState(null);
+
+  const windowStart = useMemo(
+    () => period.id === "day" ? startOfDay(anchor) : startOfDay(addDays(anchor, -(period.days - 1))),
+    [period, anchor]
+  );
+  const windowEnd = useMemo(() => startOfDay(anchor), [anchor]);
+
+  // Eligible bookings — match check-in window, exclude cancelled, apply
+  // payment-status and source filters. Bookings without any tax stamp
+  // (legacy or zero-tax) drop out of the totals naturally but are still
+  // counted in the booking-count metric so the operator can see them.
+  const filtered = useMemo(() => {
+    const winStartMs = windowStart.getTime();
+    const winEndMs   = windowEnd.getTime() + dayMs;
+    return bookings.filter((b) => {
+      if (b.status === "cancelled") return false;
+      const ci = startOfDay(new Date(b.checkIn)).getTime();
+      if (ci < winStartMs || ci >= winEndMs) return false;
+      if (paymentFilter !== "all" && b.paymentStatus !== paymentFilter) return false;
+      if (sourceFilter  !== "all" && b.source        !== sourceFilter)  return false;
+      return true;
+    });
+  }, [bookings, windowStart, windowEnd, paymentFilter, sourceFilter]);
+
+  // Aggregations — total tax, per-component breakdown, per-booking ledger.
+  const totals = useMemo(() => {
+    let totalTax = 0;
+    let totalBase = 0;
+    let totalGross = 0;
+    let withBreakdown = 0;
+    const byComponent = new Map(); // id → { id, name, type, rate, amount, calculation, total }
+    filtered.forEach((b) => {
+      const amount = Number(b.taxAmount) || 0;
+      totalTax  += amount;
+      totalBase += Number(b.taxBase) || 0;
+      totalGross += Number(b.total)  || 0;
+      const lines = Array.isArray(b.taxLines) ? b.taxLines : [];
+      if (lines.length > 0) {
+        withBreakdown += 1;
+        lines.forEach((line) => {
+          const key = line.id || line.name || "tax";
+          const prev = byComponent.get(key) || {
+            id: line.id || key,
+            name: line.name || "Tax",
+            type: line.type || "percentage",
+            rate: line.rate,
+            amount: line.amount,
+            calculation: line.calculation,
+            total: 0,
+          };
+          prev.total += Number(line.taxAmount) || 0;
+          byComponent.set(key, prev);
+        });
+      } else if (amount > 0) {
+        // Legacy fallback — booking has a stored taxAmount but no
+        // line-level breakdown. Bucket it under a generic "Tax".
+        const prev = byComponent.get("__legacy__") || {
+          id: "__legacy__", name: "Tax (legacy)", type: "percentage", rate: null, total: 0,
+        };
+        prev.total += amount;
+        byComponent.set("__legacy__", prev);
+      }
+    });
+    return {
+      totalTax: +totalTax.toFixed(3),
+      totalBase: +totalBase.toFixed(3),
+      totalGross: +totalGross.toFixed(3),
+      bookingCount: filtered.length,
+      withBreakdown,
+      avgPerBooking: filtered.length > 0 ? +(totalTax / filtered.length).toFixed(3) : 0,
+      components: Array.from(byComponent.values()).sort((a, b) => b.total - a.total),
+    };
+  }, [filtered]);
+
+  // CSV — per-booking rows so the operator can pivot externally.
+  const exportRows = () => filtered.map((b) => ({
+    booking_id:    b.id,
+    guest:         b.guest,
+    source:        b.source,
+    check_in:      b.checkIn,
+    check_out:     b.checkOut,
+    nights:        b.nights,
+    tax_pattern:   b.taxPatternName || "",
+    tax_base_bhd:  (Number(b.taxBase)   || 0).toFixed(3),
+    tax_bhd:       (Number(b.taxAmount) || 0).toFixed(3),
+    total_bhd:     (Number(b.total)     || 0).toFixed(3),
+    payment_status: b.paymentStatus || "",
+  }));
+  const downloadCsvFile = () =>
+    downloadCsv(exportRows(), `tax-collected-${period.id}-${isoOf(anchor)}.csv`);
+
+  const PAYMENT_OPTIONS = [
+    { value: "all",      label: "All" },
+    { value: "paid",     label: "Paid" },
+    { value: "deposit",  label: "Deposit" },
+    { value: "invoiced", label: "Invoiced" },
+    { value: "pending",  label: "Pending" },
+  ];
+  const SOURCE_OPTIONS = [
+    { value: "all",       label: "All" },
+    { value: "direct",    label: "Direct" },
+    { value: "ota",       label: "OTA" },
+    { value: "corporate", label: "Corporate" },
+    { value: "agent",     label: "Travel agent" },
+    { value: "member",    label: "Member" },
+  ];
+
+  return (
+    <div>
+      <Card className="mb-5">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <PeriodPicker period={period} setPeriod={setPeriod} anchor={anchor} setAnchor={setAnchor} p={p} />
+          <div className="flex items-center gap-2 flex-wrap">
+            <FilterPicker label="Payment" value={paymentFilter} onChange={setPaymentFilter} options={PAYMENT_OPTIONS} p={p} />
+            <FilterPicker label="Source"  value={sourceFilter}  onChange={setSourceFilter}  options={SOURCE_OPTIONS}  p={p} />
+            <GhostBtn small onClick={downloadCsvFile}><Download size={11} /> CSV</GhostBtn>
+            <GhostBtn small onClick={() => window.print()}><Printer size={11} /> Print</GhostBtn>
+          </div>
+        </div>
+      </Card>
+
+      {/* Headline KPIs */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <Stat label="Tax collected" value={`BHD ${totals.totalTax.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`} hint={`${totals.bookingCount} booking${totals.bookingCount === 1 ? "" : "s"}`} color={p.accent} />
+        <Stat label="Avg / booking" value={`BHD ${totals.avgPerBooking.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`} hint={totals.bookingCount > 0 ? "Per-booking mean" : "No bookings in window"} />
+        <Stat label="Taxable base"  value={`BHD ${totals.totalBase.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`} hint="Sum of pre-tax subtotals" />
+        <Stat label="Gross billed"  value={`BHD ${totals.totalGross.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`} hint="Sum of booking totals" />
+      </div>
+
+      {/* Per-component breakdown */}
+      <Card title="Per-component breakdown" padded={false} className="mb-5">
+        {totals.components.length === 0 ? (
+          <div className="p-5" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}>
+            No tax components recorded in this window.
+          </div>
+        ) : (
+          <TableShell>
+            <thead>
+              <tr>
+                <Th>Component</Th>
+                <Th>Type</Th>
+                <Th>Rate / amount</Th>
+                <Th align="end">Total collected</Th>
+                <Th align="end">Share</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {totals.components.map((c) => {
+                const share = totals.totalTax > 0 ? (c.total / totals.totalTax) * 100 : 0;
+                const rateLabel = c.type === "percentage"
+                  ? (c.rate != null ? `${c.rate}%${c.calculation === "compound" ? " · compound" : ""}` : "—")
+                  : (c.amount != null ? `BHD ${c.amount} / night` : "—");
+                return (
+                  <tr key={c.id}>
+                    <Td>{c.name}</Td>
+                    <Td muted>{c.type === "percentage" ? "Percentage" : c.type === "fixed" ? "Fixed" : c.type}</Td>
+                    <Td>{rateLabel}</Td>
+                    <Td align="end" style={{ color: p.accent, fontWeight: 600 }}>BHD {c.total.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</Td>
+                    <Td align="end" muted>{share.toFixed(1)}%</Td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </TableShell>
+        )}
+      </Card>
+
+      {/* Per-booking detail table */}
+      <Card title={`Per-booking detail · ${filtered.length}`} padded={false}>
+        {filtered.length === 0 ? (
+          <div className="p-5" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}>
+            No bookings match the current filters.
+          </div>
+        ) : (
+          <TableShell>
+            <thead>
+              <tr>
+                <Th>Booking</Th>
+                <Th>Guest</Th>
+                <Th>Source</Th>
+                <Th>Check-in</Th>
+                <Th>Pattern</Th>
+                <Th align="end">Total</Th>
+                <Th align="end">Tax</Th>
+                <Th align="end" />
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((b) => {
+                const lines = Array.isArray(b.taxLines) ? b.taxLines : [];
+                const taxAmt = Number(b.taxAmount) || 0;
+                const total  = Number(b.total) || 0;
+                return (
+                  <tr key={b.id}>
+                    <Td><span style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{b.id}</span></Td>
+                    <Td>{b.guest}</Td>
+                    <Td muted>{SOURCE_LABEL[b.source] || b.source}</Td>
+                    <Td muted>{fmtShort(b.checkIn)}</Td>
+                    <Td muted>{b.taxPatternName || "—"}</Td>
+                    <Td align="end">BHD {total.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 3 })}</Td>
+                    <Td align="end" style={{ color: p.accent, fontWeight: 600 }}>BHD {taxAmt.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</Td>
+                    <Td align="end">
+                      <button
+                        onClick={() => setDetailFor(b)}
+                        disabled={taxAmt === 0 && lines.length === 0}
+                        style={{
+                          color: (taxAmt === 0 && lines.length === 0) ? p.textDim : p.accent,
+                          border: `1px solid ${(taxAmt === 0 && lines.length === 0) ? p.border : p.accent}`,
+                          background: "transparent",
+                          padding: "0.25rem 0.6rem",
+                          fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.18em",
+                          textTransform: "uppercase", fontWeight: 700,
+                          cursor: (taxAmt === 0 && lines.length === 0) ? "default" : "pointer",
+                        }}>
+                        View breakdown
+                      </button>
+                    </Td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </TableShell>
+        )}
+      </Card>
+
+      {/* Per-booking breakdown popover */}
+      {detailFor && <TaxBreakdownModal booking={detailFor} onClose={() => setDetailFor(null)} p={p} />}
+    </div>
+  );
+}
+
+// Filter chip-style picker. Mirrors the SubTab visual but smaller and used
+// for one-of-N filter slots in the Tax report toolbar.
+function FilterPicker({ label, value, onChange, options, p }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}>
+        {label}
+      </span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          backgroundColor: "transparent",
+          color: p.textPrimary,
+          border: `1px solid ${p.border}`,
+          padding: "0.35rem 0.6rem",
+          fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem",
+          letterSpacing: "0.08em", fontWeight: 600,
+          cursor: "pointer",
+        }}>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+// Per-booking tax breakdown popover. Renders the same line-item structure
+// stored on booking.taxLines, with a graceful single-row fallback for
+// legacy records that only have an aggregate taxAmount.
+function TaxBreakdownModal({ booking, onClose, p }) {
+  const lines = Array.isArray(booking.taxLines) ? booking.taxLines : [];
+  const total = Number(booking.taxAmount) || 0;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ backgroundColor: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)" }}
+      onClick={onClose}>
+      <div className="w-full max-w-md" onClick={(e) => e.stopPropagation()}
+        style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}` }}>
+        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: `1px solid ${p.border}` }}>
+          <div>
+            <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.28em", textTransform: "uppercase", color: p.accent, fontWeight: 700 }}>
+              Tax breakdown
+            </div>
+            <div style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic", fontSize: "1.4rem", color: p.textPrimary, lineHeight: 1.1, marginTop: 2 }}>
+              {booking.id} · {booking.guest}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ color: p.textMuted, padding: 6, background: "transparent", border: "none", cursor: "pointer" }}>
+            <X size={16} />
+          </button>
+        </div>
+        <div className="px-5 py-4" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}>
+          {booking.taxPatternName && (
+            <div className="flex items-center justify-between mb-3 pb-3" style={{ borderBottom: `1px solid ${p.border}`, color: p.textMuted, fontSize: "0.78rem" }}>
+              <span>Pattern</span>
+              <span style={{ color: p.textSecondary, fontWeight: 600 }}>{booking.taxPatternName}</span>
+            </div>
+          )}
+          {lines.length === 0 ? (
+            <div style={{ color: p.textMuted, fontSize: "0.82rem" }}>
+              {total > 0
+                ? "Legacy record · stored as aggregate only."
+                : "No tax recorded on this booking."}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {lines.map((line, i) => {
+                const rateLabel = line.type === "percentage"
+                  ? `${line.rate}%${line.calculation === "compound" ? " · compound" : ""}`
+                  : `BHD ${line.amount} / night`;
+                return (
+                  <div key={line.id || i} className="flex items-center justify-between">
+                    <div>
+                      <div style={{ color: p.textPrimary, fontWeight: 600 }}>{line.name}</div>
+                      <div style={{ color: p.textMuted, fontSize: "0.7rem" }}>{rateLabel}</div>
+                    </div>
+                    <div style={{ color: p.accent, fontWeight: 700 }}>BHD {Number(line.taxAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="flex items-center justify-between mt-4 pt-3" style={{ borderTop: `1px solid ${p.border}` }}>
+            <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.15rem", color: p.textPrimary }}>Total tax</span>
+            <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: p.accent, fontWeight: 700 }}>BHD {total.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

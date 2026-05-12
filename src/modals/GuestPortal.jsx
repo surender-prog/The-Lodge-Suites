@@ -2615,7 +2615,7 @@ function receiptHtml(pay, bookings, hotel) {
 // Confirm) with a sticky "Your reservation" rail showing the running total.
 function BookStayTab({ session, kind, account, onComplete }) {
   const p = usePalette();
-  const { rooms, tiers, loyalty, activeExtras, tax, addBooking, addInvoice } = useData();
+  const { rooms, tiers, loyalty, activeExtras, tax, taxPatterns, activePatternId, addBooking, addInvoice } = useData();
 
   const today = todayISO();
   const [step,     setStep]     = useState(1);
@@ -2846,6 +2846,9 @@ function BookStayTab({ session, kind, account, onComplete }) {
     const perLineDiscount = totalRoomLines > 0
       ? Math.round((payNowDiscount / totalRoomLines) * 1000) / 1000
       : 0;
+    // Pattern lookup once per confirm() — every per-line booking gets the
+    // same pattern stamp.
+    const activePattern = (taxPatterns || []).find((p) => p.id === activePatternId);
     stayTotals.forEach((s) => {
       const qty = Number(s.quantity) || 1;
       for (let i = 0; i < qty; i++) {
@@ -2854,9 +2857,15 @@ function BookStayTab({ session, kind, account, onComplete }) {
         const roomTotal = Math.max(0, roomTotalGross - lineDiscount);
         const isLead = !extrasAttached;
         const lineExtras = isLead ? extrasTotal : 0;
-        const lineTax = isLead
-          ? (taxIncluded ? 0 : applyTaxes(roomTotal + lineExtras, tax, nights).totalTax)
-          : (taxIncluded ? 0 : applyTaxes(roomTotal, tax, nights).totalTax);
+        // Run the configured tax pattern once for this line and keep both
+        // the totalTax (for the row total) and the per-component lines so
+        // the Tax Report can aggregate. Tax-included contracts emit an
+        // empty lines array and zero amount.
+        const lineTaxBase = roomTotal + lineExtras;
+        const lineTaxResult = taxIncluded
+          ? { totalTax: 0, lines: [] }
+          : applyTaxes(lineTaxBase, tax, Math.max(1, nights));
+        const lineTax = lineTaxResult.totalTax;
         const total = Math.round((roomTotal + lineExtras + lineTax) * 1000) / 1000;
         const bookedByOther = bookFor === "other";
         // Payment status mapping mirrors the public BookingModal contract.
@@ -2909,6 +2918,16 @@ function BookStayTab({ session, kind, account, onComplete }) {
           extras: isLead && extrasList.length > 0
             ? extrasList.map((e) => ({ id: e.id, title: e.title, price: priceExtra(e, { adults: partySize, nights }) }))
             : [],
+          // Tax breakdown — stamped per booking row so the admin Tax
+          // Report can aggregate components across stays. taxBase is the
+          // pre-tax total this row was assessed on (room + line extras −
+          // line discount). taxLines / taxAmount are empty / 0 when the
+          // contract is tax-inclusive.
+          taxAmount: lineTax,
+          taxBase: lineTaxBase,
+          taxLines: lineTaxResult.lines || [],
+          taxPatternId: taxIncluded ? null : (activePatternId || null),
+          taxPatternName: taxIncluded ? "Inclusive (contract)" : (activePattern?.name || null),
         };
         if (kind === "corporate") booking.accountId = account.id;
         if (kind === "agent")     { booking.agencyId = account.id; booking.comm = Math.round((roomTotal * (account.commissionPct || 0) / 100) * 1000) / 1000; }
