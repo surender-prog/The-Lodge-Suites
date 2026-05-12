@@ -445,13 +445,17 @@ function SourceMixCard({ bookings, setSource, activeSource }) {
 function RowActions({ booking, onEdit }) {
   const p = usePalette();
   const t = useT();
-  const { updateBooking, removeBooking, addInvoice, invoices, tax, rooms, extras } = useData();
+  const { updateBooking, removeBooking, addInvoice, invoices, tax, rooms, extras, staffSession, appendAuditLog } = useData();
   const [menuOpen, setMenuOpen] = useState(false);
   const [docPreview, setDocPreview] = useState(null); // "invoice" | "receipt" | null
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const ref = useRef(null);
 
   const alreadyBilled = invoices.some(i => i.bookingId === booking.id);
   const hasPayment    = (booking.paid || 0) > 0;
+  // Operator must hold `bookings_delete` for the destructive entry to render.
+  const canDeleteBooking = Array.isArray(staffSession?.permissions)
+    && staffSession.permissions.includes("bookings_delete");
 
   React.useEffect(() => {
     if (!menuOpen) return;
@@ -482,6 +486,27 @@ function RowActions({ booking, onEdit }) {
     if (!confirm(`Cancel booking ${booking.id}?`)) return;
     updateBooking(booking.id, { status: "cancelled" });
     pushToast({ message: `Booking ${booking.id} cancelled`, kind: "warn" });
+  };
+  // Hard-delete invoked from the row kebab. Same audit-log + toast pattern
+  // as the drawer's danger-zone action — gated by `bookings_delete` and
+  // requires "type to confirm" via the shared modal.
+  const deletePermanently = () => {
+    if (!canDeleteBooking) return;
+    try { removeBooking(booking.id); } catch (_) {}
+    try {
+      appendAuditLog?.({
+        kind: "booking-deleted",
+        actorId: staffSession?.id || "anon",
+        actorName: staffSession?.name || "Staff",
+        actorRole: staffSession?.role || null,
+        targetKind: "booking",
+        targetId: booking.id,
+        targetName: booking.guest || null,
+        details: "Permanently deleted from DB",
+      });
+    } catch (_) {}
+    pushToast({ message: `Booking deleted · ${booking.id}`, kind: "warn" });
+    setConfirmDelete(false);
   };
   const generateInvoice = () => {
     const today = new Date().toISOString().slice(0, 10);
@@ -541,6 +566,9 @@ function RowActions({ booking, onEdit }) {
           )}
           <div style={{ height: 1, backgroundColor: p.border }} />
           <MenuItem icon={Ban} label="Cancel booking" onClick={() => { setMenuOpen(false); cancel(); }} danger />
+          {canDeleteBooking && (
+            <MenuItem icon={Trash2} label="Delete permanently" onClick={() => { setMenuOpen(false); setConfirmDelete(true); }} danger />
+          )}
         </div>
       )}
       {docPreview && (
@@ -551,6 +579,13 @@ function RowActions({ booking, onEdit }) {
           rooms={rooms}
           extras={extras}
           onClose={() => setDocPreview(null)}
+        />
+      )}
+      {confirmDelete && (
+        <DeleteBookingConfirmModal
+          booking={booking}
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={deletePermanently}
         />
       )}
     </div>
@@ -985,10 +1020,15 @@ function BookingEditor({ booking, onClose }) {
   const t = useT();
   const p = usePalette();
   const data = useData();
-  const { rooms, agreements, agencies, members, invoices, payments, packages, tax, taxPatterns, activePatternId, extras, hotelInfo, staffSession, updateBooking, addInvoice, addPayment, appendAuditLog } = data;
+  const { rooms, agreements, agencies, members, invoices, payments, packages, tax, taxPatterns, activePatternId, extras, hotelInfo, staffSession, updateBooking, removeBooking, addInvoice, addPayment, appendAuditLog } = data;
   const [draft, setDraft] = useState(booking);
   const [docPreview, setDocPreview] = useState(null); // "confirmation" | "invoice" | "receipt" | null
   const [recordingPayment, setRecordingPayment] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  // Operator must hold `bookings_delete` to see / use the destructive
+  // "Delete booking permanently" action below the Lifecycle card.
+  const canDeleteBooking = Array.isArray(staffSession?.permissions)
+    && staffSession.permissions.includes("bookings_delete");
 
   // Resolve the offer record (when this booking was placed against one)
   // so the sidebar can render its conditions, savings and per-room price.
@@ -1088,6 +1128,33 @@ function BookingEditor({ booking, onClose }) {
   const checkIn    = () => { update({ status: "in-house" });   pushToast({ message: "Status set to in-house (unsaved)" }); };
   const checkOut   = () => { update({ status: "checked-out" }); pushToast({ message: "Status set to checked-out (unsaved)" }); };
   const cancelBkg  = () => { if (confirm(`Cancel booking ${booking.id}?`)) { update({ status: "cancelled" }); pushToast({ message: "Status set to cancelled (unsaved)", kind: "warn" }); } };
+
+  // Hard-delete from the DB. Gated by the `bookings_delete` permission and
+  // a "type the booking reference to confirm" modal — this is the only
+  // destructive action in the portal that bypasses the soft-cancel audit
+  // trail, so it carries an explicit `booking-deleted` audit-log entry of
+  // its own. Persistence layer (useSlicePersistence on `bookings`) syncs
+  // the removal to Supabase on the next bulkReplace sweep.
+  const deleteBookingPermanently = () => {
+    if (!canDeleteBooking) return;
+    try { removeBooking(booking.id); } catch (_) {}
+    try {
+      appendAuditLog?.({
+        kind: "booking-deleted",
+        actorId: staffSession?.id || "anon",
+        actorName: staffSession?.name || "Staff",
+        actorRole: staffSession?.role || null,
+        targetKind: "booking",
+        targetId: booking.id,
+        targetName: booking.guest || null,
+        details: "Permanently deleted from DB",
+      });
+    } catch (_) {}
+    pushToast({ message: `Booking deleted · ${booking.id}`, kind: "warn" });
+    setConfirmDelete(false);
+    onClose();
+  };
+
   const genInvoice = () => {
     const today = new Date().toISOString().slice(0, 10);
     const due   = booking.source === "guest" || booking.source === "direct" ? today
@@ -1568,6 +1635,26 @@ function BookingEditor({ booking, onClose }) {
                 </div>
               )}
             </SidebarCard>
+
+            {/* Danger zone — only rendered for operators that explicitly hold
+                the `bookings_delete` permission. Hard-deletes the booking
+                from the store; the soft-cancel "Cancel booking" action in
+                the Lifecycle card above preserves the audit trail and is
+                what most operators should be using. */}
+            {canDeleteBooking && (
+              <SidebarCard title="Danger zone" p={p}>
+                <SidebarBtn
+                  p={p}
+                  icon={<Trash2 size={12} />}
+                  label="Delete booking permanently"
+                  onClick={() => setConfirmDelete(true)}
+                  danger
+                />
+                <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 8, lineHeight: 1.5, fontFamily: "'Manrope', sans-serif" }}>
+                  Removes <strong style={{ color: p.textPrimary }}>{booking.id}</strong> from the database. Use <strong>Cancel booking</strong> above if you just need to mark this reservation as cancelled.
+                </div>
+              </SidebarCard>
+            )}
           </div>
         </div>
       </div>
@@ -1583,7 +1670,115 @@ function BookingEditor({ booking, onClose }) {
           onClose={() => setDocPreview(null)}
         />
       )}
+
+      {/* Type-to-confirm hard-delete modal — gated by `bookings_delete`. */}
+      {confirmDelete && (
+        <DeleteBookingConfirmModal
+          booking={booking}
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={deleteBookingPermanently}
+        />
+      )}
     </Drawer>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// DeleteBookingConfirmModal — destructive-action confirm. Requires the
+// operator to type the booking reference exactly to enable the Delete
+// button. Sits on top of the BookingEditor Drawer.
+// ---------------------------------------------------------------------------
+function DeleteBookingConfirmModal({ booking, onCancel, onConfirm }) {
+  const p = usePalette();
+  const expected = String(booking.reference || booking.id || "").trim();
+  const [typed, setTyped] = useState("");
+  const armed = typed.trim() === expected && expected.length > 0;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-lg"
+        style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.danger}`, fontFamily: "'Manrope', sans-serif" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 py-4 flex items-center gap-2" style={{ borderBottom: `1px solid ${p.border}` }}>
+          <Trash2 size={14} style={{ color: p.danger }} />
+          <span style={{ color: p.danger, fontSize: "0.66rem", letterSpacing: "0.28em", textTransform: "uppercase", fontWeight: 700 }}>
+            Delete booking permanently?
+          </span>
+        </div>
+        <div className="px-5 py-4" style={{ color: p.textSecondary, fontSize: "0.84rem", lineHeight: 1.55 }}>
+          <p>
+            This will <strong style={{ color: p.danger }}>REMOVE</strong>{" "}
+            <strong style={{ color: p.textPrimary }}>{expected}</strong>{" "}
+            from the database. The booking row, its folio history, payments, and audit-trail entries linked to it will all be gone. This action <strong>CANNOT</strong> be undone.
+          </p>
+          <p style={{ marginTop: 10 }}>
+            If you just want to mark it as no-show or cancelled, use the status buttons above instead — those keep the audit trail.
+          </p>
+          <div style={{ marginTop: 14 }}>
+            <label style={{ display: "block", color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
+              Type the booking reference to confirm
+            </label>
+            <input
+              type="text"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder={expected}
+              autoFocus
+              style={{
+                width: "100%", padding: "0.55rem 0.7rem",
+                fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem",
+                backgroundColor: p.inputBg, color: p.textPrimary,
+                border: `1px solid ${armed ? p.danger : p.border}`, outline: "none",
+                letterSpacing: "0.02em",
+              }}
+              onFocus={(e) => { e.currentTarget.style.borderColor = armed ? p.danger : p.accent; }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = armed ? p.danger : p.border; }}
+            />
+          </div>
+        </div>
+        <div className="px-5 py-3 flex items-center justify-end gap-2" style={{ borderTop: `1px solid ${p.border}` }}>
+          <button
+            onClick={onCancel}
+            style={{
+              backgroundColor: "transparent",
+              color: p.textMuted,
+              border: `1px solid ${p.border}`,
+              padding: "0.5rem 1rem",
+              fontFamily: "'Manrope', sans-serif",
+              fontSize: "0.66rem", fontWeight: 600,
+              letterSpacing: "0.2em", textTransform: "uppercase",
+              cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={armed ? onConfirm : undefined}
+            disabled={!armed}
+            style={{
+              backgroundColor: armed ? p.danger : "transparent",
+              color: armed ? "#FFFFFF" : p.textDim,
+              border: `1px solid ${armed ? p.danger : p.border}`,
+              padding: "0.5rem 1rem",
+              fontFamily: "'Manrope', sans-serif",
+              fontSize: "0.66rem", fontWeight: 700,
+              letterSpacing: "0.2em", textTransform: "uppercase",
+              cursor: armed ? "pointer" : "not-allowed",
+              opacity: armed ? 1 : 0.55,
+              display: "inline-flex", alignItems: "center", gap: 6,
+            }}
+          >
+            <Trash2 size={12} /> Delete permanently
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1728,14 +1923,16 @@ function SnapRow({ p, label, value, children, accent, success, warn }) {
 // CardVaultPanel — secured display of a guest's stored card. The card data
 // is captured by the BookingModal during checkout (or by the Booking
 // admin tools) and held for CARD_VAULT_RETENTION_DAYS days, after which
-// it auto-purges on render. Only roles in CARD_VAULT_ROLES (Owner / GM /
-// FOM / Accounts) can reveal the unmasked PAN; every reveal writes an
-// audit-log entry for traceability.
+// it auto-purges on render. Only operators holding the `card_vault_view`
+// permission (managed in Staff & Access) can reveal the unmasked PAN; every
+// reveal writes an audit-log entry for traceability. CARD_VAULT_ROLES still
+// acts as a backwards-compat default when the session's permissions array
+// is empty.
 // ---------------------------------------------------------------------------
 function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLog, updateBooking, addPayment }) {
   const card = draft.cardOnFile;
   const role = (staffSession?.role || "").toLowerCase();
-  const allowed = canViewCardOnFile(role);
+  const allowed = canViewCardOnFile(staffSession);
   const expired = card ? cardOnFileExpired(card) : false;
   const [revealed, setRevealed] = React.useState(false);
   // Charge-recording state machine. "idle" → primary "Mark as charged"
@@ -2070,8 +2267,9 @@ function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLo
                 <div className="p-2.5 flex items-start gap-2 w-full" style={{ backgroundColor: p.bgPanelAlt, border: `1px dashed ${p.border}`, color: p.textMuted, fontSize: "0.74rem", lineHeight: 1.5 }}>
                   <ShieldCheck size={12} style={{ marginTop: 2, flexShrink: 0, color: p.accent }} />
                   <span>
-                    Your role (<strong style={{ color: p.textPrimary }}>{role || "—"}</strong>) cannot view stored card data.
-                    {" "}Authorised roles: Owner, GM, Front Office Manager, Accounts.
+                    Your role (<strong style={{ color: p.textPrimary }}>{role || "—"}</strong>) doesn't include the
+                    {" "}<strong style={{ color: p.textPrimary }}>View card on file</strong> permission.
+                    {" "}Ask the Owner to grant it from <strong style={{ color: p.textPrimary }}>Staff &amp; Access</strong>.
                   </span>
                 </div>
               )}

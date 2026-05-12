@@ -2694,10 +2694,11 @@ const SAMPLE_REPORT_SCHEDULES = [
 // `category` is for layout only, `id` is what's stored on each user.
 export const PERMISSIONS = [
   // Operations & front desk
-  { id: "dashboard",    label: "Dashboard",          category: "Operations",  hint: "View KPIs and shortcuts." },
-  { id: "calendar",     label: "Calendar",           category: "Operations",  hint: "View / edit availability and overrides." },
-  { id: "bookings",     label: "Bookings",           category: "Operations",  hint: "View, edit and cancel reservations." },
-  { id: "stopsale",     label: "Stop-Sale & OTA",    category: "Operations",  hint: "Push availability, manage channels." },
+  { id: "dashboard",       label: "Dashboard",          category: "Operations",  hint: "View KPIs and shortcuts." },
+  { id: "calendar",        label: "Calendar",           category: "Operations",  hint: "View / edit availability and overrides." },
+  { id: "bookings",        label: "Bookings",           category: "Operations",  hint: "View, edit and cancel reservations." },
+  { id: "bookings_delete", label: "Delete bookings",    category: "Operations",  hint: "Permanently remove a booking from the database. Destructive; only grant to senior staff." },
+  { id: "stopsale",        label: "Stop-Sale & OTA",    category: "Operations",  hint: "Push availability, manage channels." },
   // Inventory & rates
   { id: "rooms",        label: "Rooms & Rates",      category: "Inventory",   hint: "Edit room types, rates, photography." },
   { id: "offers",       label: "Offers & Packages",  category: "Inventory",   hint: "Run promotions and packages." },
@@ -2711,9 +2712,10 @@ export const PERMISSIONS = [
   // Loyalty / guest
   { id: "members",      label: "LS Privilege",       category: "Guest",       hint: "View and manage loyalty members." },
   // Finance
-  { id: "invoices",     label: "Invoices",           category: "Finance",     hint: "Create folios and partner invoices." },
-  { id: "payments",     label: "Payments",           category: "Finance",     hint: "Receipts, refunds, settlements." },
-  { id: "tax",          label: "Tax Setup",          category: "Finance",     hint: "VAT, levies, service charges." },
+  { id: "invoices",        label: "Invoices",           category: "Finance",     hint: "Create folios and partner invoices." },
+  { id: "payments",        label: "Payments",           category: "Finance",     hint: "Receipts, refunds, settlements." },
+  { id: "tax",             label: "Tax Setup",          category: "Finance",     hint: "VAT, levies, service charges." },
+  { id: "card_vault_view", label: "View card on file",  category: "Finance",     hint: "Reveal full PAN of stored cards. Every reveal is recorded in the activity log." },
   // Comms
   { id: "emails",       label: "Email Templates",    category: "Comms",       hint: "Guest, partner and ops emails." },
   { id: "siteContent",  label: "Site Content (CMS)", category: "Comms",       hint: "Public marketing site copy & images." },
@@ -2732,12 +2734,14 @@ export const ADMIN_ROLES = [
   {
     id: "gm", name: "General Manager",
     color: "#0F766E", description: "Operates the entire portal except staff & access.",
-    permissions: PERMISSIONS.filter(p => p.id !== "admin_users").map(p => p.id),
+    // Excludes admin_users (gated to Owner) and bookings_delete (destructive —
+    // Owner must explicitly grant it per user).
+    permissions: PERMISSIONS.filter(p => p.id !== "admin_users" && p.id !== "bookings_delete").map(p => p.id),
   },
   {
     id: "fom", name: "Front Office Manager",
     color: "#2563EB", description: "Front desk + reservations + members + room operations.",
-    permissions: ["dashboard", "calendar", "bookings", "stopsale", "rooms", "offers", "extras", "members", "emails", "maintenance"],
+    permissions: ["dashboard", "calendar", "bookings", "stopsale", "rooms", "offers", "extras", "members", "emails", "maintenance", "card_vault_view"],
   },
   {
     id: "reservations", name: "Reservations",
@@ -2757,7 +2761,7 @@ export const ADMIN_ROLES = [
   {
     id: "accounts", name: "Accounts",
     color: "#BE123C", description: "Folios, payments, taxes and partner invoices.",
-    permissions: ["dashboard", "invoices", "payments", "tax", "corporates", "agents"],
+    permissions: ["dashboard", "invoices", "payments", "tax", "corporates", "agents", "card_vault_view"],
   },
   {
     id: "marketing", name: "Marketing",
@@ -2782,6 +2786,7 @@ export const AUDIT_KINDS = [
   { id: "password-change",    label: "Password change",    color: "#0891B2" },
   { id: "permissions-change", label: "Permissions change", color: "#D97706" },
   { id: "booking-created",    label: "Booking created",    color: "#2563EB" },
+  { id: "booking-deleted",    label: "Booking deleted",    color: "#DC2626" },
   { id: "prospect-converted", label: "Prospect converted", color: "#16A34A" },
   { id: "vendor-call",        label: "Vendor dispatched",  color: "#0D9488" },
   { id: "data-export",        label: "Data export",        color: "#BE123C" },
@@ -3046,12 +3051,28 @@ const DEFAULT_HOTEL_INFO = {
 // ---------------------------------------------------------------------------
 // Card-on-file helpers
 // ---------------------------------------------------------------------------
-// Roles authorised to view the unmasked card on a booking. Everyone else
-// sees the masked last-4 only. Edit this list (or expose a permission in
-// the Staff & Access editor) when more roles need access.
+// Default-allow set of roles for backwards compatibility. The canonical
+// gate is now the `card_vault_view` permission (managed in Staff & Access);
+// this set kicks in only when a session record has an empty permissions
+// array — typically right after a legacy staff record loads before the
+// operator has touched their permission matrix.
 export const CARD_VAULT_ROLES = new Set(["owner", "gm", "fom", "accounts"]);
-export function canViewCardOnFile(role) {
-  return CARD_VAULT_ROLES.has(String(role || "").toLowerCase());
+
+// Permission check for revealing the full PAN of a stored card.
+// Accepts either a session object (preferred — uses live permissions)
+// or a bare role string (fallback for legacy callers).
+//
+// CARD_VAULT_ROLES is kept as a sane default so freshly-created staff
+// without explicit permission edits inherit the same set we used before
+// the permission system existed.
+export function canViewCardOnFile(sessionOrRole) {
+  if (sessionOrRole && typeof sessionOrRole === "object") {
+    const perms = Array.isArray(sessionOrRole.permissions) ? sessionOrRole.permissions : [];
+    if (perms.includes("card_vault_view")) return true;
+    // Fall back to role for backwards compat when permissions array is empty
+    return CARD_VAULT_ROLES.has(String(sessionOrRole.role || "").toLowerCase());
+  }
+  return CARD_VAULT_ROLES.has(String(sessionOrRole || "").toLowerCase());
 }
 
 // Returns last-4 of a card number with leading dots, e.g. "•••• 4242".
