@@ -32,6 +32,18 @@ import { IMG } from "./images.js";
 // — see the Rooms admin for live editing. An extra bed adds capacity on
 // top of `occupancy`, so a One-Bed (occupancy 3) with 1 extra bed accepts
 // 4 sleepers total, etc.
+// Pricing notes
+// -------------
+//   `price`         — weekday (Sun–Wed in the Bahrain default) nightly rate.
+//   `priceWeekend`  — weekend (Fri/Sat by default) nightly rate. The set of
+//                     "weekend days" is operator-configurable in Property
+//                     Info → Weekend days; this field is per-suite. Seeded
+//                     here at a ~15-20% premium over the weekday rate and
+//                     editable in admin Rooms & Rates.
+//
+// When `priceWeekend` is omitted (e.g. legacy unmigrated DB rows), the
+// nightlyBreakdown helper falls back to `price` so historical bookings
+// still resolve to a sensible total.
 export const ROOMS = [
   {
     id: "studio",
@@ -40,6 +52,7 @@ export const ROOMS = [
     maxAdults: 2,
     maxChildren: 1,
     price: 38,
+    priceWeekend: 44,
     image: IMG.studioSuite,
     extraBedAvailable: false,
     maxExtraBeds: 0,
@@ -53,6 +66,7 @@ export const ROOMS = [
     maxAdults: 2,
     maxChildren: 2,
     price: 44,
+    priceWeekend: 52,
     image: IMG.oneBedroom,
     popular: true,
     extraBedAvailable: true,
@@ -70,6 +84,7 @@ export const ROOMS = [
     maxAdults: 4,
     maxChildren: 3,
     price: 78,
+    priceWeekend: 92,
     image: IMG.twoBedroom,
     extraBedAvailable: true,
     maxExtraBeds: 1,
@@ -83,6 +98,7 @@ export const ROOMS = [
     maxAdults: 4,
     maxChildren: 4,
     price: 96,
+    priceWeekend: 115,
     image: IMG.threeBedroom,
     extraBedAvailable: true,
     maxExtraBeds: 2,

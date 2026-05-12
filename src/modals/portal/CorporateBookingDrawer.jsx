@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
 import { useT } from "../../i18n/LanguageContext.jsx";
-import { useData, applyTaxes, buildCardOnFile } from "../../data/store.jsx";
+import { useData, applyTaxes, buildCardOnFile, nightlyBreakdown } from "../../data/store.jsx";
 
 // Pay-now incentive — applied when a pre-payment-contracted account opts to
 // settle at booking instead of on arrival. Mirrors the B2C BookingModal so
@@ -45,7 +45,7 @@ const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString("en-GB", { day: 
 export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
   const p = usePalette();
   const t = useT();
-  const { rooms, addBooking, calendar, tax, taxPatterns, activePatternId } = useData();
+  const { rooms, addBooking, calendar, tax, taxPatterns, activePatternId, hotelInfo } = useData();
 
   // When the contracted payment term is "Pre-payment (cash)", surface the
   // same Pay-on-arrival / Pay-now-save-5% choice the public booking modal
@@ -95,28 +95,64 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
     return room.price;
   }, [room, isLongStay, agreement]);
 
+  // Partner contracts price weekday vs weekend via `weekendUpliftPct` on the
+  // agreement (a flat percentage premium on the contracted daily rate).
+  // Long-stay monthly rates are flat and don't get a weekend uplift — the
+  // monthly figure is already a blended package, so we keep both buckets
+  // equal in that branch.
+  const weekendUplift = Number(agreement.weekendUpliftPct || 0);
+  const contractWeekendRate = isLongStay
+    ? contractRate
+    : Math.round(contractRate * (1 + weekendUplift / 100));
+
+  // Weekday/weekend split — uses the configured weekend days from
+  // hotelInfo and the contract's daily / monthly rate sheet. When the
+  // calendar override is present for a given night, we still honour it by
+  // averaging in the next step.
+  const breakdown = useMemo(() => {
+    if (!room || nights === 0) {
+      return { weekdayNights: 0, weekendNights: 0, total: 0, perNight: [], rateWeekday: contractRate, rateWeekend: contractWeekendRate };
+    }
+    return nightlyBreakdown({
+      checkIn: draft.checkIn, checkOut: draft.checkOut, room,
+      weekendDays: hotelInfo?.weekendDays,
+      overrideWeekday: contractRate,
+      overrideWeekend: contractWeekendRate,
+    });
+  }, [room, nights, draft.checkIn, draft.checkOut, contractRate, contractWeekendRate, hotelInfo?.weekendDays]);
+
   // Average nightly rate honouring per-day calendar overrides — same logic
   // as the existing BookingCreator so calendar-edited rates don't get lost.
+  // Now also weekday/weekend-aware: if no calendar override exists for a
+  // given night, we pull the matching weekday/weekend rate from the
+  // breakdown instead of the flat contractRate.
   const avgRate = useMemo(() => {
     if (!room || nights === 0) return contractRate;
     let sum = 0, count = 0;
     const start = new Date(draft.checkIn);
     for (let i = 0; i < nights; i++) {
       const d = new Date(start); d.setDate(d.getDate() + i);
-      const k = `${room.id}|${d.toISOString().slice(0, 10)}`;
-      const r = calendar[k]?.rate ?? contractRate;
+      const iso = d.toISOString().slice(0, 10);
+      const k = `${room.id}|${iso}`;
+      const baseForNight = breakdown.perNight.find((n) => n.date === iso)?.rate ?? contractRate;
+      const r = calendar[k]?.rate ?? baseForNight;
       sum += r; count += 1;
     }
     return count ? Math.round(sum / count) : contractRate;
-  }, [room, nights, draft.checkIn, contractRate, calendar]);
+  }, [room, nights, draft.checkIn, contractRate, calendar, breakdown]);
 
   // Pricing breakdown — accommodation fee + tax components if the contract
   // is exclusive of taxes; otherwise just the room subtotal + fee. The
   // pay-now discount only applies when the contract is on pre-payment terms
   // and the operator selects "pay now"; it's a flat 5% off the room subtotal
   // so it doesn't compound with VAT or the accommodation fee.
+  //
+  // `room_subtotal` is the breakdown total (= sum of nightly rates) rather
+  // than `avgRate × nights` so any weekday/weekend mix prices exactly.
+  // We keep `avgRate` as the displayed "Avg nightly rate" line in the
+  // summary so the operator still sees a single comparable number.
   const pricing = useMemo(() => {
-    const room_subtotal = avgRate * nights;
+    const room_subtotal = (breakdown.total > 0 ? breakdown.total : avgRate * nights);
     const accFee = Number(agreement.accommodationFee || 0) * nights;
     const payNowDiscount = (isPrepay && draft.paymentTiming === "now")
       ? Math.round(room_subtotal * (PAY_NOW_DISCOUNT_PCT / 100))
@@ -132,7 +168,7 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
       total = taxed.gross + accFee;
     }
     return { room_subtotal, accFee, net, total, taxLines, totalTax, payNowDiscount };
-  }, [avgRate, nights, agreement.accommodationFee, agreement.taxIncluded, tax, isPrepay, draft.paymentTiming]);
+  }, [avgRate, nights, agreement.accommodationFee, agreement.taxIncluded, tax, isPrepay, draft.paymentTiming, breakdown.total]);
 
   // Pay-now bookings require a card-on-file; the operator can't confirm
   // until all four fields are populated. Pay-on-arrival keeps the existing
@@ -211,6 +247,15 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
       taxLines: pricing.taxLines || [],
       taxPatternId: agreement.taxIncluded ? null : (activePatternId || null),
       taxPatternName: agreement.taxIncluded ? "Inclusive (corporate)" : (activePattern?.name || null),
+      // Weekday/weekend split — drives the "X weekday × BHD A + Y weekend ×
+      // BHD B" line on the admin Bookings drawer + folio. For long-stay
+      // monthly bookings both rates are equal so the breakdown collapses
+      // to the single-rate display.
+      nightlyBreakdown: breakdown.perNight || null,
+      weekdayNights:    breakdown.weekdayNights || 0,
+      weekendNights:    breakdown.weekendNights || 0,
+      rateWeekday:      breakdown.rateWeekday || 0,
+      rateWeekend:      breakdown.rateWeekend || 0,
     };
     addBooking(booking);
     onSaved?.(booking);
@@ -492,6 +537,24 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
 
                 <div className="mt-4 pt-4 space-y-2" style={{ borderTop: `1px solid ${p.border}`, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem" }}>
                   <SummaryRow label={`Suite × ${nights} ${nights === 1 ? "night" : "nights"}`} value={fmtBhd(pricing.room_subtotal)} p={p} />
+                  {/* Weekday/weekend split — surfaced when the stay spans
+                      both buckets AND the contract is on daily rates (long-
+                      stay monthly bookings price both buckets identically,
+                      so the rows collapse). */}
+                  {breakdown.weekdayNights > 0 && breakdown.weekendNights > 0 && !isLongStay && (
+                    <>
+                      <SummaryRow
+                        label={`${breakdown.weekdayNights} × weekday × ${fmtBhd(breakdown.rateWeekday)}`}
+                        value={fmtBhd(breakdown.weekdayNights * breakdown.rateWeekday)}
+                        muted p={p}
+                      />
+                      <SummaryRow
+                        label={`${breakdown.weekendNights} × weekend × ${fmtBhd(breakdown.rateWeekend)}`}
+                        value={fmtBhd(breakdown.weekendNights * breakdown.rateWeekend)}
+                        muted p={p}
+                      />
+                    </>
+                  )}
                   <SummaryRow label="Avg nightly rate" value={fmtBhd(avgRate)} muted p={p} />
                   {pricing.payNowDiscount > 0 && (
                     <SummaryRow label={`Pay-now · ${PAY_NOW_DISCOUNT_PCT}% off (non-refundable)`} value={`− ${fmtBhd(pricing.payNowDiscount)}`} accent p={p} />

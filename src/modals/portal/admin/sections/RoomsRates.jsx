@@ -34,7 +34,11 @@ export const RoomsRates = () => {
   const startEdit = (room) => {
     setEditingRate(room.id);
     setDraft({
-      price:       room.price,
+      price:        room.price,
+      // Weekend rate falls back to the weekday rate when the room has
+      // never been edited — gives the operator a sensible default to
+      // dial up rather than a blank "0".
+      priceWeekend: room.priceWeekend ?? room.price,
       sqm:         room.sqm,
       occupancy:   room.occupancy,
       maxAdults:   room.maxAdults   ?? room.occupancy,
@@ -49,7 +53,8 @@ export const RoomsRates = () => {
   const save = () => {
     const safe = (n) => Math.max(0, Number(n) || 0);
     updateRoom(editingRate, {
-      price:       safe(draft.price),
+      price:        safe(draft.price),
+      priceWeekend: safe(draft.priceWeekend),
       sqm:         safe(draft.sqm),
       occupancy:   safe(draft.occupancy),
       maxAdults:   safe(draft.maxAdults),
@@ -182,9 +187,11 @@ function RoomTypeEditor({ room, draft, setDraft, tax, unitCount, onCancel, onSav
 
   // Live derived figures so the operator can see the impact of every edit
   // without committing.
-  const rate    = Number(draft.price) || 0;
-  const grossPN = Math.round(applyTaxes(rate, tax, 1).gross);
-  const ebFee   = draft.extraBedAvailable ? (Number(draft.extraBedFee) || 0) : 0;
+  const rate         = Number(draft.price) || 0;
+  const rateWeekend  = Number(draft.priceWeekend) || 0;
+  const grossPN      = Math.round(applyTaxes(rate, tax, 1).gross);
+  const grossWeekend = Math.round(applyTaxes(rateWeekend, tax, 1).gross);
+  const ebFee        = draft.extraBedAvailable ? (Number(draft.extraBedFee) || 0) : 0;
   const grossWithBed = Math.round(applyTaxes(rate + ebFee, tax, 1).gross);
   const adultCap = Number(draft.maxAdults)   || 0;
   const childCap = Number(draft.maxChildren) || 0;
@@ -233,21 +240,34 @@ function RoomTypeEditor({ room, draft, setDraft, tax, unitCount, onCancel, onSav
 
         {/* Pricing + size */}
         <Card title="Pricing &amp; size" className="lg:col-span-2">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <FormGroup label="Public rate (BHD / night, excl. tax)">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <FormGroup label="Weekday rate (BHD / night, excl. tax)">
               <TextField type="number" value={draft.price} onChange={(v) => set({ price: v })} suffix="BHD" />
+            </FormGroup>
+            <FormGroup label="Weekend rate (BHD / night, excl. tax)">
+              <TextField type="number" value={draft.priceWeekend ?? draft.price} onChange={(v) => set({ priceWeekend: v })} suffix="BHD" />
             </FormGroup>
             <FormGroup label="Size">
               <TextField type="number" value={draft.sqm} onChange={(v) => set({ sqm: v })} suffix="m²" />
             </FormGroup>
           </div>
-          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="mt-3" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.55 }}>
+            The set of "weekend days" is operator-configurable in <strong>Property Info → Weekend days</strong>. Set the weekday and weekend rates to the same value if you don't want to differentiate.
+          </div>
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="p-4" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
-              <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, fontFamily: "'Manrope', sans-serif" }}>Gross / night</div>
+              <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, fontFamily: "'Manrope', sans-serif" }}>Weekday gross</div>
               <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.accent, fontWeight: 600, lineHeight: 1.05, marginTop: 4 }}>
                 {t("common.bhd")} {grossPN}
               </div>
               <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>incl. VAT / service / tourism levy</div>
+            </div>
+            <div className="p-4" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
+              <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, fontFamily: "'Manrope', sans-serif" }}>Weekend gross</div>
+              <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.accent, fontWeight: 600, lineHeight: 1.05, marginTop: 4 }}>
+                {t("common.bhd")} {grossWeekend}
+              </div>
+              <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>incl. taxes</div>
             </div>
             <div className="p-4" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
               <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, fontFamily: "'Manrope', sans-serif" }}>With extra bed</div>

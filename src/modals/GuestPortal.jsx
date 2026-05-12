@@ -12,7 +12,7 @@ import {
   whatsAppShareUrl, emailShareUrl, nativeShare, downloadBlob, tierVisuals, hotel,
 } from "../utils/membershipPass.js";
 import { useT } from "../i18n/LanguageContext.jsx";
-import { useData, applyTaxes, priceExtra, priceLabelFor, legalLine, roomFitsParty, buildCardOnFile } from "../data/store.jsx";
+import { useData, applyTaxes, priceExtra, priceLabelFor, legalLine, roomFitsParty, buildCardOnFile, nightlyBreakdown } from "../data/store.jsx";
 import { Icon as ExtraIcon } from "../components/Icon.jsx";
 import { PortalThemeProvider, ThemeToggle, usePalette } from "./portal/theme.jsx";
 import { ToastHost, pushToast } from "./portal/admin/ui.jsx";
@@ -2615,7 +2615,7 @@ function receiptHtml(pay, bookings, hotel) {
 // Confirm) with a sticky "Your reservation" rail showing the running total.
 function BookStayTab({ session, kind, account, onComplete }) {
   const p = usePalette();
-  const { rooms, tiers, loyalty, activeExtras, tax, taxPatterns, activePatternId, addBooking, addInvoice } = useData();
+  const { rooms, tiers, loyalty, activeExtras, tax, taxPatterns, activePatternId, addBooking, addInvoice, hotelInfo } = useData();
 
   const today = todayISO();
   const [step,     setStep]     = useState(1);
@@ -2684,41 +2684,68 @@ function BookStayTab({ session, kind, account, onComplete }) {
   const nights = nightsBetweenISO(checkIn, checkOut);
   const isLongStay = nights >= 30;
 
-  const rateFor = (roomId) => {
+  // Resolve the weekday + weekend nightly rate for a given room under the
+  // current account context. Three branches:
+  //   • Corporate / agent — contracted dailyRates × (1 + weekendUpliftPct/100).
+  //     Long-stay monthly bookings use the flat monthly-equivalent for both
+  //     buckets (no weekend uplift on monthly contracts).
+  //   • Member — public rack rate (room.price / room.priceWeekend) discounted
+  //     by the tier %.
+  const ratePairFor = (roomId) => {
     const room = rooms.find((r) => r.id === roomId);
-    const rackRate = room?.price || 0;
-    if (kind === "corporate") {
+    const rackWeekday = Number(room?.price || 0);
+    const rackWeekend = Number(room?.priceWeekend ?? room?.price ?? 0);
+    if (kind === "corporate" || kind === "agent") {
       const key = ROOM_RATE_KEY[roomId] || roomId;
-      const monthlyRates = account.monthlyRates || {};
-      const dailyRates   = account.dailyRates   || {};
-      if (isLongStay && monthlyRates[key]) return Math.round((monthlyRates[key] / 30) * 1000) / 1000;
-      return dailyRates[key] || rackRate;
-    }
-    if (kind === "agent") {
-      const key = ROOM_RATE_KEY[roomId] || roomId;
-      const monthlyNet = account.monthlyNet || {};
-      const dailyNet   = account.dailyNet   || {};
-      if (isLongStay && monthlyNet[key]) return Math.round((monthlyNet[key] / 30) * 1000) / 1000;
-      return dailyNet[key] || rackRate;
+      const monthly = kind === "corporate" ? (account.monthlyRates || {}) : (account.monthlyNet || {});
+      const daily   = kind === "corporate" ? (account.dailyRates   || {}) : (account.dailyNet   || {});
+      if (isLongStay && monthly[key]) {
+        const r = Math.round((monthly[key] / 30) * 1000) / 1000;
+        return { weekday: r, weekend: r };
+      }
+      const weekday = daily[key] || rackWeekday;
+      const uplift  = Number(account.weekendUpliftPct || 0);
+      const weekend = Math.round(weekday * (1 + uplift / 100) * 1000) / 1000;
+      return { weekday, weekend };
     }
     const tierId = account.tier;
     const discount = MEMBER_DISCOUNT_PCT[tierId] || 0;
-    return Math.round(rackRate * (1 - discount / 100) * 1000) / 1000;
+    const factor = 1 - discount / 100;
+    return {
+      weekday: Math.round(rackWeekday * factor * 1000) / 1000,
+      weekend: Math.round(rackWeekend * factor * 1000) / 1000,
+    };
   };
 
+  // Legacy rateFor — kept so any caller that wants a single nightly figure
+  // for display still works. Returns the weekday rate (or the flat monthly
+  // equivalent on long-stay bookings, since both buckets match there).
+  const rateFor = (roomId) => ratePairFor(roomId).weekday;
+
   const stayTotals = useMemo(() => stays.map((s) => {
-    const rate = rateFor(s.roomId);
+    const pair = ratePairFor(s.roomId);
     const room = rooms.find((r) => r.id === s.roomId);
     const qty = Number(s.quantity) || 1;
-    const roomRevenue = rate * nights * qty;
+    // Weekday/weekend-aware breakdown for ONE suite — multiply by qty for
+    // multi-line bookings. Falls back to `pair.weekday × nights` when the
+    // stay has zero nights (empty cart on step 1).
+    const breakdown = nightlyBreakdown({
+      checkIn, checkOut, room,
+      weekendDays: hotelInfo?.weekendDays,
+      overrideWeekday: pair.weekday,
+      overrideWeekend: pair.weekend,
+    });
+    const roomRevenue = breakdown.total * qty;
     // Extra-bed support — rolls up the per-line beds × per-bed fee × nights.
     // The fee is the operator-set rack fee; corporate / agent agreements
     // don't currently negotiate the extra-bed line, so it bills at rack.
     const extraBeds   = Math.max(0, Number(s.extraBeds) || 0);
     const ebFee       = Number(room?.extraBedFee || 0);
     const extraBedRev = (room?.extraBedAvailable ? ebFee * extraBeds * nights : 0);
-    return { ...s, rate, roomRevenue, extraBeds, extraBedFee: ebFee, extraBedRev };
-  }), [stays, nights, kind, account, rooms]); // eslint-disable-line react-hooks/exhaustive-deps
+    // `rate` keeps the legacy display semantics: weekday rate (or flat
+    // monthly-equivalent when both buckets match).
+    return { ...s, rate: pair.weekday, rateWeekday: pair.weekday, rateWeekend: pair.weekend, roomRevenue, extraBeds, extraBedFee: ebFee, extraBedRev, breakdown };
+  }), [stays, nights, checkIn, checkOut, kind, account, rooms, hotelInfo?.weekendDays]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Subtotal — rooms + extra beds, before extras and tax. Each booking row
   // already accounts for nights × qty so the sum is straightforward.
@@ -2852,7 +2879,10 @@ function BookStayTab({ session, kind, account, onComplete }) {
     stayTotals.forEach((s) => {
       const qty = Number(s.quantity) || 1;
       for (let i = 0; i < qty; i++) {
-        const roomTotalGross = s.rate * nights;
+        // Weekday/weekend-aware suite charge — sum of nightly rates from
+        // the breakdown rather than a single rate × nights, so a stay
+        // spanning Thu→Sat prices each night against its own bucket.
+        const roomTotalGross = s.breakdown?.total ?? (s.rate * nights);
         const lineDiscount = perLineDiscount;
         const roomTotal = Math.max(0, roomTotalGross - lineDiscount);
         const isLead = !extrasAttached;
@@ -2928,6 +2958,13 @@ function BookStayTab({ session, kind, account, onComplete }) {
           taxLines: lineTaxResult.lines || [],
           taxPatternId: taxIncluded ? null : (activePatternId || null),
           taxPatternName: taxIncluded ? "Inclusive (contract)" : (activePattern?.name || null),
+          // Weekday/weekend split — stamped per booking row so the admin
+          // Bookings drawer + folio can render the breakdown line.
+          nightlyBreakdown: s.breakdown?.perNight || null,
+          weekdayNights:    s.breakdown?.weekdayNights || 0,
+          weekendNights:    s.breakdown?.weekendNights || 0,
+          rateWeekday:      s.rateWeekday || s.rate || 0,
+          rateWeekend:      s.rateWeekend || s.rate || 0,
         };
         if (kind === "corporate") booking.accountId = account.id;
         if (kind === "agent")     { booking.agencyId = account.id; booking.comm = Math.round((roomTotal * (account.commissionPct || 0) / 100) * 1000) / 1000; }
@@ -4115,12 +4152,33 @@ function ReservationRail({ p, checkIn, checkOut, nights, stayTotals, partySize, 
         </div>
       ) : (
         <div className="space-y-1.5" style={{ fontSize: "0.86rem" }}>
-          {stayTotals.map((s) => (
-            <div key={s.id} className="flex items-center justify-between">
-              <span style={{ color: p.textSecondary }}>{t(`rooms.${s.roomId}.short`) || s.roomId} × {s.quantity}</span>
-              <span style={{ color: p.textPrimary, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtBhd(s.roomRevenue)}</span>
-            </div>
-          ))}
+          {stayTotals.map((s) => {
+            const br = s.breakdown || {};
+            const mixed = br.weekdayNights > 0 && br.weekendNights > 0;
+            return (
+              <React.Fragment key={s.id}>
+                <div className="flex items-center justify-between">
+                  <span style={{ color: p.textSecondary }}>{t(`rooms.${s.roomId}.short`) || s.roomId} × {s.quantity}</span>
+                  <span style={{ color: p.textPrimary, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtBhd(s.roomRevenue)}</span>
+                </div>
+                {/* Weekday/weekend split — shown when the stay spans both
+                    buckets so the guest sees how the room subtotal
+                    decomposes. */}
+                {mixed && (
+                  <>
+                    <div className="flex items-center justify-between" style={{ color: p.textMuted, fontSize: "0.72rem", paddingInlineStart: 12 }}>
+                      <span>{br.weekdayNights} × weekday × {fmtBhd(br.rateWeekday)}</span>
+                      <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtBhd(br.weekdayNights * br.rateWeekday * s.quantity)}</span>
+                    </div>
+                    <div className="flex items-center justify-between" style={{ color: p.textMuted, fontSize: "0.72rem", paddingInlineStart: 12 }}>
+                      <span>{br.weekendNights} × weekend × {fmtBhd(br.rateWeekend)}</span>
+                      <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtBhd(br.weekendNights * br.rateWeekend * s.quantity)}</span>
+                    </div>
+                  </>
+                )}
+              </React.Fragment>
+            );
+          })}
           <div style={{ height: 1, backgroundColor: p.border, margin: "8px 0" }} />
           <div className="flex items-center justify-between" style={{ color: p.textMuted, fontSize: "0.78rem" }}>
             <span>Room subtotal</span>

@@ -1288,6 +1288,23 @@ function BookingEditor({ booking, onClose }) {
               <FormGroup label="Rate (BHD/night)">
                 <TextField type="number" value={draft.rate} onChange={(v) => update({ rate: Number(v) || 0 })} suffix="BHD" />
               </FormGroup>
+              {/* Rate breakdown — surfaced inline between the rate input
+                  and the subtotal when the booking was placed with a
+                  mixed-bucket stay. Legacy bookings without the breakdown
+                  fields fall back to the "Subtotal" hint below. Spans
+                  both columns so the line reads cleanly. */}
+              {(Number(draft.weekdayNights) > 0 && Number(draft.weekendNights) > 0) && (
+                <div className="sm:col-span-2 p-3" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
+                  <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>
+                    Rate breakdown
+                  </div>
+                  <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", lineHeight: 1.55 }}>
+                    {draft.weekdayNights} weekday × {t("common.bhd")} {Number(draft.rateWeekday || 0).toLocaleString()}
+                    {" + "}
+                    {draft.weekendNights} weekend × {t("common.bhd")} {Number(draft.rateWeekend || 0).toLocaleString()}
+                  </div>
+                </div>
+              )}
               <FormGroup label="Subtotal (auto)">
                 <ReadOnlyField p={p} value={`${t("common.bhd")} ${subtotal.toLocaleString()}`} hint={`${draft.rate || 0} × ${nights} ${nights === 1 ? "night" : "nights"}`} />
               </FormGroup>

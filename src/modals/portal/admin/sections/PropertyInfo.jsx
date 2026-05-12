@@ -192,6 +192,24 @@ export const PropertyInfo = () => {
             </div>
           </Card>
 
+          {/* Weekend days — which days of the week are billed at the per-suite
+              weekend rate. Picks are stored as JS day-of-week numbers
+              (0 = Sun … 6 = Sat). Bahrain & the wider GCC use Fri+Sat by
+              default; operators outside the region typically pick Sat+Sun. */}
+          <Card title="Weekend days">
+            <p style={{ color: p.textSecondary, fontSize: "0.86rem", lineHeight: 1.6, marginBottom: 12 }}>
+              Click a day to toggle it as a weekend. Bookings will use each suite's <strong>weekend rate</strong> (set in Rooms &amp; Rates) on these days; every other day uses the weekday rate.
+            </p>
+            <WeekendDaysPicker
+              value={Array.isArray(draft.weekendDays) ? draft.weekendDays : [5, 6]}
+              onChange={(next) => update({ weekendDays: next })}
+              p={p}
+            />
+            <div className="mt-3" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", lineHeight: 1.55 }}>
+              Most properties in Bahrain &amp; the GCC use Friday + Saturday. Operators outside the GCC typically pick Saturday + Sunday.
+            </div>
+          </Card>
+
           {/* Save row */}
           <div className="flex items-center justify-end gap-3 pt-2">
             {dirty && <GhostBtn onClick={reset} small><RotateCcw size={11} /> Discard</GhostBtn>}
@@ -271,6 +289,64 @@ function UseRow({ p, icon, title, hint }) {
         <div style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", fontWeight: 600 }}>{title}</div>
         <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", lineHeight: 1.5, marginTop: 2 }}>{hint}</div>
       </div>
+    </div>
+  );
+}
+
+// Toggle-pill row for the seven days of the week. Selected days are stored
+// as their JS getDay() index (0 = Sun … 6 = Sat) so they can be checked
+// directly with `weekendDays.includes(date.getDay())`.
+const WEEKDAY_LABELS = [
+  { index: 0, short: "Sun" },
+  { index: 1, short: "Mon" },
+  { index: 2, short: "Tue" },
+  { index: 3, short: "Wed" },
+  { index: 4, short: "Thu" },
+  { index: 5, short: "Fri" },
+  { index: 6, short: "Sat" },
+];
+function WeekendDaysPicker({ value, onChange, p }) {
+  const set = new Set(Array.isArray(value) ? value.map((n) => Number(n)) : []);
+  const toggle = (idx) => {
+    const next = new Set(set);
+    if (next.has(idx)) next.delete(idx); else next.add(idx);
+    onChange(Array.from(next).sort((a, b) => a - b));
+  };
+  return (
+    <div className="flex flex-wrap gap-2">
+      {WEEKDAY_LABELS.map((day) => {
+        const active = set.has(day.index);
+        return (
+          <button
+            key={day.index}
+            type="button"
+            onClick={() => toggle(day.index)}
+            aria-pressed={active}
+            style={{
+              padding: "0.45rem 0.95rem",
+              fontFamily: "'Manrope', sans-serif",
+              fontSize: "0.7rem",
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              fontWeight: 700,
+              color: active ? (p.theme === "light" ? "#FFFFFF" : "#15161A") : p.textSecondary,
+              backgroundColor: active ? p.accent : "transparent",
+              border: `1px solid ${active ? p.accent : p.border}`,
+              cursor: "pointer",
+              minWidth: 64,
+              textAlign: "center",
+            }}
+            onMouseEnter={(e) => {
+              if (!active) { e.currentTarget.style.color = p.accent; e.currentTarget.style.borderColor = p.accent; }
+            }}
+            onMouseLeave={(e) => {
+              if (!active) { e.currentTarget.style.color = p.textSecondary; e.currentTarget.style.borderColor = p.border; }
+            }}
+          >
+            {day.short}
+          </button>
+        );
+      })}
     </div>
   );
 }

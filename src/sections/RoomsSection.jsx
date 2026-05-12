@@ -87,6 +87,14 @@ export const RoomsSection = ({ onBookRoom }) => {
                   <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "2.6rem", color: C.gold, fontWeight: 500 }}>{t("common.bhd")} {room.price}</span>
                   <span style={{ color: C.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", letterSpacing: "0.18em", textTransform: "uppercase" }}>{t("common.excl")}</span>
                 </div>
+                {/* Weekend tag — only rendered when the property charges a
+                    different weekend rate. Sits below the headline price
+                    so the guest sees the higher amount before they book. */}
+                {room.priceWeekend && Number(room.priceWeekend) > Number(room.price) && (
+                  <div style={{ color: C.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", letterSpacing: "0.05em", marginTop: 6 }}>
+                    Weekend <span style={{ color: C.gold, fontWeight: 600 }}>{t("common.bhd")} {room.priceWeekend}</span>
+                  </div>
+                )}
               </div>
               <GoldBtn onClick={() => onBookRoom(room)}>{t("common.reserve")} <ArrowRight size={14} /></GoldBtn>
             </div>

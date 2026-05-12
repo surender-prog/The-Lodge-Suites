@@ -17,6 +17,13 @@ import { ROOMS as INITIAL_ROOMS } from "../data/rooms.js";
 /** Convert one Supabase row into the camelCase shape the app expects. */
 export function dbRoomToClient(row) {
   const seed = INITIAL_ROOMS.find((r) => r.id === row.id);
+  // Weekend rate falls back to the weekday rate when the column is null —
+  // covers legacy tables on the old schema (pre-migration 005) and rows
+  // that have been added but not yet had a weekend rate filled in.
+  const weekdayPrice = Number(row.price);
+  const weekendPrice = row.price_weekend != null
+    ? Number(row.price_weekend)
+    : weekdayPrice;
   return {
     id:                 row.id,
     sqm:                row.sqm,
@@ -25,7 +32,8 @@ export function dbRoomToClient(row) {
     // mean "no further restriction" (i.e. fall back to occupancy).
     maxAdults:          row.max_adults   ?? row.occupancy,
     maxChildren:        row.max_children ?? row.occupancy,
-    price:              Number(row.price),
+    price:              weekdayPrice,
+    priceWeekend:       weekendPrice,
     image:              row.image_url || seed?.image || null,
     popular:            !!row.popular,
     extraBedAvailable:  !!row.extra_bed_available,
@@ -45,6 +53,7 @@ export function clientPatchToDb(patch) {
   if (patch.maxAdults          !== undefined) out.max_adults           = patch.maxAdults;
   if (patch.maxChildren        !== undefined) out.max_children         = patch.maxChildren;
   if (patch.price              !== undefined) out.price                = patch.price;
+  if (patch.priceWeekend       !== undefined) out.price_weekend        = patch.priceWeekend;
   if (patch.image              !== undefined) out.image_url            = patch.image;
   if (patch.popular            !== undefined) out.popular              = patch.popular;
   if (patch.extraBedAvailable  !== undefined) out.extra_bed_available  = patch.extraBedAvailable;

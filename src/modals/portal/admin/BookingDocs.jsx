@@ -56,6 +56,15 @@ function buildFolio(booking, tax, rooms, extras) {
   // Render percentage-based taxes against net using the same applyTaxes pass
   const built = applyTaxes(net, tax || { components: [] }, nights);
 
+  // Weekday/weekend split — bookings created on the new pricing model stamp
+  // these four fields; legacy records are missing them and the folio falls
+  // back to the single-line "Suite charge" row.
+  const weekdayNights = Number(booking.weekdayNights) || 0;
+  const weekendNights = Number(booking.weekendNights) || 0;
+  const rateWeekday   = Number(booking.rateWeekday)   || 0;
+  const rateWeekend   = Number(booking.rateWeekend)   || 0;
+  const mixedNights   = weekdayNights > 0 && weekendNights > 0;
+
   return {
     room,
     nights,
@@ -66,6 +75,7 @@ function buildFolio(booking, tax, rooms, extras) {
     gross,
     paid:        booking.paid || 0,
     balance:     gross - (booking.paid || 0),
+    weekdayNights, weekendNights, rateWeekday, rateWeekend, mixedNights,
   };
 }
 
@@ -213,6 +223,22 @@ export function BookingDocView({ booking, kind, tax, rooms, extras }) {
               <div style={{ color: "#666", fontSize: "0.74rem", marginTop: 2 }}>
                 {folio.room?.id === "studio" ? "Lodge Studio" : folio.room?.id === "one-bed" ? "One-Bedroom Suite" : folio.room?.id === "two-bed" ? "Two-Bedroom Suite" : folio.room?.id === "three-bed" ? "Three-Bedroom Suite" : "Suite"} · {fmtDate(booking.checkIn)} – {fmtDate(booking.checkOut)}
               </div>
+              {/* Weekday/weekend split — rendered as two indented sub-rows
+                  below the main suite line so the operator (and any guest
+                  reading the folio) can see exactly how the total broke down. */}
+              {folio.mixedNights && (
+                <>
+                  <div style={{ color: "#555", fontSize: "0.78rem", marginTop: 4 }}>
+                    Includes:
+                  </div>
+                  <div style={{ color: "#555", fontSize: "0.78rem", marginTop: 2, paddingInlineStart: 10 }}>
+                    · {folio.weekdayNights} weekday night{folio.weekdayNights === 1 ? "" : "s"} × {fmtBhd(folio.rateWeekday)}
+                  </div>
+                  <div style={{ color: "#555", fontSize: "0.78rem", marginTop: 1, paddingInlineStart: 10 }}>
+                    · {folio.weekendNights} weekend night{folio.weekendNights === 1 ? "" : "s"} × {fmtBhd(folio.rateWeekend)}
+                  </div>
+                </>
+              )}
             </td>
             <td style={tdNumStyle}>{folio.nights} nt</td>
             <td style={tdNumStyle}>{fmtBhd(folio.rate)}</td>
@@ -437,6 +463,11 @@ export function buildBookingDocHtml(booking, kind, { tax, rooms, hotel } = {}) {
       <tr>
         <td><strong>Suite charge</strong>
           <div class="muted" style="font-size:0.74rem; margin-top:2px;">${escapeHtml(roomLabel)} · ${escapeHtml(fmtDate(booking.checkIn))} – ${escapeHtml(fmtDate(booking.checkOut))}</div>
+          ${folio.mixedNights ? `
+            <div class="muted" style="font-size:0.78rem; margin-top:4px;">Includes:</div>
+            <div class="muted" style="font-size:0.78rem; padding-inline-start:10px;">· ${folio.weekdayNights} weekday night${folio.weekdayNights === 1 ? "" : "s"} × ${escapeHtml(fmtBhd(folio.rateWeekday))}</div>
+            <div class="muted" style="font-size:0.78rem; padding-inline-start:10px;">· ${folio.weekendNights} weekend night${folio.weekendNights === 1 ? "" : "s"} × ${escapeHtml(fmtBhd(folio.rateWeekend))}</div>
+          ` : ""}
         </td>
         <td class="num">${folio.nights} nt</td>
         <td class="num">${escapeHtml(fmtBhd(folio.rate))}</td>

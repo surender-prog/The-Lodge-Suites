@@ -262,6 +262,65 @@ export function applyTaxes(net, tax, nights = 1) {
   return { gross: +(net + totalTax).toFixed(3), totalTax: +totalTax.toFixed(3), lines };
 }
 
+// Determine if a given Date / ISO date string falls on one of the
+// configured weekend days. `weekendDays` is an array of day-of-week
+// numbers (0-6, Sunday=0). Falls back to [5,6] (Fri+Sat) when not set —
+// matching the Bahrain default in DEFAULT_HOTEL_INFO.
+export function isWeekend(date, weekendDays) {
+  const dow = (typeof date === "string" ? new Date(date) : date).getDay();
+  const set = Array.isArray(weekendDays) && weekendDays.length > 0
+    ? weekendDays
+    : [5, 6];
+  return set.includes(dow);
+}
+
+// Walk every night of a stay (checkIn through checkOut-1) and split
+// into weekday vs weekend buckets. Returns:
+//   {
+//     weekdayNights, weekendNights,
+//     perNight: [{ date, isWeekend, rate }],
+//     total,
+//     rateWeekday, rateWeekend,
+//   }
+//
+// `room` must have { price, priceWeekend } (or undefined). When
+// `priceWeekend` is missing, the weekday rate is used for both buckets
+// so legacy data renders correctly. Pass `overrideWeekday` /
+// `overrideWeekend` to swap in a contract / agent rate instead of the
+// rack rate while keeping the same weekend-day calendar logic.
+export function nightlyBreakdown({ checkIn, checkOut, room, weekendDays, overrideWeekday, overrideWeekend }) {
+  if (!checkIn || !checkOut || !room) {
+    return {
+      weekdayNights: 0, weekendNights: 0, perNight: [], total: 0,
+      rateWeekday: 0, rateWeekend: 0,
+    };
+  }
+  const rateWeekday = overrideWeekday !== undefined
+    ? Number(overrideWeekday || 0)
+    : Number(room.price || 0);
+  const rateWeekend = overrideWeekend !== undefined
+    ? Number(overrideWeekend || 0)
+    : Number(room.priceWeekend ?? room.price ?? 0);
+  const start = new Date(checkIn);
+  const end   = new Date(checkOut);
+  const perNight = [];
+  let weekdayNights = 0, weekendNights = 0, total = 0;
+  const cursor = new Date(start);
+  while (cursor < end) {
+    const isWE = isWeekend(cursor, weekendDays);
+    const rate = isWE ? rateWeekend : rateWeekday;
+    perNight.push({
+      date: cursor.toISOString().slice(0, 10),
+      isWeekend: isWE,
+      rate: Number(rate || 0),
+    });
+    if (isWE) weekendNights++; else weekdayNights++;
+    total += Number(rate || 0);
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return { weekdayNights, weekendNights, perNight, total, rateWeekday, rateWeekend };
+}
+
 // Approximate inverse: given a gross amount and the current tax config, work
 // back the net. Used by the invoice detail to display a plausible breakdown.
 // Compound rates introduce a multiplicative interaction — we handle the common
@@ -2976,6 +3035,12 @@ const DEFAULT_HOTEL_INFO = {
   // PKCS#7 signature is dropped in by the signing service.
   passTypeId:        "pass.com.thelodgesuites.privilege",
   appleTeamId:       "<your-team-id-once-enrolled>",
+  // Cultural weekend days — drives the "weekend rate" on every room. Day-
+  // of-week numbers per JavaScript's Date.getDay() convention (0 = Sunday,
+  // 6 = Saturday). Bahrain and the wider GCC use Friday + Saturday;
+  // operators outside the region typically pick Saturday + Sunday. Edited
+  // in the Property Info admin (Weekend days card).
+  weekendDays:       [5, 6],
 };
 
 // ---------------------------------------------------------------------------

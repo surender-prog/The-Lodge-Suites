@@ -8,12 +8,12 @@ import { CountrySelect } from "../components/CountrySelect.jsx";
 import { findCountryByCode, parsePhone, DEFAULT_COUNTRY_CODE } from "../data/countryCodes.js";
 import { useT, useLang } from "../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween, todayISO } from "../utils/date.js";
-import { priceExtra, priceLabelFor, useData, evalPackageEligibility, describePackageConditions, roomFitsParty, computePackageCharge, computePackageSaving, packagePriceSuffix, getPackageRoomPrice, getPackageMinPrice, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, applyTaxes } from "../data/store.jsx";
+import { priceExtra, priceLabelFor, useData, evalPackageEligibility, describePackageConditions, roomFitsParty, computePackageCharge, computePackageSaving, packagePriceSuffix, getPackageRoomPrice, getPackageMinPrice, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, applyTaxes, nightlyBreakdown } from "../data/store.jsx";
 
 export const BookingModal = ({ open, onClose, initial }) => {
   const t = useT();
   const { lang } = useLang();
-  const { rooms: ROOMS, activeExtras, activePackages, addBooking, members, addMember, tiers, loyalty, tax, taxPatterns, activePatternId } = useData();
+  const { rooms: ROOMS, activeExtras, activePackages, addBooking, members, addMember, tiers, loyalty, tax, taxPatterns, activePatternId, hotelInfo } = useData();
   // Tier discount table — single source of truth for both the booking-
   // modal's "register me as Silver" flow and the existing-member welcome-
   // back path. Mirrors what the customer portal uses.
@@ -162,10 +162,12 @@ export const BookingModal = ({ open, onClose, initial }) => {
   };
 
   // Resolve the rooms array into runtime entries with the live ROOMS data.
-  // Each row gets { room, qty, extraBeds, roomRev, extraBedRev, lineRevenue }
-  // so the per-suite line on the summary panel can show both contributions.
-  // `extraBeds` is the per-line count of rollaways the operator added; it's
-  // capped at room.maxExtraBeds × qty in the stepper below.
+  // Each row gets { room, qty, extraBeds, roomRev, extraBedRev, lineRevenue,
+  // breakdown } so the per-suite line on the summary panel can show both
+  // contributions and the weekday/weekend split. `extraBeds` is the per-line
+  // count of rollaways the operator added; it's capped at
+  // room.maxExtraBeds × qty in the stepper below.
+  const weekendDays = hotelInfo?.weekendDays;
   const roomLines = (data.rooms || [])
     .filter((r) => r && r.qty > 0)
     .map((r) => {
@@ -173,13 +175,19 @@ export const BookingModal = ({ open, onClose, initial }) => {
       if (!room) return null;
       const extraBeds   = Math.max(0, Number(r.extraBeds) || 0);
       const ebFee       = Number(room.extraBedFee || 0);
-      const roomRev     = room.price * nights * r.qty;
+      // Compute the weekday/weekend split for ONE suite of this type, then
+      // multiply by qty so multi-suite lines still aggregate correctly.
+      const breakdown   = nightlyBreakdown({
+        checkIn: data.checkIn, checkOut: data.checkOut, room, weekendDays,
+      });
+      const roomRev     = breakdown.total * r.qty;
       const extraBedRev = (room.extraBedAvailable ? ebFee * extraBeds * nights : 0);
       return {
         room, qty: r.qty,
         extraBeds, extraBedFee: ebFee,
         roomRev, extraBedRev,
         lineRevenue: roomRev + extraBedRev,
+        breakdown,
       };
     })
     .filter(Boolean);
@@ -495,6 +503,11 @@ export const BookingModal = ({ open, onClose, initial }) => {
       // Report can group historical bookings by pattern even after the
       // operator switches to a different pattern in Settings.
       const activePattern = (taxPatterns || []).find((p) => p.id === activePatternId);
+      // Weekday/weekend breakdown stamped on the booking — drives the
+      // "2 weekday × BHD 36 + 1 weekend × BHD 44" line on folios and the
+      // admin Bookings drawer. Picks the lead suite's breakdown when the
+      // booking spans multiple room types (rare in this flow).
+      const leadBreakdown = roomLines[0]?.breakdown || null;
       addBooking({
         id: code,
         guest: data.name || "Guest",
@@ -508,6 +521,13 @@ export const BookingModal = ({ open, onClose, initial }) => {
         nights,
         guests: partySize,
         rate: pkg ? Math.round(pkgCharge / Math.max(1, nights)) : (lead?.price || 0),
+        // Weekday/weekend split — only meaningful when an offer isn't
+        // active (offers price the whole stay through their own ladder).
+        nightlyBreakdown: pkg ? null : (leadBreakdown?.perNight || null),
+        weekdayNights:    pkg ? 0 : (leadBreakdown?.weekdayNights || 0),
+        weekendNights:    pkg ? 0 : (leadBreakdown?.weekendNights || 0),
+        rateWeekday:      pkg ? 0 : (leadBreakdown?.rateWeekday || 0),
+        rateWeekend:      pkg ? 0 : (leadBreakdown?.rateWeekend || 0),
         total,
         // Tax breakdown — stored on every booking so the admin Tax Report
         // can aggregate components without re-running applyTaxes against a
@@ -787,7 +807,17 @@ export const BookingModal = ({ open, onClose, initial }) => {
                     const extraBeds      = extraBedsForRoom(r.id);
                     const ebCap          = (r.maxExtraBeds || 0) * qty;
                     const ebUnit         = Number(r.extraBedFee || 0);
-                    const roomSubtotal   = r.price * nights * qty;
+                    // Weekday/weekend-aware subtotal — pulls from the existing
+                    // per-line breakdown when this suite is already in the
+                    // cart, otherwise computes one on the fly so the chip
+                    // showing the running total stays accurate even before
+                    // the operator picks the +/- stepper.
+                    const rowBreakdown   = roomLines.find((l) => l.room.id === r.id)?.breakdown
+                                          || nightlyBreakdown({
+                                               checkIn: data.checkIn, checkOut: data.checkOut,
+                                               room: r, weekendDays,
+                                             });
+                    const roomSubtotal   = rowBreakdown.total * qty;
                     const ebSubtotal     = r.extraBedAvailable ? ebUnit * extraBeds * nights : 0;
                     const lineSubtotal   = roomSubtotal + ebSubtotal;
                     const ebShow         = qty > 0 && r.extraBedAvailable && (r.maxExtraBeds || 0) > 0;
@@ -1363,22 +1393,43 @@ export const BookingModal = ({ open, onClose, initial }) => {
                     <span>{t("booking.suiteLine")}</span><span>—</span>
                   </div>
                 ) : (
-                  roomLines.map((l) => (
-                    <React.Fragment key={l.room.id}>
-                      <div className="flex justify-between">
-                        <span style={{ color: C.textMuted }}>
-                          {t(`rooms.${l.room.id}.short`) || l.room.id}{l.qty > 1 ? ` × ${l.qty}` : ""} · {nights}n
-                        </span>
-                        <span>{t("common.bhd")} {l.roomRev}</span>
-                      </div>
-                      {l.extraBeds > 0 && (
-                        <div className="flex justify-between" style={{ color: C.goldDeep, fontSize: "0.8rem" }}>
-                          <span>+ {l.extraBeds} extra bed{l.extraBeds === 1 ? "" : "s"} · {nights}n</span>
-                          <span>{t("common.bhd")} {l.extraBedRev}</span>
+                  roomLines.map((l) => {
+                    // Weekday/weekend split — render as two sub-rows when
+                    // the stay actually spans both buckets so the guest
+                    // sees how the total decomposes. Falls back to the
+                    // single-line "qty × nights · rate = total" format
+                    // when the stay is all weekday or all weekend.
+                    const br = l.breakdown || {};
+                    const mixed = br.weekdayNights > 0 && br.weekendNights > 0;
+                    return (
+                      <React.Fragment key={l.room.id}>
+                        <div className="flex justify-between">
+                          <span style={{ color: C.textMuted }}>
+                            {t(`rooms.${l.room.id}.short`) || l.room.id}{l.qty > 1 ? ` × ${l.qty}` : ""} · {nights}n
+                          </span>
+                          <span>{t("common.bhd")} {l.roomRev}</span>
                         </div>
-                      )}
-                    </React.Fragment>
-                  ))
+                        {mixed && (
+                          <>
+                            <div className="flex justify-between" style={{ color: C.textMuted, fontSize: "0.74rem", paddingInlineStart: 12 }}>
+                              <span>{br.weekdayNights} × weekday × {t("common.bhd")} {br.rateWeekday}</span>
+                              <span>{t("common.bhd")} {br.weekdayNights * br.rateWeekday * l.qty}</span>
+                            </div>
+                            <div className="flex justify-between" style={{ color: C.textMuted, fontSize: "0.74rem", paddingInlineStart: 12 }}>
+                              <span>{br.weekendNights} × weekend × {t("common.bhd")} {br.rateWeekend}</span>
+                              <span>{t("common.bhd")} {br.weekendNights * br.rateWeekend * l.qty}</span>
+                            </div>
+                          </>
+                        )}
+                        {l.extraBeds > 0 && (
+                          <div className="flex justify-between" style={{ color: C.goldDeep, fontSize: "0.8rem" }}>
+                            <span>+ {l.extraBeds} extra bed{l.extraBeds === 1 ? "" : "s"} · {nights}n</span>
+                            <span>{t("common.bhd")} {l.extraBedRev}</span>
+                          </div>
+                        )}
+                      </React.Fragment>
+                    );
+                  })
                 )}
                 {addOnLines.map((line) => (
                   <div key={line.id} className="flex justify-between"><span style={{ color: C.textMuted }}>{line.title}</span><span>{t("common.bhd")} {line.total}</span></div>
