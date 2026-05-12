@@ -4324,6 +4324,30 @@ export function DataProvider({ children }) {
     setPayments(ps => ps.map(p => p.id === id ? { ...p, ...patch } : p));
   }, []);
 
+  // Reactive list of contracts (corporate + agency) that expire within the
+  // next 15 days and are still active. Consumed by the Hotel Admin Dashboard
+  // to surface a renewal-warning banner. Sorted by `daysLeft` ascending so
+  // the most urgent renewals bubble to the top.
+  const expiringContracts = useMemo(() => {
+    const now = new Date();
+    const threshold = new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000);
+    const fmt = (a, kind) => ({
+      id: `expiry-${kind}-${a.id}`,
+      kind, // "corporate" | "agent"
+      accountId: a.id,
+      accountName: kind === "corporate" ? (a.account || a.id) : (a.name || a.id),
+      endsOn: a.endsOn,
+      daysLeft: Math.ceil((new Date(a.endsOn) - now) / 86400000),
+    });
+    const corp = agreements
+      .filter(a => a.endsOn && new Date(a.endsOn) <= threshold && new Date(a.endsOn) > now && a.status === "active")
+      .map(a => fmt(a, "corporate"));
+    const agt = agencies
+      .filter(a => a.endsOn && new Date(a.endsOn) <= threshold && new Date(a.endsOn) > now && a.status === "active")
+      .map(a => fmt(a, "agent"));
+    return [...corp, ...agt].sort((x, y) => x.daysLeft - y.daysLeft);
+  }, [agreements, agencies]);
+
   const value = useMemo(() => ({
     // data
     rooms, packages, tiers, tax, bookings, invoices, payments,
@@ -4343,6 +4367,7 @@ export function DataProvider({ children }) {
     setPayments, addPayment, updatePayment,
     setAgreements, upsertAgreement, removeAgreement,
     setAgencies, upsertAgency, removeAgency,
+    expiringContracts,
     setEmailTemplates, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate,
     setRfps, addRfp, upsertRfp, removeRfp, advanceRfp,
     setChannels, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent,
@@ -4368,7 +4393,7 @@ export function DataProvider({ children }) {
     setCalendar, setCalendarCell,
     setLoyalty,
     addBooking, updateBooking, removeBooking,
-  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, addMember, updateMember, removeMember, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
+  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
 
   return <DataStoreContext.Provider value={value}>{children}</DataStoreContext.Provider>;
 }

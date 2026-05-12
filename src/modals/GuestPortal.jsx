@@ -2630,6 +2630,16 @@ function BookStayTab({ session, kind, account, onComplete }) {
   const [requestNotes, setRequestNotes] = useState("");
   const [confirmation, setConfirmation] = useState(null);
 
+  // Pre-payment branch — when the partner's underlying contract is on
+  // "Pre-payment (cash)" terms (corporate or agency), surface the same
+  // Pay-on-arrival / Pay-now-save-5% choice the public B2C BookingModal
+  // shows in step 4. Default to "later" so the booker confirms it
+  // explicitly before any charge.
+  const isPrepay = (kind === "corporate" || kind === "agent")
+    && (account?.paymentTerms || "") === "Pre-payment (cash)";
+  const [paymentTiming, setPaymentTiming] = useState("later"); // "later" | "now"
+  const PAY_NOW_DISCOUNT_PCT = 5;
+
   // Booking on behalf — toggle between booking for yourself (default) or
   // capturing a different guest's name / email / mobile (all required).
   const [bookFor,    setBookFor]    = useState("self"); // "self" | "other"
@@ -2716,11 +2726,20 @@ function BookStayTab({ session, kind, account, onComplete }) {
   const extrasList = (activeExtras || []).filter((e) => pickedExtras[e.id]);
   const extrasTotal = extrasList.reduce((sum, e) => sum + priceExtra(e, { adults: partySize, nights: Math.max(1, nights) }), 0);
 
+  // Pay-now incentive — 5% off the room subtotal when a pre-payment-
+  // contracted partner opts to settle at booking. Mirrors the public
+  // BookingModal so the saving is the same across surfaces. Does not stack
+  // on top of extras / tax — flat percentage on rooms-only.
+  const payNowDiscount = (isPrepay && paymentTiming === "now")
+    ? Math.round(subTotalRoom * (PAY_NOW_DISCOUNT_PCT / 100))
+    : 0;
+
   const taxIncluded = kind !== "member" && !!account.taxIncluded;
+  const roomsAfterDiscount = Math.max(0, subTotalRoom - payNowDiscount);
   const taxBreakdown = taxIncluded
-    ? { totalTax: 0, gross: subTotalRoom + extrasTotal }
-    : applyTaxes(subTotalRoom + extrasTotal, tax, Math.max(1, nights));
-  const grandTotal = taxIncluded ? subTotalRoom + extrasTotal : taxBreakdown.gross;
+    ? { totalTax: 0, gross: roomsAfterDiscount + extrasTotal }
+    : applyTaxes(roomsAfterDiscount + extrasTotal, tax, Math.max(1, nights));
+  const grandTotal = taxIncluded ? roomsAfterDiscount + extrasTotal : taxBreakdown.gross;
 
   const tier = kind === "member" ? tiers.find((t) => t.id === account.tier) : null;
   const pointsEarned = kind === "member" && tier ? Math.round((tier.earnRate || 1) * grandTotal) : 0;
@@ -2796,10 +2815,20 @@ function BookStayTab({ session, kind, account, onComplete }) {
     }
     const created = [];
     let extrasAttached = false;
+    // Per-line pay-now discount allocation — split the savings evenly across
+    // every booking row so the per-line totals stay consistent with the
+    // displayed grand total. Allocated on the room subtotal only (matches
+    // the headline calculation above).
+    const totalRoomLines = stayTotals.reduce((sum, s) => sum + (Number(s.quantity) || 1), 0);
+    const perLineDiscount = totalRoomLines > 0
+      ? Math.round((payNowDiscount / totalRoomLines) * 1000) / 1000
+      : 0;
     stayTotals.forEach((s) => {
       const qty = Number(s.quantity) || 1;
       for (let i = 0; i < qty; i++) {
-        const roomTotal = s.rate * nights;
+        const roomTotalGross = s.rate * nights;
+        const lineDiscount = perLineDiscount;
+        const roomTotal = Math.max(0, roomTotalGross - lineDiscount);
         const isLead = !extrasAttached;
         const lineExtras = isLead ? extrasTotal : 0;
         const lineTax = isLead
@@ -2807,6 +2836,21 @@ function BookStayTab({ session, kind, account, onComplete }) {
           : (taxIncluded ? 0 : applyTaxes(roomTotal, tax, nights).totalTax);
         const total = Math.round((roomTotal + lineExtras + lineTax) * 1000) / 1000;
         const bookedByOther = bookFor === "other";
+        // Payment status mapping mirrors the public BookingModal contract.
+        // For pre-payment-contracted partners, the operator's pay-now choice
+        // captures the funds and the booking is marked non-refundable.
+        let lineStatus, linePaid;
+        if (kind === "member") {
+          lineStatus = "paid"; linePaid = total;
+        } else if (isPrepay && paymentTiming === "now") {
+          lineStatus = "paid"; linePaid = total;
+        } else if (isPrepay && paymentTiming === "later") {
+          lineStatus = "pending"; linePaid = 0;
+        } else if (kind === "corporate") {
+          lineStatus = "invoiced"; linePaid = 0;
+        } else {
+          lineStatus = "deposit"; linePaid = 0;
+        }
         const booking = {
           // Primary guest who's actually staying — falls back to the booker
           // when "Book for myself" is selected.
@@ -2822,9 +2866,13 @@ function BookStayTab({ session, kind, account, onComplete }) {
           roomId: s.roomId, checkIn, checkOut, nights,
           guests: Number(s.adults) + Number(s.children),
           rate: s.rate, total,
-          paid: kind === "member" ? total : 0,
+          paid: linePaid,
           status: "confirmed",
-          paymentStatus: kind === "member" ? "paid" : kind === "corporate" ? "invoiced" : "deposit",
+          paymentStatus: lineStatus,
+          paymentTiming: isPrepay ? paymentTiming : "later",
+          nonRefundable: isPrepay && paymentTiming === "now",
+          payNowDiscountPct: (isPrepay && paymentTiming === "now") ? PAY_NOW_DISCOUNT_PCT : 0,
+          payNowDiscount: lineDiscount,
           notes: [
             s.notes,
             requestNotes,
@@ -2835,14 +2883,18 @@ function BookStayTab({ session, kind, account, onComplete }) {
             : [],
         };
         if (kind === "corporate") booking.accountId = account.id;
-        if (kind === "agent")     { booking.agencyId = account.id; booking.comm = Math.round((s.rate * nights * (account.commissionPct || 0) / 100) * 1000) / 1000; }
+        if (kind === "agent")     { booking.agencyId = account.id; booking.comm = Math.round((roomTotal * (account.commissionPct || 0) / 100) * 1000) / 1000; }
         if (kind === "member")    booking.memberId = account.id;
         addBooking(booking);
         created.push({ roomId: s.roomId, total });
         if (isLead) extrasAttached = true;
       }
     });
-    if (kind === "corporate") {
+    // Skip the auto-issue invoice when the corporate contract is prepay —
+    // the funds either landed at booking (pay-now) or will land in cash on
+    // arrival (pay-on-arrival); AR doesn't need a Net-X invoice in either
+    // case.
+    if (kind === "corporate" && !isPrepay) {
       const leadTotal = created.reduce((s, c) => s + c.total, 0);
       addInvoice({
         clientType: "corporate", clientName: account.account, bookingId: null,
@@ -2959,6 +3011,8 @@ function BookStayTab({ session, kind, account, onComplete }) {
               tier={tier} pointsEarned={pointsEarned} memberDiscountPct={memberDiscountPct} agentCommission={agentCommission}
               guest={guest} bookFor={bookFor}
               totalAdults={totalAdults} totalChildren={totalChildren}
+              isPrepay={isPrepay} paymentTiming={paymentTiming} setPaymentTiming={setPaymentTiming}
+              payNowDiscount={payNowDiscount} payNowDiscountPct={PAY_NOW_DISCOUNT_PCT}
             />
           )}
         </div>
@@ -2974,6 +3028,7 @@ function BookStayTab({ session, kind, account, onComplete }) {
               taxBreakdown={taxBreakdown} taxIncluded={taxIncluded}
               guest={guest} bookFor={bookFor}
               totalAdults={totalAdults} totalChildren={totalChildren}
+              payNowDiscount={payNowDiscount} payNowDiscountPct={PAY_NOW_DISCOUNT_PCT}
             />
 
             {step < 4 ? (
@@ -3691,6 +3746,7 @@ function ConfirmStep({
   taxBreakdown, taxIncluded, subTotalRoom, extrasTotal, grandTotal,
   requestNotes, kind, account, session, tier, pointsEarned, memberDiscountPct, agentCommission,
   guest, bookFor, totalAdults, totalChildren,
+  isPrepay, paymentTiming, setPaymentTiming, payNowDiscount, payNowDiscountPct,
 }) {
   const t = useT();
   const p = usePalette();
@@ -3791,7 +3847,7 @@ function ConfirmStep({
           )}
         </div>
       )}
-      {kind === "corporate" && (
+      {kind === "corporate" && !isPrepay && (
         <div className="mt-5 p-4" style={{ backgroundColor: `${p.accent}10`, border: `1px solid ${p.accent}40`, borderInlineStart: `3px solid ${p.accent}` }}>
           <div style={{ color: p.accent, fontSize: "0.62rem", letterSpacing: "0.28em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700 }}>
             Corporate · {account.account}
@@ -3801,7 +3857,7 @@ function ConfirmStep({
           </div>
         </div>
       )}
-      {kind === "agent" && (
+      {kind === "agent" && !isPrepay && (
         <div className="mt-5 p-4" style={{ backgroundColor: `${p.accent}10`, border: `1px solid ${p.accent}40`, borderInlineStart: `3px solid ${p.accent}` }}>
           <div style={{ color: p.accent, fontSize: "0.62rem", letterSpacing: "0.28em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700 }}>
             Agency · {account.name}
@@ -3811,12 +3867,103 @@ function ConfirmStep({
           </div>
         </div>
       )}
+
+      {/* Pre-payment branch — when the underlying contract is on "Pre-payment
+          (cash)" terms, swap the standard billed-to-account banner for the
+          same Pay-on-arrival / Pay-now choice the public B2C BookingModal
+          surfaces. Pricing for the room is still pulled from the contract
+          (corporate dailyRates / agent dailyNet) — only the payment step
+          changes here. */}
+      {isPrepay && (
+        <div className="mt-5 p-4" style={{ backgroundColor: `${p.accent}10`, border: `1px solid ${p.accent}40`, borderInlineStart: `3px solid ${p.accent}` }}>
+          <div style={{ color: p.accent, fontSize: "0.62rem", letterSpacing: "0.28em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700 }}>
+            {kind === "corporate" ? <>Corporate · {account.account}</> : <>Agency · {account.name}</>}
+          </div>
+          <div className="grid sm:grid-cols-2 gap-2 mt-3">
+            <PortalPaymentChoice
+              active={paymentTiming === "later"}
+              title="Pay on arrival"
+              hint="Settled in cash at check-in. Booking held against the contract until then."
+              onClick={() => setPaymentTiming?.("later")}
+              p={p}
+            />
+            <PortalPaymentChoice
+              active={paymentTiming === "now"}
+              title="Pay now"
+              hint={`${payNowDiscountPct}% off in exchange for non-refundable terms. Charged immediately.`}
+              badge={`Save ${payNowDiscountPct}%`}
+              onClick={() => setPaymentTiming?.("now")}
+              p={p}
+            />
+          </div>
+          <p className="mt-3" style={{ color: p.textMuted, fontSize: "0.74rem", lineHeight: 1.55 }}>
+            Pre-payment terms · this contract requires payment at booking. Choose pay-on-arrival or pay-now.
+          </p>
+          {paymentTiming === "now" && (
+            <div className="mt-3 p-3" style={{
+              backgroundColor: `${p.warn}14`,
+              border: `1px solid ${p.warn}45`,
+              fontSize: "0.78rem", lineHeight: 1.55, color: p.textPrimary,
+            }}>
+              <div style={{
+                color: p.warn, fontSize: "0.58rem", letterSpacing: "0.22em",
+                textTransform: "uppercase", fontWeight: 700, marginBottom: 4,
+              }}>
+                Non-refundable rate · Save {payNowDiscountPct}%
+              </div>
+              The full stay is charged immediately and is non-refundable. No refunds for cancellations, modifications, no-shows, or early check-out.
+            </div>
+          )}
+        </div>
+      )}
     </>
   );
 }
 
+// Pay-now / Pay-on-arrival chip — chip-style toggle inside the partner-
+// portal Confirm step. Mirrors the public BookingModal's PaymentChoice but
+// reads the palette so it adapts to light/dark themes.
+function PortalPaymentChoice({ active, title, hint, badge, onClick, p }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="text-start p-3 relative"
+      style={{
+        backgroundColor: active ? `${p.accent}1F` : p.bgPanelAlt,
+        border: `1.5px solid ${active ? p.accent : p.border}`,
+        cursor: "pointer", fontFamily: "'Manrope', sans-serif",
+      }}
+    >
+      {badge && (
+        <span style={{
+          position: "absolute", top: -10, insetInlineEnd: 12,
+          backgroundColor: p.success, color: "#FFFFFF",
+          fontFamily: "'Manrope', sans-serif",
+          fontSize: "0.55rem", letterSpacing: "0.2em", textTransform: "uppercase",
+          fontWeight: 700, padding: "3px 9px",
+        }}>{badge}</span>
+      )}
+      <div className="flex items-center gap-2">
+        <span style={{
+          width: 14, height: 14, borderRadius: "50%",
+          border: `2px solid ${active ? p.accent : p.border}`,
+          backgroundColor: active ? p.accent : "transparent",
+          flexShrink: 0,
+        }} />
+        <span style={{ color: active ? p.accent : p.textPrimary, fontSize: "0.85rem", fontWeight: 700 }}>
+          {title}
+        </span>
+      </div>
+      <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 4, lineHeight: 1.5 }}>
+        {hint}
+      </div>
+    </button>
+  );
+}
+
 // ─── Sticky reservation rail ────────────────────────────────────────────
-function ReservationRail({ p, checkIn, checkOut, nights, stayTotals, partySize, extrasList, subTotalRoom, grandTotal, taxBreakdown, taxIncluded, guest, bookFor, totalAdults, totalChildren }) {
+function ReservationRail({ p, checkIn, checkOut, nights, stayTotals, partySize, extrasList, subTotalRoom, grandTotal, taxBreakdown, taxIncluded, guest, bookFor, totalAdults, totalChildren, payNowDiscount = 0, payNowDiscountPct = 0 }) {
   const t = useT();
   const guestsLabel = (() => {
     const a = Number(totalAdults) || 0;
@@ -3865,6 +4012,12 @@ function ReservationRail({ p, checkIn, checkOut, nights, stayTotals, partySize, 
             <span>Room subtotal</span>
             <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtBhd(subTotalRoom)}</span>
           </div>
+          {payNowDiscount > 0 && (
+            <div className="flex items-center justify-between" style={{ color: p.accent, fontSize: "0.78rem", fontWeight: 700 }}>
+              <span>Pay-now · {payNowDiscountPct}% off</span>
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>− {fmtBhd(payNowDiscount)}</span>
+            </div>
+          )}
           {extrasList.map((e) => (
             <div key={e.id} className="flex items-center justify-between" style={{ color: p.textMuted, fontSize: "0.78rem" }}>
               <span>+ {e.title}</span>

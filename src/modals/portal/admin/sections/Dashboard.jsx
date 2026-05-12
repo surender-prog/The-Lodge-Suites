@@ -60,20 +60,27 @@ export const Dashboard = ({ onNavigate }) => {
   const t = useT();
   const p = usePalette();
   const { lang } = useLang();
-  const { rooms, bookings } = useData();
+  const { rooms, bookings, expiringContracts } = useData();
 
   const tonightSold = bookings.filter(b => b.status === "in-house").length + 56;
   const occPct = Math.round(tonightSold / 72 * 100);
 
   // Safe wrapper — falls back to a no-op if the parent didn't supply a nav
   // handler (e.g. when the Dashboard is rendered standalone in tests).
-  const go = (target, sub) => {
-    if (typeof onNavigate === "function") onNavigate(target, sub);
+  const go = (target, sub, params) => {
+    if (typeof onNavigate === "function") onNavigate(target, sub, params);
   };
 
   return (
     <div>
       <PageHeader title="Hotel Operations" intro="Inventory, channel distribution, and partner communications. Tap any tile to open the matching section." />
+
+      {/* Renewal warning — surfaces every active corporate / agency contract
+          expiring in 15 days or less so account managers can chase a
+          counter-signed renewal before the rate sheet lapses. */}
+      {expiringContracts && expiringContracts.length > 0 && (
+        <ExpiringContractsBanner items={expiringContracts} p={p} go={go} />
+      )}
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Stat
@@ -198,6 +205,72 @@ export const Dashboard = ({ onNavigate }) => {
     </div>
   );
 };
+
+// ---------------------------------------------------------------------------
+// ExpiringContractsBanner — gold-on-amber warning rail listing each contract
+// (corporate or agency) due to expire within 15 days. Clicking through routes
+// to the matching tab so the account manager can pull up the editor and chase
+// a renewal. Renders nothing when the list is empty (the parent gates that
+// already, but the guard is defensive).
+// ---------------------------------------------------------------------------
+function ExpiringContractsBanner({ items, p, go }) {
+  if (!items || items.length === 0) return null;
+  const tone = p.warn;
+  const fmt = (iso) => iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—";
+  return (
+    <div className="mb-6 p-4 flex items-start gap-3" style={{
+      backgroundColor: `${tone}14`,
+      border: `1px solid ${tone}55`,
+      borderInlineStart: `4px solid ${tone}`,
+    }}>
+      <AlertCircle size={18} style={{ color: tone, flexShrink: 0, marginTop: 2 }} />
+      <div className="flex-1 min-w-0">
+        <div style={{
+          color: tone, fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem",
+          letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+        }}>
+          {items.length} contract{items.length === 1 ? "" : "s"} expire in 15 days or less
+        </div>
+        <div className="mt-2 space-y-1.5">
+          {items.map((it) => (
+            <div key={it.id} className="flex items-center justify-between gap-3 flex-wrap" style={{
+              fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", color: p.textPrimary,
+            }}>
+              <div className="min-w-0">
+                <span style={{ color: p.textMuted, fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginInlineEnd: 6 }}>
+                  {it.kind === "corporate" ? "Corporate" : "Agent"}
+                </span>
+                <strong style={{ color: p.textPrimary }}>{it.accountName}</strong>
+                <span style={{ color: p.textMuted, marginInlineStart: 6, fontSize: "0.78rem" }}>· {it.accountId}</span>
+              </div>
+              <div className="flex items-center gap-3" style={{ fontSize: "0.78rem" }}>
+                <span style={{ color: it.daysLeft <= 7 ? p.danger : tone, fontWeight: 700 }}>
+                  {it.daysLeft} day{it.daysLeft === 1 ? "" : "s"} left
+                </span>
+                <span style={{ color: p.textMuted }}>· ends {fmt(it.endsOn)}</span>
+                <button
+                  type="button"
+                  onClick={() => go(it.kind === "corporate" ? "corporate" : "agent", null, { contractId: it.accountId })}
+                  className="inline-flex items-center gap-1.5"
+                  style={{
+                    color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem",
+                    letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+                    padding: "0.3rem 0.7rem", border: `1px solid ${p.accent}`,
+                    backgroundColor: "transparent",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = `${p.accent}14`; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+                >
+                  Review contract <ArrowRight size={11} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function Shortcut({ label, icon: Icon, onClick, danger, p }) {
   const c = danger ? p.danger : p.accent;

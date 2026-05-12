@@ -1,11 +1,16 @@
 import React, { useMemo, useState } from "react";
 import {
   AlertCircle, BedDouble, Briefcase, Building2, Calendar as CalendarIcon, Check,
-  Coins, FileText, Mail, Phone, Save, User2, X, Zap,
+  Coins, FileText, Lock, Mail, Phone, Save, User2, X, Zap,
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
 import { useT } from "../../i18n/LanguageContext.jsx";
 import { useData, applyTaxes } from "../../data/store.jsx";
+
+// Pay-now incentive — applied when a pre-payment-contracted account opts to
+// settle at booking instead of on arrival. Mirrors the B2C BookingModal so
+// guests get the same 5% saving regardless of booking surface.
+const PAY_NOW_DISCOUNT_PCT = 5;
 
 // ---------------------------------------------------------------------------
 // CorporateBookingDrawer — full-page form for accepting / creating a
@@ -42,6 +47,12 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
   const t = useT();
   const { rooms, addBooking, calendar, tax } = useData();
 
+  // When the contracted payment term is "Pre-payment (cash)", surface the
+  // same Pay-on-arrival / Pay-now-save-5% choice the public booking modal
+  // shows. Default to "later" (pay on arrival) so the operator confirms it
+  // explicitly before charging.
+  const isPrepay = (agreement.paymentTerms || "") === "Pre-payment (cash)";
+
   const [draft, setDraft] = useState({
     roomId:   rooms[0]?.id,
     checkIn:  inDaysISO(7),
@@ -51,6 +62,9 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
     guestEmail: "",
     guestPhone: "",
     notes: "",
+    // Only meaningful when isPrepay is true. "later" → pay on arrival;
+    // "now" → 5% off in exchange for non-refundable, charged now.
+    paymentTiming: "later",
   });
 
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
@@ -91,11 +105,17 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
   }, [room, nights, draft.checkIn, contractRate, calendar]);
 
   // Pricing breakdown — accommodation fee + tax components if the contract
-  // is exclusive of taxes; otherwise just the room subtotal + fee.
+  // is exclusive of taxes; otherwise just the room subtotal + fee. The
+  // pay-now discount only applies when the contract is on pre-payment terms
+  // and the operator selects "pay now"; it's a flat 5% off the room subtotal
+  // so it doesn't compound with VAT or the accommodation fee.
   const pricing = useMemo(() => {
     const room_subtotal = avgRate * nights;
     const accFee = Number(agreement.accommodationFee || 0) * nights;
-    const net = room_subtotal;
+    const payNowDiscount = (isPrepay && draft.paymentTiming === "now")
+      ? Math.round(room_subtotal * (PAY_NOW_DISCOUNT_PCT / 100))
+      : 0;
+    const net = Math.max(0, room_subtotal - payNowDiscount);
     let total = net + accFee;
     let taxLines = [];
     if (!agreement.taxIncluded && tax) {
@@ -103,14 +123,31 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
       taxLines = taxed.components || [];
       total = taxed.gross + accFee;
     }
-    return { room_subtotal, accFee, net, total, taxLines };
-  }, [avgRate, nights, agreement.accommodationFee, agreement.taxIncluded, tax]);
+    return { room_subtotal, accFee, net, total, taxLines, payNowDiscount };
+  }, [avgRate, nights, agreement.accommodationFee, agreement.taxIncluded, tax, isPrepay, draft.paymentTiming]);
 
   const valid = !!draft.guestName?.trim() && !!draft.roomId && nights > 0;
 
   const submit = () => {
     if (!valid) return;
     const id = `LS-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const total = Math.round(pricing.total);
+    // Payment-status / paid mapping mirrors the B2C BookingModal contract.
+    // For accounts on Net terms (anything other than pre-payment) we keep
+    // the historical "invoiced" status so AR continues to chase the
+    // contract's payment-terms days. For pre-payment, "paid" or "pending"
+    // depending on the operator's selection.
+    let paymentStatus = "invoiced";
+    let paid = 0;
+    if (isPrepay) {
+      if (draft.paymentTiming === "now") {
+        paymentStatus = "paid";
+        paid = total;
+      } else {
+        paymentStatus = "pending";
+        paid = 0;
+      }
+    }
     const booking = {
       id,
       guest:       draft.guestName.trim(),
@@ -124,10 +161,14 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
       nights,
       guests:      Number(draft.guests) || 1,
       rate:        avgRate,
-      total:       Math.round(pricing.total),
-      paid:        0,
+      total,
+      paid,
       status:      "confirmed",
-      paymentStatus: "invoiced",
+      paymentStatus,
+      paymentTiming: isPrepay ? draft.paymentTiming : "later",
+      nonRefundable: isPrepay && draft.paymentTiming === "now",
+      payNowDiscountPct: (isPrepay && draft.paymentTiming === "now") ? PAY_NOW_DISCOUNT_PCT : 0,
+      payNowDiscount: pricing.payNowDiscount || 0,
       notes:       draft.notes,
     };
     addBooking(booking);
@@ -292,6 +333,35 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
                   </div>
                 </CardBlock>
               )}
+
+              {/* Pre-payment branch — when the underlying contract is on
+                  "Pre-payment (cash)" terms we drop the standard billing-
+                  to-account flow and surface the same Pay-now / Pay-on-
+                  arrival choice that the public B2C booking modal shows. */}
+              {isPrepay && (
+                <CardBlock title={<><Lock size={12} className="inline mr-1.5" /> Payment</>} p={p}>
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    <PrepayChoice
+                      active={draft.paymentTiming === "later"}
+                      title="Pay on arrival"
+                      hint="Settled in cash at check-in. Booking held against the contract until then."
+                      onClick={() => set({ paymentTiming: "later" })}
+                      p={p}
+                    />
+                    <PrepayChoice
+                      active={draft.paymentTiming === "now"}
+                      title="Pay now"
+                      hint={`${PAY_NOW_DISCOUNT_PCT}% off the stay in exchange for non-refundable terms.`}
+                      badge={`Save ${PAY_NOW_DISCOUNT_PCT}%`}
+                      onClick={() => set({ paymentTiming: "now" })}
+                      p={p}
+                    />
+                  </div>
+                  <p className="mt-3" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.55 }}>
+                    Pre-payment terms · this contract requires payment at booking. Choose pay-on-arrival or pay-now.
+                  </p>
+                </CardBlock>
+              )}
             </div>
 
             {/* Sticky pricing summary */}
@@ -312,6 +382,9 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
                 <div className="mt-4 pt-4 space-y-2" style={{ borderTop: `1px solid ${p.border}`, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem" }}>
                   <SummaryRow label={`Suite × ${nights} ${nights === 1 ? "night" : "nights"}`} value={fmtBhd(pricing.room_subtotal)} p={p} />
                   <SummaryRow label="Avg nightly rate" value={fmtBhd(avgRate)} muted p={p} />
+                  {pricing.payNowDiscount > 0 && (
+                    <SummaryRow label={`Pay-now · ${PAY_NOW_DISCOUNT_PCT}% off (non-refundable)`} value={`− ${fmtBhd(pricing.payNowDiscount)}`} accent p={p} />
+                  )}
                   {pricing.accFee > 0 && (
                     <SummaryRow label={`Hotel accommodation fee · ${nights} nt`} value={fmtBhd(pricing.accFee)} p={p} />
                   )}
@@ -327,7 +400,15 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
                   </div>
                   <div className="flex justify-between" style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 4 }}>
                     <span>Payment</span>
-                    <span><strong style={{ color: p.textPrimary }}>{agreement.paymentTerms || "On departure"}</strong> · Invoiced</span>
+                    <span>
+                      {isPrepay ? (
+                        <strong style={{ color: p.textPrimary }}>
+                          {draft.paymentTiming === "now" ? "Pay now · non-refundable" : "Pay on arrival · cash"}
+                        </strong>
+                      ) : (
+                        <><strong style={{ color: p.textPrimary }}>{agreement.paymentTerms || "On departure"}</strong> · Invoiced</>
+                      )}
+                    </span>
                   </div>
                 </div>
               </CardBlock>
@@ -403,5 +484,50 @@ function SummaryRow({ label, value, accent, bold, muted, p }) {
         textAlign: "end",
       }}>{value}</span>
     </div>
+  );
+}
+
+// PrepayChoice — chip-style toggle for the pay-now / pay-on-arrival choice
+// surfaced when the contract is on pre-payment terms. Mirrors the visual
+// language of the public BookingModal's PaymentChoice but reads the active
+// palette so it adapts to the operator portal's light/dark theme.
+function PrepayChoice({ active, title, hint, badge, onClick, p }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="text-start p-3 relative"
+      style={{
+        backgroundColor: active ? `${p.accent}1F` : p.bgPanelAlt,
+        border: `1.5px solid ${active ? p.accent : p.border}`,
+        cursor: "pointer", fontFamily: "'Manrope', sans-serif",
+      }}
+    >
+      {badge && (
+        <span style={{
+          position: "absolute", top: -10, insetInlineEnd: 12,
+          backgroundColor: p.success,
+          color: p.theme === "light" ? "#FFFFFF" : "#FFFFFF",
+          fontFamily: "'Manrope', sans-serif",
+          fontSize: "0.55rem", letterSpacing: "0.2em", textTransform: "uppercase",
+          fontWeight: 700,
+          padding: "3px 9px",
+        }}>{badge}</span>
+      )}
+      <div className="flex items-center gap-2">
+        <span style={{
+          width: 14, height: 14, borderRadius: "50%",
+          border: `2px solid ${active ? p.accent : p.border}`,
+          backgroundColor: active ? p.accent : "transparent",
+          flexShrink: 0,
+        }} />
+        <span style={{ color: active ? p.accent : p.textPrimary, fontSize: "0.85rem", fontWeight: 700 }}>
+          {title}
+        </span>
+      </div>
+      <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 4, lineHeight: 1.5 }}>
+        {hint}
+      </div>
+    </button>
   );
 }

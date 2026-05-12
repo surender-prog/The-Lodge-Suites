@@ -1,9 +1,12 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import {
-  AlertCircle, Building2, CalendarDays, Check, Coins, FileText,
-  Mail, MapPin, Percent, Phone, Plus, Save, Send, Trash2, User2, X,
+  AlertCircle, Building2, CalendarDays, Check, Coins, Download, ExternalLink,
+  FileText, Loader2, Mail, MapPin, Paperclip, Percent, Phone, Plus, Save, Send,
+  Trash2, Upload, User2, X,
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
+import { supabase, SUPABASE_CONFIGURED } from "../../lib/supabase.js";
+import { pushToast } from "./admin/ui.jsx";
 
 // ---------------------------------------------------------------------------
 // ContractEditor — full-page drawer that manages a corporate agreement or a
@@ -27,7 +30,7 @@ const ROOM_KEYS = [
   { key: "threeBed", label: "Three-Bedroom Suite",  rack: 96 },
 ];
 
-const PAYMENT_TERMS = ["On departure", "Net 0", "Net 15", "Net 30", "Net 45", "Net 60", "Net 90"];
+const PAYMENT_TERMS = ["Pre-payment (cash)", "On departure", "Net 0", "Net 15", "Net 30", "Net 45", "Net 60", "Net 90"];
 
 const CORPORATE_INDUSTRIES = [
   "Banking & Finance", "Government", "Oil & Gas", "Aviation", "Consulting",
@@ -61,6 +64,39 @@ const fmtDateShort = (iso) => {
   return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 };
 
+// Signed-contract upload helper. Pushes the chosen file to the `contracts`
+// bucket in Supabase Storage under `<kind>/<id>/signed-contract-<ts>.<ext>`
+// and returns a long-lived signed URL so the partner portal can render the
+// file without an auth round-trip. The bucket already exists with policies
+// permitting authenticated uploads/reads, max 10 MB, and a restricted MIME
+// allow-list (PDF + common image types).
+async function uploadSignedContract(file, accountKind, accountId) {
+  if (!supabase) {
+    throw new Error("Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env.local.");
+  }
+  const ext = (file.name.match(/\.[a-z0-9]+$/i)?.[0] || "").toLowerCase();
+  const path = `${accountKind}/${accountId}/signed-contract-${Date.now()}${ext}`;
+  const { error: uploadErr } = await supabase.storage
+    .from("contracts")
+    .upload(path, file, { upsert: true, cacheControl: "3600" });
+  if (uploadErr) throw uploadErr;
+  // Long-lived signed URL (1 year) — re-issued on every fresh upload so the
+  // partner portal always points at the latest signed PDF.
+  const { data, error: urlErr } = await supabase.storage
+    .from("contracts")
+    .createSignedUrl(path, 60 * 60 * 24 * 365);
+  if (urlErr) throw urlErr;
+  return {
+    url: data.signedUrl,
+    filename: file.name,
+    uploadedAt: new Date().toISOString(),
+    path,
+  };
+}
+
+const MAX_CONTRACT_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB — matches bucket policy
+const ALLOWED_CONTRACT_MIME = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+
 // Default contract templates used when the caller passes a fresh draft.
 export function defaultCorporateDraft(existingIds = []) {
   const yr = new Date().getFullYear();
@@ -79,6 +115,8 @@ export function defaultCorporateDraft(existingIds = []) {
     paymentTerms: "Net 30", creditLimit: 0,
     pocName: "", pocEmail: "", pocPhone: "", notes: "",
     targetNights: 0, ytdNights: 0, ytdSpend: 0,
+    // Signed countersigned contract (populated by SignedContractCard).
+    signedContractUrl: null, signedContractFilename: null, signedContractUploadedAt: null,
     _new: true,
   };
 }
@@ -98,6 +136,8 @@ export function defaultAgencyDraft(existingIds = []) {
     paymentTerms: "Net 30", creditLimit: 0,
     pocName: "", pocEmail: "", pocPhone: "", notes: "",
     ytdBookings: 0, ytdRevenue: 0, ytdCommission: 0, targetBookings: 0,
+    // Signed countersigned contract (populated by SignedContractCard).
+    signedContractUrl: null, signedContractFilename: null, signedContractUploadedAt: null,
     _new: true,
   };
 }
@@ -471,6 +511,16 @@ export function ContractEditor({ open, onClose, contract, kind, onSave, onRemove
                 </div>
               </CECard>
 
+              {/* Signed contract — operator-uploaded PDF / image of the
+                  countersigned document. Stored in Supabase Storage (bucket
+                  "contracts") behind a long-lived signed URL so the partner
+                  portal can render it without an auth round-trip. */}
+              <SignedContractCard
+                draft={draft}
+                set={set}
+                accountKind={isCorporate ? "agreements" : "agencies"}
+              />
+
               {/* Point of contact */}
               <CECard title="Point of contact" icon={User2}>
                 <div className="grid sm:grid-cols-3 gap-4">
@@ -748,6 +798,171 @@ function PreviewRow({ label, value, mono, bold, accent, muted }) {
         fontVariantNumeric: "tabular-nums", textAlign: "end",
       }}>{value}</span>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SignedContractCard — uploads a countersigned contract PDF/image to Supabase
+// Storage and exposes the resulting signed URL + filename + uploaded-at on
+// the draft. The card renders the current attachment when present and offers
+// a "Replace" affordance; otherwise it shows the upload-only state.
+// ---------------------------------------------------------------------------
+function SignedContractCard({ draft, set, accountKind }) {
+  const p = usePalette();
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+
+  const hasFile = !!draft.signedContractUrl;
+
+  const handleFiles = async (files) => {
+    const file = files?.[0];
+    if (!file) return;
+    if (!SUPABASE_CONFIGURED) {
+      pushToast({ message: "Supabase isn't configured — uploads are disabled in this environment.", kind: "error" });
+      return;
+    }
+    if (file.size > MAX_CONTRACT_UPLOAD_BYTES) {
+      pushToast({ message: "File too large. Max 10 MB.", kind: "error" });
+      return;
+    }
+    if (file.type && !ALLOWED_CONTRACT_MIME.includes(file.type)) {
+      pushToast({ message: "Unsupported file type. Use PDF or an image.", kind: "error" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const { url, filename, uploadedAt } = await uploadSignedContract(file, accountKind, draft.id);
+      set({
+        signedContractUrl: url,
+        signedContractFilename: filename,
+        signedContractUploadedAt: uploadedAt,
+      });
+      pushToast({ message: `Signed contract uploaded · ${filename}` });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[ContractEditor] upload failed", err);
+      pushToast({ message: `Upload failed · ${err?.message || "unknown error"}`, kind: "error" });
+    } finally {
+      setBusy(false);
+      // Reset the input so re-picking the same file still fires onChange
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  };
+
+  const clear = () => {
+    if (!confirm("Remove the uploaded signed contract from this record? The file in storage will be left in place.")) return;
+    set({
+      signedContractUrl: null,
+      signedContractFilename: null,
+      signedContractUploadedAt: null,
+    });
+    pushToast({ message: "Signed contract detached. Remember to save." });
+  };
+
+  return (
+    <CECard title="Signed contract" icon={Paperclip}>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="application/pdf,image/*"
+        className="hidden"
+        onChange={(e) => handleFiles(e.target.files)}
+      />
+      {hasFile ? (
+        <div className="flex items-start gap-3 flex-wrap" style={{
+          padding: "0.85rem 1rem",
+          backgroundColor: p.bgPanelAlt,
+          border: `1px solid ${p.border}`,
+        }}>
+          <FileText size={20} style={{ color: p.accent, flexShrink: 0, marginTop: 2 }} />
+          <div className="min-w-0 flex-1">
+            <div style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.88rem", fontWeight: 700, wordBreak: "break-word" }}>
+              {draft.signedContractFilename || "Signed contract"}
+            </div>
+            <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", marginTop: 2 }}>
+              {draft.signedContractUploadedAt
+                ? <>Uploaded · {fmtDateShort(draft.signedContractUploadedAt.slice(0, 10))}</>
+                : "Uploaded"}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <a
+              href={draft.signedContractUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5"
+              style={{
+                padding: "0.4rem 0.85rem", border: `1px solid ${p.accent}`, color: p.accent,
+                fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+                letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                textDecoration: "none",
+              }}
+            >
+              <ExternalLink size={11} /> Open
+            </a>
+            <button
+              onClick={() => inputRef.current?.click()}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5"
+              style={{
+                padding: "0.4rem 0.85rem", border: `1px solid ${p.border}`, color: p.textSecondary,
+                fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+                letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                cursor: busy ? "wait" : "pointer", opacity: busy ? 0.7 : 1,
+              }}
+              onMouseEnter={(e) => { if (!busy) { e.currentTarget.style.borderColor = p.accent; e.currentTarget.style.color = p.accent; } }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = p.border; e.currentTarget.style.color = p.textSecondary; }}
+            >
+              {busy ? <Loader2 size={11} className="animate-spin" /> : <Upload size={11} />} Replace
+            </button>
+            <button
+              onClick={clear}
+              disabled={busy}
+              title="Detach uploaded contract"
+              className="inline-flex items-center gap-1.5"
+              style={{
+                padding: "0.4rem 0.55rem", border: `1px solid ${p.border}`, color: p.danger,
+                cursor: busy ? "wait" : "pointer", opacity: busy ? 0.7 : 1,
+              }}
+              onMouseEnter={(e) => { if (!busy) e.currentTarget.style.borderColor = p.danger; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = p.border; }}
+            >
+              <Trash2 size={11} />
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={busy}
+          className="w-full flex items-center justify-center gap-3"
+          style={{
+            padding: "1.4rem 1rem",
+            backgroundColor: p.bgPanelAlt,
+            border: `1.5px dashed ${p.border}`,
+            cursor: busy ? "wait" : "pointer",
+            opacity: busy ? 0.7 : 1,
+            fontFamily: "'Manrope', sans-serif",
+          }}
+          onMouseEnter={(e) => { if (!busy) e.currentTarget.style.borderColor = p.accent; }}
+          onMouseLeave={(e) => { e.currentTarget.style.borderColor = p.border; }}
+        >
+          {busy ? <Loader2 size={18} className="animate-spin" style={{ color: p.accent }} /> : <Upload size={18} style={{ color: p.accent }} />}
+          <div className="text-start">
+            <div style={{ color: p.textPrimary, fontSize: "0.86rem", fontWeight: 700 }}>
+              {busy ? "Uploading…" : "Upload signed contract"}
+            </div>
+            <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 2 }}>
+              PDF or image · max 10 MB
+            </div>
+          </div>
+        </button>
+      )}
+      <p className="mt-3" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", lineHeight: 1.55 }}>
+        The countersigned contract is stored privately in Supabase Storage and shared with the partner via a long-lived signed URL. Replace whenever an amendment is signed.
+      </p>
+    </CECard>
   );
 }
 

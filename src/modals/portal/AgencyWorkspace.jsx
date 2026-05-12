@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from "react";
 import {
   AlertCircle, BedDouble, Briefcase, Building2, Calendar as CalendarIcon, Check,
-  Coins, Copy, Crown, Download, Edit2, Eye, EyeOff, FileText, Inbox, KeyRound,
-  Layers, Lock, Mail, Phone, Plus, Printer, Receipt as ReceiptIcon, ScrollText,
-  Send, Shield, Star, Trash2, User2, UserPlus, X,
+  Coins, Copy, Crown, Download, Edit2, ExternalLink, Eye, EyeOff, FileText, Inbox,
+  KeyRound, Layers, Lock, Mail, Paperclip, Phone, Plus, Printer,
+  Receipt as ReceiptIcon, ScrollText, Send, Shield, Star, Trash2, User2,
+  UserPlus, X,
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
 import { useData, legalLine } from "../../data/store.jsx";
@@ -392,7 +393,65 @@ function OverviewSection({ agency, kpis, bookings, invoices, payments, p, onSeeB
           </div>
         )}
       </CardBlock>
+
+      {/* Signed contract — admin-uploaded countersigned PDF/image. Only
+          render when present so the partner-facing view stays uncluttered
+          for accounts still finalising paperwork. */}
+      {agency.signedContractUrl && (
+        <SignedContractCard account={agency} p={p} />
+      )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SignedContractCard — surfaces the countersigned contract uploaded in the
+// admin ContractEditor. Shows filename, upload date, and Open / Download
+// links that target the long-lived signed Supabase Storage URL.
+// ---------------------------------------------------------------------------
+function SignedContractCard({ account, p }) {
+  return (
+    <CardBlock title={<><Paperclip size={12} className="inline mr-1.5" /> Signed contract</>} p={p} className="lg:col-span-2">
+      <div className="px-5 py-4 flex items-start gap-3 flex-wrap">
+        <FileText size={22} style={{ color: p.accent, flexShrink: 0, marginTop: 2 }} />
+        <div className="min-w-0 flex-1">
+          <a
+            href={account.signedContractUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.9rem",
+              fontWeight: 700, wordBreak: "break-word", textDecoration: "underline", textUnderlineOffset: 3,
+            }}
+          >
+            {account.signedContractFilename || "Signed contract"}
+          </a>
+          <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.76rem", marginTop: 4 }}>
+            {account.signedContractUploadedAt
+              ? <>Uploaded · {fmtDate(account.signedContractUploadedAt.slice(0, 10))}</>
+              : "Uploaded"}
+          </div>
+        </div>
+        <a
+          href={account.signedContractUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          download={account.signedContractFilename || undefined}
+          title="Download signed contract"
+          className="inline-flex items-center gap-1.5"
+          style={{
+            padding: "0.45rem 0.85rem", border: `1px solid ${p.accent}`, color: p.accent, backgroundColor: "transparent",
+            fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+            letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+            textDecoration: "none",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = `${p.accent}10`; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+        >
+          <Download size={11} /> Download
+        </a>
+      </div>
+    </CardBlock>
   );
 }
 
