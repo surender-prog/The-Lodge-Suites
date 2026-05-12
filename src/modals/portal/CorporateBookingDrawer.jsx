@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
 import { useT } from "../../i18n/LanguageContext.jsx";
-import { useData, applyTaxes } from "../../data/store.jsx";
+import { useData, applyTaxes, buildCardOnFile } from "../../data/store.jsx";
 
 // Pay-now incentive — applied when a pre-payment-contracted account opts to
 // settle at booking instead of on arrival. Mirrors the B2C BookingModal so
@@ -65,6 +65,12 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
     // Only meaningful when isPrepay is true. "later" → pay on arrival;
     // "now" → 5% off in exchange for non-refundable, charged now.
     paymentTiming: "later",
+    // Card-on-file capture — only required when isPrepay + Pay-now is
+    // chosen, mirroring the public BookingModal's required-card pattern.
+    cardName: "",
+    cardNum:  "",
+    cardExp:  "",
+    cardCvc:  "",
   });
 
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
@@ -126,7 +132,16 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
     return { room_subtotal, accFee, net, total, taxLines, payNowDiscount };
   }, [avgRate, nights, agreement.accommodationFee, agreement.taxIncluded, tax, isPrepay, draft.paymentTiming]);
 
-  const valid = !!draft.guestName?.trim() && !!draft.roomId && nights > 0;
+  // Pay-now bookings require a card-on-file; the operator can't confirm
+  // until all four fields are populated. Pay-on-arrival keeps the existing
+  // contract-only validation.
+  const needsCard = isPrepay && draft.paymentTiming === "now";
+  const cardComplete = !!draft.cardName?.trim()
+    && !!draft.cardNum?.trim()
+    && !!draft.cardExp?.trim()
+    && !!draft.cardCvc?.trim();
+  const cardMissing = needsCard && !cardComplete;
+  const valid = !!draft.guestName?.trim() && !!draft.roomId && nights > 0 && !cardMissing;
 
   const submit = () => {
     if (!valid) return;
@@ -148,6 +163,14 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
         paid = 0;
       }
     }
+    // Card-on-file — captured only when Pay-now is active. Stored masked /
+    // last-4 by buildCardOnFile so the raw PAN never lives in the store.
+    // Bookings with a card on file are flagged guaranteed so the front-
+    // office knows the room is held all day instead of releasing at 3pm.
+    const cardOnFile = (isPrepay && draft.paymentTiming === "now")
+      ? buildCardOnFile({ name: draft.cardName, number: draft.cardNum, exp: draft.cardExp })
+      : null;
+    const guaranteed = cardOnFile != null;
     const booking = {
       id,
       guest:       draft.guestName.trim(),
@@ -169,6 +192,9 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
       nonRefundable: isPrepay && draft.paymentTiming === "now",
       payNowDiscountPct: (isPrepay && draft.paymentTiming === "now") ? PAY_NOW_DISCOUNT_PCT : 0,
       payNowDiscount: pricing.payNowDiscount || 0,
+      cardOnFile,
+      guaranteed,
+      guaranteeMode: guaranteed ? "card" : "none",
       notes:       draft.notes,
     };
     addBooking(booking);
@@ -360,6 +386,76 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
                   <p className="mt-3" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.55 }}>
                     Pre-payment terms · this contract requires payment at booking. Choose pay-on-arrival or pay-now.
                   </p>
+
+                  {/* Card-on-file capture — mirrors the public BookingModal.
+                      Required when Pay-now is selected so the operator can
+                      charge against the contract immediately. Not rendered
+                      for Pay-on-arrival (cash at check-in). */}
+                  {draft.paymentTiming === "now" && (
+                    <div className="mt-4">
+                      <div className="p-3 mb-3" style={{
+                        backgroundColor: `${p.warn}14`,
+                        border: `1px solid ${p.warn}45`,
+                        fontFamily: "'Manrope', sans-serif",
+                        fontSize: "0.78rem", lineHeight: 1.55, color: p.textPrimary,
+                      }}>
+                        <div style={{
+                          color: p.warn,
+                          fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase",
+                          fontWeight: 700, marginBottom: 6,
+                        }}>
+                          Non-refundable rate · Save {PAY_NOW_DISCOUNT_PCT}%
+                        </div>
+                        <ul style={{ paddingInlineStart: 18, listStyle: "disc", margin: 0 }}>
+                          <li>The full stay is charged immediately and is <strong>non-refundable</strong>.</li>
+                          <li>No refunds for cancellations, modifications, no-shows, or early check-out.</li>
+                          <li>Date or suite changes are not permitted on this rate.</li>
+                          <li>If the guest may need flexibility, choose <em>Pay on arrival</em> instead.</li>
+                        </ul>
+                      </div>
+                      <div className="grid gap-3">
+                        <Field label="Name on card" p={p}>
+                          <input
+                            value={draft.cardName}
+                            onChange={(e) => set({ cardName: e.target.value })}
+                            className="w-full outline-none"
+                            style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
+                          />
+                        </Field>
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="col-span-3">
+                            <Field label="Card number" p={p}>
+                              <input
+                                value={draft.cardNum}
+                                onChange={(e) => set({ cardNum: e.target.value })}
+                                placeholder="•••• •••• •••• ••••"
+                                className="w-full outline-none"
+                                style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
+                              />
+                            </Field>
+                          </div>
+                          <Field label="Exp" p={p}>
+                            <input
+                              value={draft.cardExp}
+                              onChange={(e) => set({ cardExp: e.target.value })}
+                              placeholder="MM/YY"
+                              className="w-full outline-none"
+                              style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
+                            />
+                          </Field>
+                          <Field label="CVC" p={p}>
+                            <input
+                              value={draft.cardCvc}
+                              onChange={(e) => set({ cardCvc: e.target.value })}
+                              placeholder="•••"
+                              className="w-full outline-none"
+                              style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
+                            />
+                          </Field>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </CardBlock>
               )}
             </div>
@@ -420,6 +516,7 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
                   <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.8rem", lineHeight: 1.55 }}>
                     {!draft.guestName?.trim() && <div>Add the guest name (the person actually staying).</div>}
                     {nights <= 0 && <div>Pick a check-out date after the check-in date.</div>}
+                    {cardMissing && <div>Card details required for Pay-now bookings.</div>}
                   </div>
                 </div>
               )}

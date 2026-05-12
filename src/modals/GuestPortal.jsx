@@ -12,7 +12,7 @@ import {
   whatsAppShareUrl, emailShareUrl, nativeShare, downloadBlob, tierVisuals, hotel,
 } from "../utils/membershipPass.js";
 import { useT } from "../i18n/LanguageContext.jsx";
-import { useData, applyTaxes, priceExtra, priceLabelFor, legalLine, roomFitsParty } from "../data/store.jsx";
+import { useData, applyTaxes, priceExtra, priceLabelFor, legalLine, roomFitsParty, buildCardOnFile } from "../data/store.jsx";
 import { Icon as ExtraIcon } from "../components/Icon.jsx";
 import { PortalThemeProvider, ThemeToggle, usePalette } from "./portal/theme.jsx";
 import { ToastHost, pushToast } from "./portal/admin/ui.jsx";
@@ -2640,6 +2640,17 @@ function BookStayTab({ session, kind, account, onComplete }) {
   const [paymentTiming, setPaymentTiming] = useState("later"); // "later" | "now"
   const PAY_NOW_DISCOUNT_PCT = 5;
 
+  // Card-on-file capture — only required (and only rendered) when the
+  // partner's contract is on pre-payment terms AND they choose Pay-now.
+  // Mirrors the public BookingModal's required-card flow.
+  const [cardName, setCardName] = useState("");
+  const [cardNum,  setCardNum]  = useState("");
+  const [cardExp,  setCardExp]  = useState("");
+  const [cardCvc,  setCardCvc]  = useState("");
+  const needsCard = isPrepay && paymentTiming === "now";
+  const cardComplete = !!cardName.trim() && !!cardNum.trim() && !!cardExp.trim() && !!cardCvc.trim();
+  const cardMissing = needsCard && !cardComplete;
+
   // Booking on behalf — toggle between booking for yourself (default) or
   // capturing a different guest's name / email / mobile (all required).
   const [bookFor,    setBookFor]    = useState("self"); // "self" | "other"
@@ -2813,6 +2824,18 @@ function BookStayTab({ session, kind, account, onComplete }) {
       setStep(1);
       return;
     }
+    if (cardMissing) {
+      pushToast({ message: "Card details required for Pay-now bookings.", kind: "warn" });
+      return;
+    }
+    // Card-on-file — captured only for Pay-now on a pre-payment contract.
+    // buildCardOnFile masks the PAN before persistence; the raw number never
+    // lives in the store. Bookings with a card on file are flagged
+    // guaranteed so the front office knows the room is held all day.
+    const cardOnFile = needsCard
+      ? buildCardOnFile({ name: cardName, number: cardNum, exp: cardExp })
+      : null;
+    const guaranteed = cardOnFile != null;
     const created = [];
     let extrasAttached = false;
     // Per-line pay-now discount allocation — split the savings evenly across
@@ -2873,6 +2896,9 @@ function BookStayTab({ session, kind, account, onComplete }) {
           nonRefundable: isPrepay && paymentTiming === "now",
           payNowDiscountPct: (isPrepay && paymentTiming === "now") ? PAY_NOW_DISCOUNT_PCT : 0,
           payNowDiscount: lineDiscount,
+          cardOnFile,
+          guaranteed,
+          guaranteeMode: guaranteed ? "card" : "none",
           notes: [
             s.notes,
             requestNotes,
@@ -3013,6 +3039,11 @@ function BookStayTab({ session, kind, account, onComplete }) {
               totalAdults={totalAdults} totalChildren={totalChildren}
               isPrepay={isPrepay} paymentTiming={paymentTiming} setPaymentTiming={setPaymentTiming}
               payNowDiscount={payNowDiscount} payNowDiscountPct={PAY_NOW_DISCOUNT_PCT}
+              cardName={cardName} setCardName={setCardName}
+              cardNum={cardNum}   setCardNum={setCardNum}
+              cardExp={cardExp}   setCardExp={setCardExp}
+              cardCvc={cardCvc}   setCardCvc={setCardCvc}
+              cardMissing={cardMissing}
             />
           )}
         </div>
@@ -3049,15 +3080,23 @@ function BookStayTab({ session, kind, account, onComplete }) {
             ) : (
               <button
                 onClick={confirm}
+                disabled={cardMissing}
                 className="w-full inline-flex items-center justify-center gap-2"
                 style={{
-                  backgroundColor: p.accent, color: p.theme === "light" ? "#FFFFFF" : "#15161A",
-                  border: `1px solid ${p.accent}`,
+                  backgroundColor: cardMissing ? p.border : p.accent,
+                  color: cardMissing ? p.textMuted : (p.theme === "light" ? "#FFFFFF" : "#15161A"),
+                  border: `1px solid ${cardMissing ? p.border : p.accent}`,
                   padding: "0.95rem 1rem",
                   fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem",
-                  fontWeight: 700, letterSpacing: "0.25em", textTransform: "uppercase", cursor: "pointer",
+                  fontWeight: 700, letterSpacing: "0.25em", textTransform: "uppercase",
+                  cursor: cardMissing ? "not-allowed" : "pointer",
                 }}
               ><CheckCircle2 size={14} /> Confirm · {fmtBhd(grandTotal)}</button>
+            )}
+            {cardMissing && (
+              <div style={{ color: p.warn, fontSize: "0.72rem", textAlign: "center", lineHeight: 1.55, fontFamily: "'Manrope', sans-serif" }}>
+                Card details required for Pay-now bookings.
+              </div>
             )}
 
             {step > 1 && (
@@ -3747,6 +3786,7 @@ function ConfirmStep({
   requestNotes, kind, account, session, tier, pointsEarned, memberDiscountPct, agentCommission,
   guest, bookFor, totalAdults, totalChildren,
   isPrepay, paymentTiming, setPaymentTiming, payNowDiscount, payNowDiscountPct,
+  cardName, setCardName, cardNum, setCardNum, cardExp, setCardExp, cardCvc, setCardCvc, cardMissing,
 }) {
   const t = useT();
   const p = usePalette();
@@ -3900,19 +3940,72 @@ function ConfirmStep({
             Pre-payment terms · this contract requires payment at booking. Choose pay-on-arrival or pay-now.
           </p>
           {paymentTiming === "now" && (
-            <div className="mt-3 p-3" style={{
-              backgroundColor: `${p.warn}14`,
-              border: `1px solid ${p.warn}45`,
-              fontSize: "0.78rem", lineHeight: 1.55, color: p.textPrimary,
-            }}>
-              <div style={{
-                color: p.warn, fontSize: "0.58rem", letterSpacing: "0.22em",
-                textTransform: "uppercase", fontWeight: 700, marginBottom: 4,
+            <>
+              <div className="mt-3 p-3" style={{
+                backgroundColor: `${p.warn}14`,
+                border: `1px solid ${p.warn}45`,
+                fontSize: "0.78rem", lineHeight: 1.55, color: p.textPrimary,
               }}>
-                Non-refundable rate · Save {payNowDiscountPct}%
+                <div style={{
+                  color: p.warn, fontSize: "0.58rem", letterSpacing: "0.22em",
+                  textTransform: "uppercase", fontWeight: 700, marginBottom: 4,
+                }}>
+                  Non-refundable rate · Save {payNowDiscountPct}%
+                </div>
+                The full stay is charged immediately and is non-refundable. No refunds for cancellations, modifications, no-shows, or early check-out.
               </div>
-              The full stay is charged immediately and is non-refundable. No refunds for cancellations, modifications, no-shows, or early check-out.
-            </div>
+              {/* Card-on-file capture — mirrors the public BookingModal's
+                  required-card pattern. The raw PAN is never persisted;
+                  buildCardOnFile masks before write. */}
+              <div className="mt-3 grid gap-3">
+                <label className="block">
+                  <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Name on card</div>
+                  <input
+                    value={cardName}
+                    onChange={(e) => setCardName?.(e.target.value)}
+                    className="w-full outline-none"
+                    style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
+                  />
+                </label>
+                <div className="grid grid-cols-3 gap-3">
+                  <label className="block col-span-3">
+                    <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Card number</div>
+                    <input
+                      value={cardNum}
+                      onChange={(e) => setCardNum?.(e.target.value)}
+                      placeholder="•••• •••• •••• ••••"
+                      className="w-full outline-none"
+                      style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
+                    />
+                  </label>
+                  <label className="block">
+                    <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Exp</div>
+                    <input
+                      value={cardExp}
+                      onChange={(e) => setCardExp?.(e.target.value)}
+                      placeholder="MM/YY"
+                      className="w-full outline-none"
+                      style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
+                    />
+                  </label>
+                  <label className="block">
+                    <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>CVC</div>
+                    <input
+                      value={cardCvc}
+                      onChange={(e) => setCardCvc?.(e.target.value)}
+                      placeholder="•••"
+                      className="w-full outline-none"
+                      style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
+                    />
+                  </label>
+                </div>
+                {cardMissing && (
+                  <div style={{ color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.5 }}>
+                    Card details required for Pay-now bookings.
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
       )}
