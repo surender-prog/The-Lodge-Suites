@@ -25,8 +25,14 @@ export function LanguageProvider({ children, defaultLang = "en" }) {
   const [lang, setLang] = useState(defaultLang);
   // Site-content CMS overrides — operator-edited copy for the public site.
   // The DataProvider sits OUTSIDE this provider so we can safely read it here.
-  const { siteContent } = useData();
+  const { siteContent, hotelInfo } = useData();
   const overrides = siteContent?.textOverrides || {};
+  // Live currency code from the Property Info "Currency & decimals" master.
+  // Special-cased below so every existing `t("common.bhd")` call surfaces
+  // the configured currency (BHD / AED / USD / EUR) without touching every
+  // callsite. Operators who explicitly override common.bhd via the Site
+  // Content CMS still win.
+  const currencyCode = hotelInfo?.currency || "BHD";
 
   useEffect(() => {
     const dir = DIR[lang] || "ltr";
@@ -37,16 +43,19 @@ export function LanguageProvider({ children, defaultLang = "en" }) {
   // t("foo.bar") — checks operator-edited overrides first (these win across
   // all languages by design — translations stay machine-generated and the
   // CMS edit is treated as the canonical voice), then the active language,
-  // falls back to English, then the key.
+  // falls back to English, then the key. The "common.bhd" key is a live
+  // mirror of hotelInfo.currency so a property switch from BHD → AED
+  // reflows the entire public site without an i18n edit.
   const t = useCallback((key) => {
     const ov = overrides[key];
     if (ov != null && ov !== "") return ov;
+    if (key === "common.bhd") return currencyCode;
     const fromLang = lookup(TRANSLATIONS[lang] || {}, key);
     if (fromLang != null) return fromLang;
     const fromEn = lookup(TRANSLATIONS.en, key);
     if (fromEn != null) return fromEn;
     return key;
-  }, [lang, overrides]);
+  }, [lang, overrides, currencyCode]);
 
   const value = useMemo(() => ({
     lang,

@@ -7,6 +7,8 @@ import { C } from "../data/tokens.js";
 import { IMG } from "../data/images.js";
 import { EditorialPage, PageSection } from "./EditorialPage.jsx";
 import { pushToast } from "./portal/admin/ui.jsx";
+import { useT } from "../i18n/LanguageContext.jsx";
+import { formatCurrency } from "../data/store.jsx";
 
 // ---------------------------------------------------------------------------
 // Gift Vouchers — full editorial page that the Footer "Gift Vouchers" link
@@ -22,7 +24,7 @@ const DENOMINATIONS = [
   { value: 300,  label: "The Lodge weekend",         note: "Two nights in a One-Bedroom Suite with breakfast." },
   { value: 500,  label: "A long weekend, in suite",  note: "Three nights in a Two-Bedroom Suite or four in a One-Bed." },
   { value: 1000, label: "A residency",                note: "A full week's stay or applied across an extended booking." },
-  { value: null, label: "Custom amount",              note: "Choose any amount from BHD 25 upwards in increments of 5." },
+  { value: null, label: "Custom amount",              note: "Choose any amount from 25 upwards in increments of 5." },
 ];
 
 const OCCASIONS = [
@@ -51,6 +53,8 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
   // "Send a voucher" composer state — mocked per CLAUDE.md, surfaces as a
   // toast on submit. When the production payment + email pipeline lands,
   // this hands off to a real cart.
+  const t = useT();
+  const ccy = t("common.bhd");
   const [amount, setAmount] = useState(150);
   const [custom, setCustom] = useState("");
   const [delivery, setDelivery] = useState("email");
@@ -70,7 +74,7 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
       pushToast({ message: "Fill in voucher amount, recipient and your details to continue.", kind: "warn" });
       return;
     }
-    pushToast({ message: `Voucher draft created · BHD ${finalAmount.toFixed(0)} for ${recipient.name}. Our concierge will be in touch.` });
+    pushToast({ message: `Voucher draft created · ${formatCurrency(finalAmount)} for ${recipient.name}. Our concierge will be in touch.` });
     onClose?.();
   };
 
@@ -105,7 +109,7 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
         eyebrow="Denominations"
         title="Choose a"
         italic="value."
-        intro="Six curated denominations, each calibrated to a specific kind of stay. Or pick your own amount — vouchers from BHD 25 upwards, in increments of 5."
+        intro={`Six curated denominations, each calibrated to a specific kind of stay. Or pick your own amount — vouchers from ${ccy} 25 upwards, in increments of 5.`}
       >
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px" style={{ backgroundColor: "rgba(0,0,0,0.08)" }}>
           {DENOMINATIONS.map((d) => {
@@ -126,7 +130,7 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
                   fontFamily: "'Cormorant Garamond', serif",
                   fontSize: "2rem", color: C.bgDeep, fontWeight: 400, lineHeight: 1.05,
                 }}>
-                  {d.value === null ? <span style={{ fontStyle: "italic", color: C.goldDeep }}>Custom</span> : <>BHD {d.value}</>}
+                  {d.value === null ? <span style={{ fontStyle: "italic", color: C.goldDeep }}>Custom</span> : <>{ccy} {d.value}</>}
                 </div>
                 <div style={{ color: C.goldDeep, fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginTop: 10 }}>
                   {d.label}
@@ -155,12 +159,12 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
             </h3>
 
             {amount === null && (
-              <PaperField label="Custom amount (BHD)">
+              <PaperField label={`Custom amount (${ccy})`}>
                 <input
                   type="number" min={25} step={5}
                   value={custom}
                   onChange={(e) => setCustom(e.target.value)}
-                  placeholder="From BHD 25"
+                  placeholder={`From ${ccy} 25`}
                   style={inputStyle}
                 />
               </PaperField>
@@ -253,7 +257,7 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
               Voucher value
             </div>
             <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "2.1rem", fontWeight: 400, lineHeight: 1.05, marginTop: 4 }}>
-              BHD {finalAmount.toLocaleString()}
+              {formatCurrency(finalAmount)}
             </div>
           </div>
           <button

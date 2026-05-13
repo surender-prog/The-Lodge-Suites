@@ -7,7 +7,7 @@ import {
   UserPlus, X,
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
-import { useData, legalLine } from "../../data/store.jsx";
+import { useData, legalLine, formatCurrency } from "../../data/store.jsx";
 import { pushToast } from "./admin/ui.jsx";
 import { BookingDocPreviewModal } from "./admin/BookingDocs.jsx";
 import { AccountActivities } from "./ActivityHub.jsx";
@@ -39,7 +39,9 @@ const FALLBACK_HOTEL = {
   bank:    "National Bank of Bahrain",
 };
 
-const fmtBhd  = (n) => `BHD ${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 3 })}`;
+// Currency display delegates to the ambient formatter so the Property Info
+// "Currency & decimals" master flows through this workspace automatically.
+const fmtBhd  = (n) => formatCurrency(n);
 const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—";
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const startOfYearISO = () => new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10);

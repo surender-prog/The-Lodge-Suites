@@ -43,7 +43,12 @@ export const NOTIFICATION_KINDS = KINDS;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const fmtBhd = (n) => `BHD ${(Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+import { formatCurrency } from "../data/store.jsx";
+
+// Currency display delegates to the ambient formatter so notification
+// strings (bell entries, mobile push payloads) honour the Property Info
+// "Currency & decimals" master.
+const fmtBhd = (n) => formatCurrency(n);
 const fmtShortDate = (iso) => {
   if (!iso) return "—";
   try { return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" }); }

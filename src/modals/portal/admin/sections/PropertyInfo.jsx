@@ -1,7 +1,7 @@
 import React, { useState } from "react";
-import { Building2, CreditCard, FileBadge, Globe, Mail, MapPin, Phone, RotateCcw, Save } from "lucide-react";
+import { Building2, Coins, CreditCard, FileBadge, Globe, Mail, MapPin, Phone, RotateCcw, Save } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
-import { useData, legalLine } from "../../../../data/store.jsx";
+import { useData, legalLine, formatCurrency } from "../../../../data/store.jsx";
 import { Card, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, TextField } from "../ui.jsx";
 
 // ---------------------------------------------------------------------------
@@ -177,6 +177,60 @@ export const PropertyInfo = () => {
             </div>
           </Card>
 
+          {/* Currency & decimals — the master setting that drives every
+              monetary string across the system (booking totals, invoices,
+              folios, contracts, the public website, exported reports).
+              BHD is sub-divided into 1,000 fils so 3 decimals are the
+              norm; operators on a 2-decimal currency (AED / USD / EUR)
+              should drop the trailing digit. */}
+          <Card title="Currency & decimals">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <FormGroup label="Currency code">
+                <TextField
+                  value={draft.currency || ""}
+                  onChange={(v) => update({ currency: v.toUpperCase().slice(0, 6) })}
+                  placeholder="BHD"
+                />
+              </FormGroup>
+              <FormGroup label="Decimals">
+                <TextField
+                  type="number"
+                  value={String(draft.currencyDecimals ?? 3)}
+                  onChange={(v) => {
+                    const n = parseInt(v, 10);
+                    update({ currencyDecimals: Number.isFinite(n) ? Math.max(0, Math.min(4, n)) : 3 });
+                  }}
+                  placeholder="3"
+                />
+              </FormGroup>
+              <div className="flex flex-col">
+                <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
+                  Preview
+                </div>
+                <div className="flex items-center gap-2 px-3" style={{
+                  flex: 1,
+                  border: `1px solid ${p.border}`,
+                  backgroundColor: p.bgPanelAlt,
+                  fontFamily: "'Cormorant Garamond', Georgia, serif",
+                  fontSize: "1.25rem",
+                  color: p.accent,
+                  fontWeight: 600,
+                }}>
+                  <Coins size={14} style={{ color: p.accent }} />
+                  {formatCurrency(1234.5678, draft.currency || "BHD", draft.currencyDecimals ?? 3)}
+                </div>
+              </div>
+              <div className="sm:col-span-3 mt-1 px-3 py-2.5" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
+                <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                  About these fields
+                </div>
+                <div style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 4, lineHeight: 1.55 }}>
+                  The code (up to 6 characters) is the label printed in front of every amount — change to <code style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>AED</code>, <code style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>USD</code>, <code style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>EUR</code>, etc. when operating outside Bahrain. Decimals control how many fractional digits appear (BHD uses 3 for fils; most other currencies use 2).
+                </div>
+              </div>
+            </div>
+          </Card>
+
           {/* Operations */}
           <Card title="Operations">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -226,6 +280,7 @@ export const PropertyInfo = () => {
               <UseRow p={p} icon={<FileBadge size={14} />} title="Corporate & travel-agent contracts" hint="Top-of-document legal block on every signed contract." />
               <UseRow p={p} icon={<Globe size={14} />} title="Website footer" hint="Copyright line on the public homepage." />
               <UseRow p={p} icon={<Building2 size={14} />} title="Partner portal headers" hint="Corporate and Agent workspace document headers." />
+              <UseRow p={p} icon={<Coins size={14} />} title="Every monetary value" hint={`All amounts render as ${formatCurrency(0, draft.currency || "BHD", draft.currencyDecimals ?? 3)}. Changing the currency reflows the entire system.`} />
             </SidebarCard>
 
             <SidebarCard p={p} title="Header preview">

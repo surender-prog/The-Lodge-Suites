@@ -1,7 +1,7 @@
 import React from "react";
 import { Download, Mail, Printer, Send, X } from "lucide-react";
 import { usePalette } from "./theme.jsx";
-import { legalLine, summarizeTax, useData } from "../../data/store.jsx";
+import { legalLine, summarizeTax, useData, formatCurrency, resolveCurrency, getCurrentCurrency } from "../../data/store.jsx";
 
 // ---------------------------------------------------------------------------
 // ContractDocument — printable contract layout shared between Corporate and
@@ -184,9 +184,9 @@ export function ContractDocumentView({ contract, kind }) {
               return (
                 <tr key={rk.key}>
                   <td style={tdStyle}><strong>{rk.label}</strong></td>
-                  {showWeekday && <td style={tdNumStyle}>{d > 0 ? `BHD ${d.toLocaleString()}` : "—"}</td>}
-                  {showWeekend && <td style={tdNumStyle}>{w > 0 ? `BHD ${w.toLocaleString()}` : "—"}</td>}
-                  {showMonthly && <td style={tdNumStyle}>{m > 0 ? `BHD ${m.toLocaleString(undefined, { minimumFractionDigits: 0 })}` : "—"}</td>}
+                  {showWeekday && <td style={tdNumStyle}>{d > 0 ? formatCurrency(d) : "—"}</td>}
+                  {showWeekend && <td style={tdNumStyle}>{w > 0 ? formatCurrency(w) : "—"}</td>}
+                  {showMonthly && <td style={tdNumStyle}>{m > 0 ? formatCurrency(m) : "—"}</td>}
                 </tr>
               );
             })}
@@ -200,13 +200,13 @@ export function ContractDocumentView({ contract, kind }) {
       <div style={{ marginTop: 14, fontSize: "0.84rem", lineHeight: 1.7, color: "#222" }}>
         <p>
           {contract.taxIncluded
-            ? <>All rates above are in <strong>Bahraini Dinars</strong>, <strong>inclusive</strong> of {TAX_LABEL}, on a per-room, per-night basis (room only).</>
-            : <>All rates above are in <strong>Bahraini Dinars</strong>, exclusive of taxes ({TAX_LABEL}) which will be added at invoicing.</>
+            ? <>All rates above are in <strong>{getCurrentCurrency().code}</strong>, <strong>inclusive</strong> of {TAX_LABEL}, on a per-room, per-night basis (room only).</>
+            : <>All rates above are in <strong>{getCurrentCurrency().code}</strong>, exclusive of taxes ({TAX_LABEL}) which will be added at invoicing.</>
           }
         </p>
         {Number(contract.accommodationFee) > 0 && (
           <p style={{ marginTop: 6 }}>
-            A <strong>Hotel Accommodation Fee of BHD {Number(contract.accommodationFee).toFixed(3)} net per room per night</strong> is additional and not included in the contracted rates.
+            A <strong>Hotel Accommodation Fee of {formatCurrency(Number(contract.accommodationFee))} net per room per night</strong> is additional and not included in the contracted rates.
           </p>
         )}
         {!isCorp && (typeof r.commissionPct === "number") && (
@@ -273,7 +273,7 @@ export function ContractDocumentView({ contract, kind }) {
                   <td style={tdStyle}>
                     {fmtDate(evt.fromDate)}{evt.fromDate !== evt.toDate ? ` → ${fmtDate(evt.toDate)}` : ""}
                   </td>
-                  <td style={tdNumStyle}>BHD {Number(evt.supplement).toLocaleString()}</td>
+                  <td style={tdNumStyle}>{formatCurrency(Number(evt.supplement))}</td>
                 </tr>
               ))}
             </tbody>
@@ -289,7 +289,7 @@ export function ContractDocumentView({ contract, kind }) {
         <li>Children up to 11 years stay free of charge in existing bedding.</li>
         <li>Rooms are subject to stop-sale based on house occupancy; advance bookings are encouraged.</li>
         {contract.cancellationPolicy && <li><strong>Cancellation:</strong> {contract.cancellationPolicy}</li>}
-        <li>Payment terms: <strong>{contract.paymentTerms}</strong>{Number(contract.creditLimit) > 0 ? ` · credit limit BHD ${Number(contract.creditLimit).toLocaleString()}` : ""}.</li>
+        <li>Payment terms: <strong>{contract.paymentTerms}</strong>{Number(contract.creditLimit) > 0 ? ` · credit limit ${formatCurrency(Number(contract.creditLimit))}` : ""}.</li>
         {!isCorp && <li>Reservations: email <strong>{HOTEL.email}</strong> / <strong>{HOTEL.emailFom}</strong>; WhatsApp {HOTEL.whatsapp}.</li>}
         {isCorp && <li>Direct billing requires CR copy and (for government accounts) an LPO at booking confirmation.</li>}
       </ul>
@@ -367,9 +367,9 @@ export function buildContractHtml(contract, kind, { hotel, tax } = {}) {
     if (d === 0 && w === 0 && m === 0) return "";
     return `<tr>
       <td><strong>${rk.label}</strong></td>
-      ${showWeekday ? `<td class="num">${d > 0 ? "BHD " + d.toLocaleString() : "—"}</td>` : ""}
-      ${showWeekend ? `<td class="num">${w > 0 ? "BHD " + w.toLocaleString() : "—"}</td>` : ""}
-      ${showMonthly ? `<td class="num">${m > 0 ? "BHD " + m.toLocaleString() : "—"}</td>` : ""}
+      ${showWeekday ? `<td class="num">${d > 0 ? escapeHtml(formatCurrency(d)) : "—"}</td>` : ""}
+      ${showWeekend ? `<td class="num">${w > 0 ? escapeHtml(formatCurrency(w)) : "—"}</td>` : ""}
+      ${showMonthly ? `<td class="num">${m > 0 ? escapeHtml(formatCurrency(m)) : "—"}</td>` : ""}
     </tr>`;
   }).filter(Boolean).join("");
 
@@ -384,7 +384,7 @@ export function buildContractHtml(contract, kind, { hotel, tax } = {}) {
   const events = (contract.eventSupplements || []).map((evt) => `<tr>
     <td><strong>${escapeHtml(evt.name || "")}</strong></td>
     <td>${fmtDate(evt.fromDate)}${evt.fromDate !== evt.toDate ? " → " + fmtDate(evt.toDate) : ""}</td>
-    <td class="num">BHD ${Number(evt.supplement).toLocaleString()}</td>
+    <td class="num">${escapeHtml(formatCurrency(Number(evt.supplement)))}</td>
   </tr>`).join("");
 
   return `<!DOCTYPE html>
@@ -482,10 +482,10 @@ export function buildContractHtml(contract, kind, { hotel, tax } = {}) {
 
   <div style="margin-top:14px; font-size:0.84rem; line-height:1.7; color:#222;">
     <p>${contract.taxIncluded
-      ? `All rates above are in <strong>Bahraini Dinars</strong>, <strong>inclusive</strong> of ${TAX_LABEL}, on a per-room, per-night basis (room only).`
-      : `All rates above are in <strong>Bahraini Dinars</strong>, exclusive of taxes (${TAX_LABEL}) which will be added at invoicing.`}</p>
+      ? `All rates above are in <strong>${escapeHtml(getCurrentCurrency().code)}</strong>, <strong>inclusive</strong> of ${TAX_LABEL}, on a per-room, per-night basis (room only).`
+      : `All rates above are in <strong>${escapeHtml(getCurrentCurrency().code)}</strong>, exclusive of taxes (${TAX_LABEL}) which will be added at invoicing.`}</p>
     ${Number(contract.accommodationFee) > 0
-      ? `<p style="margin-top:6px;">A <strong>Hotel Accommodation Fee of BHD ${Number(contract.accommodationFee).toFixed(3)} net per room per night</strong> is additional and not included in the contracted rates.</p>`
+      ? `<p style="margin-top:6px;">A <strong>Hotel Accommodation Fee of ${escapeHtml(formatCurrency(Number(contract.accommodationFee)))} net per room per night</strong> is additional and not included in the contracted rates.</p>`
       : ""}
     ${(!isCorp && typeof r.commissionPct === "number")
       ? `<p style="margin-top:6px;"><strong>Commission:</strong> ${r.commissionPct === 0 ? "Net &amp; non-commissionable." : `${r.commissionPct}% on stayed value${r.marketingFundPct ? ` plus ${r.marketingFundPct}% marketing fund` : ""}, payable on departure.`}</p>`
@@ -520,7 +520,7 @@ export function buildContractHtml(contract, kind, { hotel, tax } = {}) {
     <li>Children up to 11 years stay free of charge in existing bedding.</li>
     <li>Rooms are subject to stop-sale based on house occupancy; advance bookings are encouraged.</li>
     ${contract.cancellationPolicy ? `<li><strong>Cancellation:</strong> ${escapeHtml(contract.cancellationPolicy)}</li>` : ""}
-    <li>Payment terms: <strong>${escapeHtml(contract.paymentTerms || "—")}</strong>${Number(contract.creditLimit) > 0 ? ` · credit limit BHD ${Number(contract.creditLimit).toLocaleString()}` : ""}.</li>
+    <li>Payment terms: <strong>${escapeHtml(contract.paymentTerms || "—")}</strong>${Number(contract.creditLimit) > 0 ? ` · credit limit ${escapeHtml(formatCurrency(Number(contract.creditLimit)))}` : ""}.</li>
     ${!isCorp ? `<li>Reservations: email <strong>${escapeHtml(HOTEL.email)}</strong> / <strong>${escapeHtml(HOTEL.emailFom)}</strong>; WhatsApp ${escapeHtml(HOTEL.whatsapp)}.</li>` : ""}
     ${isCorp ? `<li>Direct billing requires CR copy and (for government accounts) an LPO at booking confirmation.</li>` : ""}
   </ul>
@@ -615,9 +615,9 @@ export function emailContract(contract, kind, hotel, tax) {
       ? `Commission:      ${r.commissionPct === 0 ? "Net & non-commissionable" : `${r.commissionPct}%${r.marketingFundPct ? ` + ${r.marketingFundPct}% MF` : ""}`}`
       : null,
     `Payment terms:   ${contract.paymentTerms || "—"}`,
-    Number(contract.creditLimit) > 0 ? `Credit limit:    BHD ${Number(contract.creditLimit).toLocaleString()}` : null,
+    Number(contract.creditLimit) > 0 ? `Credit limit:    ${formatCurrency(Number(contract.creditLimit))}` : null,
     "",
-    "NEGOTIATED RATES (BHD):",
+    `NEGOTIATED RATES (${getCurrentCurrency().code}):`,
   ].filter(Boolean);
 
   ROOM_KEYS.forEach((rk) => {
@@ -634,7 +634,7 @@ export function emailContract(contract, kind, hotel, tax) {
 
   if (Number(contract.accommodationFee) > 0) {
     lines.push("");
-    lines.push(`Plus Hotel Accommodation Fee of BHD ${Number(contract.accommodationFee).toFixed(3)} per room per night.`);
+    lines.push(`Plus Hotel Accommodation Fee of ${formatCurrency(Number(contract.accommodationFee))} per room per night.`);
   }
   if (contract.taxIncluded) {
     lines.push(`All rates inclusive of ${TAX_LABEL}.`);
@@ -644,7 +644,7 @@ export function emailContract(contract, kind, hotel, tax) {
     lines.push("");
     lines.push("EVENT-PERIOD SUPPLEMENTS:");
     contract.eventSupplements.forEach((evt) => {
-      lines.push(`  • ${evt.name} · ${fmtDate(evt.fromDate)}${evt.fromDate !== evt.toDate ? ` → ${fmtDate(evt.toDate)}` : ""} · +BHD ${evt.supplement}`);
+      lines.push(`  • ${evt.name} · ${fmtDate(evt.fromDate)}${evt.fromDate !== evt.toDate ? ` → ${fmtDate(evt.toDate)}` : ""} · +${formatCurrency(Number(evt.supplement))}`);
     });
   }
 

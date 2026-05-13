@@ -3057,6 +3057,15 @@ const DEFAULT_HOTEL_INFO = {
   // operators outside the region typically pick Saturday + Sunday. Edited
   // in the Property Info admin (Weekend days card).
   weekendDays:       [5, 6],
+  // Currency master — the display label and decimal precision the hotel
+  // uses for every monetary value rendered across the system (booking
+  // totals, invoices, contracts, the public website, exported reports).
+  // BHD defaults to 3 decimals because the Bahraini Dinar is sub-divided
+  // into 1,000 fils; operators on a 2-decimal currency (AED / USD / EUR)
+  // simply drop the trailing digit. Edited in the Property Info admin
+  // (Currency & decimals card).
+  currency:          "BHD",
+  currencyDecimals:  3,
 };
 
 // ---------------------------------------------------------------------------
@@ -3142,6 +3151,92 @@ export function legalLine(info) {
   if (info.cr)  parts.push(`CR No. ${info.cr}`);
   if (info.vat) parts.push(`VAT No. ${info.vat}`);
   return parts.join(" · ");
+}
+
+// ---------------------------------------------------------------------------
+// Currency formatting — single source for every monetary string in the
+// system. Reads the label + decimals off `hotelInfo` so swapping the
+// property from BHD to AED / USD / EUR is a one-field edit. Module-level
+// callers (HTML builders, notification text, server-rendered emails) pass
+// the currency in via opts; React consumers use the `useCurrencyFmt` hook.
+// ---------------------------------------------------------------------------
+export const DEFAULT_CURRENCY_LABEL = "BHD";
+export const DEFAULT_CURRENCY_DECIMALS = 3;
+
+// Module-level current currency — kept in sync with the live hotelInfo
+// inside DataProvider via setCurrentCurrency() in a useEffect. This is
+// the "ambient" currency that bare-bones helpers (HTML voucher builders,
+// notification text, plaintext exports defined outside React components)
+// read from, so a single admin edit reflows the entire system without
+// every callsite needing the React hook. Components that want guaranteed
+// re-render on change should use useCurrencyFmt() instead.
+let _CURRENT_CURRENCY = { code: DEFAULT_CURRENCY_LABEL, decimals: DEFAULT_CURRENCY_DECIMALS };
+
+// Resolves a currency tuple from whatever the caller has on hand —
+// hotelInfo object, partial { currency, currencyDecimals }, or nothing.
+// Always returns a complete { code, decimals } pair, falling back to the
+// BHD defaults so a freshly-mounted view never renders an empty label.
+export function resolveCurrency(source) {
+  const code     = (source && source.currency)         || DEFAULT_CURRENCY_LABEL;
+  const decimals = Number.isFinite(Number(source && source.currencyDecimals))
+    ? Math.max(0, Math.min(4, Math.round(Number(source.currencyDecimals))))
+    : DEFAULT_CURRENCY_DECIMALS;
+  return { code, decimals };
+}
+
+// Update the module-level ambient currency. Called by DataProvider when
+// hotelInfo.currency or hotelInfo.currencyDecimals changes; safe to call
+// repeatedly with identical values (no-op when nothing differs).
+export function setCurrentCurrency(source) {
+  _CURRENT_CURRENCY = resolveCurrency(source);
+}
+
+// Read the current ambient currency — used by formatCurrency() when no
+// explicit source is supplied.
+export function getCurrentCurrency() {
+  return _CURRENT_CURRENCY;
+}
+
+// Build a formatter that renders "<CODE> <amount>" using the supplied
+// decimals. The amount uses locale-aware grouping (toLocaleString) so the
+// integer part stays readable on bigger numbers ("BHD 12,345.000").
+// Calling conventions:
+//   formatCurrency(42)              → uses the ambient currency
+//   formatCurrency(42, hotelInfo)   → reads currency + decimals from hotelInfo
+//   formatCurrency(42, "USD")       → label override, ambient decimals
+//   formatCurrency(42, "USD", 2)    → both label and decimals overridden
+export function formatCurrency(amount, currencyOrInfo, decimalsArg) {
+  let code, decimals;
+  if (currencyOrInfo == null) {
+    code = _CURRENT_CURRENCY.code;
+    decimals = Number.isFinite(Number(decimalsArg))
+      ? Math.max(0, Math.min(4, Math.round(Number(decimalsArg))))
+      : _CURRENT_CURRENCY.decimals;
+  } else if (typeof currencyOrInfo === "string") {
+    code     = currencyOrInfo || _CURRENT_CURRENCY.code;
+    decimals = Number.isFinite(Number(decimalsArg))
+      ? Math.max(0, Math.min(4, Math.round(Number(decimalsArg))))
+      : _CURRENT_CURRENCY.decimals;
+  } else {
+    const r = resolveCurrency(currencyOrInfo);
+    code = r.code; decimals = r.decimals;
+  }
+  const n = Number(amount) || 0;
+  return `${code} ${n.toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  })}`;
+}
+
+// React hook — returns { code, decimals, fmt } tied to the live hotelInfo
+// in DataContext. Re-renders only when the user edits either field. The
+// returned `fmt` accepts a number and yields the formatted string, so
+// components can drop-in replace their local `fmtBhd` helpers.
+export function useCurrencyFmt() {
+  const { hotelInfo } = useData();
+  const { code, decimals } = resolveCurrency(hotelInfo);
+  const fmt = useCallback((n) => formatCurrency(n, code, decimals), [code, decimals]);
+  return { code, decimals, fmt };
 }
 
 // Evaluates whether a stay selection satisfies every condition declared on
@@ -3513,6 +3608,15 @@ export function DataProvider({ children }) {
     setHotelInfo((prev) => ({ ...prev, ...patch }));
   }, []);
   const resetHotelInfo = useCallback(() => setHotelInfo(DEFAULT_HOTEL_INFO), []);
+
+  // Mirror the live currency master into the module-level cache so the
+  // ambient `formatCurrency(n)` helper (used by every legacy `fmtBhd`
+  // shim, HTML voucher builders, notification text and any module-level
+  // formatter) reflows immediately on a Property Info edit, without each
+  // callsite having to subscribe to the data context.
+  useEffect(() => {
+    setCurrentCurrency(hotelInfo);
+  }, [hotelInfo?.currency, hotelInfo?.currencyDecimals]);
 
   const [siteContent, setSiteContent] = useState({
     textOverrides: {},

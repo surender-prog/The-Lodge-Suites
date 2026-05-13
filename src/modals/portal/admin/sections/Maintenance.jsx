@@ -9,7 +9,7 @@ import {
 import { usePalette } from "../../theme.jsx";
 import {
   MAINTENANCE_CATEGORIES, MAINTENANCE_STATUSES, MAINTENANCE_PRIORITIES,
-  MAINTENANCE_SOURCES, MAINTENANCE_AREAS, useData,
+  MAINTENANCE_SOURCES, MAINTENANCE_AREAS, useData, formatCurrency,
 } from "../../../../data/store.jsx";
 import {
   Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast,
@@ -33,7 +33,8 @@ const AREA_BY_ID   = Object.fromEntries(MAINTENANCE_AREAS.map((a) => [a.id, a]))
 
 const ROOM_LABEL = { studio: "Studio", "one-bed": "One-bed", "two-bed": "Two-bed", "three-bed": "Three-bed" };
 
-const fmtBhd = (n) => `BHD ${(Number(n) || 0).toFixed(3)}`;
+// Delegates to the ambient formatter so the Property Info currency master flows through.
+const fmtBhd = (n) => formatCurrency(n);
 const fmtDateTime = (iso) => {
   if (!iso) return "—";
   try { return new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); }

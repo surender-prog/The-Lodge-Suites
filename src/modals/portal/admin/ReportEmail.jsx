@@ -16,7 +16,7 @@
 // builders are deliberately framework-free (no React import, no JSX) so they
 // can run in a Node worker as-is.
 
-import { applyTaxes, effectiveActivityStatus, ACTIVITY_KINDS, MAINTENANCE_CATEGORIES } from "../../../data/store.jsx";
+import { applyTaxes, effectiveActivityStatus, ACTIVITY_KINDS, MAINTENANCE_CATEGORIES, formatCurrency } from "../../../data/store.jsx";
 
 // ---------------------------------------------------------------------------
 // Brand palette + shared CSS
@@ -58,7 +58,12 @@ const isoOf      = (d) => startOfDay(d).toISOString().slice(0, 10);
 const fmtFull    = (d) => new Date(d).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 const fmtShort   = (d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 const fmtDateTime= (d) => new Date(d).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-const fmtBhd     = (n) => `BHD ${(Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+// Currency display delegates to the ambient formatter so the Property Info
+// "Currency & decimals" master flows through every emailed report. Workers
+// running this on a server import the current currency via the shared
+// formatCurrency helper, which reads the module-level ambient currency
+// kept in sync by DataProvider in the browser session.
+const fmtBhd     = (n) => formatCurrency(n);
 const fmtPct     = (n, decimals = 1) => `${((Number(n) || 0) * 100).toFixed(decimals)}%`;
 
 // ─── HTML escape ─────────────────────────────────────────────────────────

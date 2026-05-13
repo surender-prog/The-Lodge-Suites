@@ -12,7 +12,7 @@ import {
   whatsAppShareUrl, emailShareUrl, nativeShare, downloadBlob, tierVisuals, hotel,
 } from "../utils/membershipPass.js";
 import { useT } from "../i18n/LanguageContext.jsx";
-import { useData, applyTaxes, priceExtra, priceLabelFor, legalLine, roomFitsParty, buildCardOnFile, nightlyBreakdown } from "../data/store.jsx";
+import { useData, applyTaxes, priceExtra, priceLabelFor, legalLine, roomFitsParty, buildCardOnFile, nightlyBreakdown, formatCurrency, resolveCurrency } from "../data/store.jsx";
 import { Icon as ExtraIcon } from "../components/Icon.jsx";
 import { PortalThemeProvider, ThemeToggle, usePalette } from "./portal/theme.jsx";
 import { ToastHost, pushToast } from "./portal/admin/ui.jsx";
@@ -575,8 +575,12 @@ function statusChip(p, status) {
   );
 }
 
+// Currency formatter — delegates to the module-level ambient currency
+// kept in sync with hotelInfo.currency / hotelInfo.currencyDecimals by
+// DataProvider. Components don't need to touch this; live edits in the
+// Property Info admin reflow on the next render.
 function fmtBhd(n) {
-  return `BHD ${(Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  return formatCurrency(n);
 }
 function fmtDate(iso) {
   if (!iso) return "—";

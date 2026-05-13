@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
 import { useT } from "../../i18n/LanguageContext.jsx";
-import { useData, applyTaxes, buildCardOnFile, nightlyBreakdown } from "../../data/store.jsx";
+import { useData, applyTaxes, buildCardOnFile, nightlyBreakdown, formatCurrency } from "../../data/store.jsx";
 
 // Pay-now incentive — applied when a pre-payment-contracted account opts to
 // settle at booking instead of on arrival. Mirrors the B2C BookingModal so
@@ -39,7 +39,9 @@ const nightsBetween = (a, b) => {
   const ms = new Date(b) - new Date(a);
   return Math.max(0, Math.round(ms / (1000 * 60 * 60 * 24)));
 };
-const fmtBhd = (n) => `BHD ${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 3 })}`;
+// Currency display delegates to the ambient formatter so the Property Info
+// "Currency & decimals" master flows through this drawer automatically.
+const fmtBhd = (n) => formatCurrency(n);
 const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—";
 
 export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {

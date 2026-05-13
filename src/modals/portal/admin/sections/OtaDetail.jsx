@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT } from "../../../../i18n/LanguageContext.jsx";
-import { useData } from "../../../../data/store.jsx";
+import { useData, formatCurrency } from "../../../../data/store.jsx";
 import {
   Card, FormGroup, GhostBtn, PrimaryBtn, pushToast, SelectField, TableShell,
   Td, Th, TextField,
@@ -50,7 +50,8 @@ const SYNC_TYPE_VISUAL = {
   "config.update":     { label: "Config update",     icon: Settings,      color: "#64748B" },
 };
 
-const fmtBhd = (n) => `BHD ${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 3 })}`;
+// Delegates to the ambient formatter so the Property Info currency master flows through.
+const fmtBhd = (n) => formatCurrency(n);
 const fmtTime = (iso) => {
   if (!iso) return "—";
   const d = new Date(iso);
