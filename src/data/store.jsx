@@ -2878,6 +2878,101 @@ const SAMPLE_AUDIT_LOGS = [
   { id: "AUD-1035", ts: "2026-05-04T07:45:00", kind: "login",              actorId: "ADM-007", actorName: "Surender Singh",    actorRole: "owner",       targetKind: null,        targetId: null,           targetName: null,                                  details: "Signed in to admin portal · MFA verified",                ip: "82.114.218.50" },
 ];
 
+// ---------------------------------------------------------------------------
+// Admin Testing & Training Plan — phase catalog
+// ---------------------------------------------------------------------------
+// Mirrors `public/docs/admin-testing-plan.md` so the owner can assign the
+// plan to a tester, track which phases they've completed, and pull
+// feedback into the upgrade backlog. Treat this as the *index*; the
+// markdown stays the source of truth for the step-by-step checklist
+// content. When phases are added / renamed in the markdown, sync the
+// labels here so the assignment UI keeps matching.
+export const TESTING_PLAN_PHASES = [
+  { id: 0,  label: "Pre-flight",                duration: "30 min",  scope: "Login, tab familiarisation, environment sanity." },
+  { id: 1,  label: "Property & Identity Setup", duration: "45 min",  scope: "Hotel info, currency master, weekend days, banking, press." },
+  { id: 2,  label: "Rooms, Rates & Inventory",  duration: "45 min",  scope: "Pricing, weekend rates, extra beds, tax patterns, 72 units." },
+  { id: 3,  label: "Public Site & B2C Booking", duration: "60 min",  scope: "Booking flow, Pay-now, Pay-on-arrival + card guarantee, vault." },
+  { id: 4,  label: "Partner Portal · Corporate + Agent", duration: "60 min", scope: "Contracts, signed-PDF upload, partner login, commission flow." },
+  { id: 5,  label: "Loyalty Program",           duration: "30 min",  scope: "Tier benefits, member enrollment, wallet pass, points redemption." },
+  { id: 6,  label: "Bookings, Invoices, Payments", duration: "75 min", scope: "Lifecycle, folio/receipt/invoice docs, refunds, manual entry." },
+  { id: 7,  label: "Channel Manager, Stop-Sale, OTAs", duration: "30 min", scope: "Stop-sale, push availability/rates, OTA email composer." },
+  { id: 8,  label: "Reports, Maintenance, Notifications", duration: "45 min", scope: "Revenue, tax, activities, jobs/vendors, bell drawer." },
+  { id: 9,  label: "Staff & Access Control",    duration: "30 min",  scope: "Roles, permissions, card vault gating, audit log." },
+  { id: 10, label: "CMS, Email Templates, Polish", duration: "30 min", scope: "Site content, gallery, email previews, presentation deck." },
+  { id: "integration", label: "Integration Tests", duration: "45 min", scope: "5 end-to-end scenarios spanning multiple modules." },
+];
+
+// The free-form feedback prompts collected at sign-off. Keys are stable
+// (used as JSON paths on each assignment record); labels render in the UI.
+export const TESTING_PLAN_FEEDBACK_FIELDS = [
+  { key: "showstoppers",        label: "Showstoppers (block go-live)",            placeholder: "Bugs that absolutely must be fixed before production." },
+  { key: "highPriority",        label: "High-priority gaps",                      placeholder: "Critical for day-to-day operations but not blocking launch." },
+  { key: "niceToHaves",         label: "Nice-to-haves",                           placeholder: "Improvements that would speed up your work but aren't urgent." },
+  { key: "uxFriction",          label: "UX friction points",                      placeholder: "Extra clicks, confusing labels, unclear states." },
+  { key: "missingReports",      label: "Missing reports / data exports",          placeholder: "Data you need to extract but can't today." },
+  { key: "trainingGaps",        label: "Training material gaps",                  placeholder: "Topics this plan didn't cover that the next admin will need." },
+  { key: "integrationWishlist", label: "Integration wishlist",                    placeholder: "Third-party services we should hook up (PMS, payment gateway, accounting, CRM, channel manager, SMS, e-signature, etc.)." },
+  { key: "nextFocus",           label: "Recommended next iteration focus",        placeholder: "Which module / surface gets the next round of investment?" },
+];
+
+// New-assignment factory — produces a fresh assignment record with every
+// phase in `pending` state and all feedback fields blank. Stamped with
+// the tester / owner identity at creation time so the audit trail
+// survives a tester rename.
+export function makeTestingPlanAssignment({ tester, owner }) {
+  const id = `TPA-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  return {
+    id,
+    testerId:    tester?.id    || null,
+    testerName:  tester?.name  || "—",
+    testerEmail: tester?.email || "—",
+    assignedBy:     owner?.userId || owner?.id || null,
+    assignedByName: owner?.displayName || owner?.name || "—",
+    assignedAt: new Date().toISOString(),
+    startedAt: null,
+    completedAt: null,
+    // Snapshot the phase list at the time of assignment so an evolving
+    // catalog doesn't retroactively change a tester's worksheet.
+    phases: TESTING_PLAN_PHASES.map((p) => ({
+      id: p.id, label: p.label, status: "pending", feedback: "", completedAt: null,
+    })),
+    overallFeedback: Object.fromEntries(TESTING_PLAN_FEEDBACK_FIELDS.map((f) => [f.key, ""])),
+    confidence: null, // 1–5 self-reported readiness rating at sign-off
+    status: "pending", // pending | in-progress | completed
+  };
+}
+
+// Roll a phase patch into the parent assignment's progress + status.
+// Side effect: stamps startedAt on first move from pending → in-progress,
+// and completedAt when every phase is completed. Pure function — returns
+// the next assignment record without touching the input.
+export function applyPhasePatch(assignment, phaseId, patch) {
+  if (!assignment) return assignment;
+  const phases = (assignment.phases || []).map((ph) =>
+    String(ph.id) === String(phaseId)
+      ? {
+          ...ph,
+          ...patch,
+          // Auto-stamp completedAt when status flips to completed.
+          completedAt: patch.status === "completed"
+            ? (ph.completedAt || new Date().toISOString())
+            : (patch.status === "pending" ? null : ph.completedAt),
+        }
+      : ph
+  );
+  const anyDone   = phases.some((ph) => ph.status === "completed");
+  const allDone   = phases.every((ph) => ph.status === "completed");
+  const anyActive = phases.some((ph) => ph.status === "in-progress" || ph.status === "completed");
+  const nextStatus = allDone ? "completed" : anyActive ? "in-progress" : "pending";
+  return {
+    ...assignment,
+    phases,
+    startedAt:   assignment.startedAt   || (anyActive ? new Date().toISOString() : null),
+    completedAt: allDone ? (assignment.completedAt || new Date().toISOString()) : null,
+    status: nextStatus,
+  };
+}
+
 // Seed staff. `password` is intentionally plaintext placeholder text — when
 // wired to a real backend this becomes a hash on the server. `mfa` is a
 // surface for the eventual TOTP / passkey toggle but doesn't enforce anything
@@ -2962,6 +3057,39 @@ const SAMPLE_ADMIN_USERS = [
     status: "active", mfa: false, lastLogin: "2026-05-06T08:30:00",
     avatarColor: "#0D9488", password: "Housekeeping-2026", createdAt: "2025-04-08",
     notes: "On-call for in-house fixes before escalating to external vendors.",
+  },
+  // UAT tester accounts — three dedicated logins for the admin testing &
+  // training plan. Each carries the full GM permission set (everything
+  // except admin_users management and bookings_delete) so testers can
+  // exercise every operational surface without needing the owner to grant
+  // bespoke permissions per phase. Owner can hand these credentials out
+  // via the new "Assign testing plan" workflow in System Docs.
+  {
+    id: "ADM-UAT-1", name: "UAT Tester 1", email: "uat1@thelodgesuites.com", phone: "+973 3500 0001",
+    title: "UAT Tester · Operations", role: "gm",
+    permissions: ADMIN_ROLES.find(r => r.id === "gm").permissions,
+    status: "active", mfa: false, lastLogin: null,
+    avatarColor: "#475569", password: "Test-Lodge-2026", createdAt: "2026-05-13",
+    notes: "Dedicated UAT login. Use for Phase 1-4 (Property · Rates · Public site · Partner portal).",
+    isUatTester: true,
+  },
+  {
+    id: "ADM-UAT-2", name: "UAT Tester 2", email: "uat2@thelodgesuites.com", phone: "+973 3500 0002",
+    title: "UAT Tester · Finance", role: "gm",
+    permissions: ADMIN_ROLES.find(r => r.id === "gm").permissions,
+    status: "active", mfa: false, lastLogin: null,
+    avatarColor: "#475569", password: "Test-Lodge-2026", createdAt: "2026-05-13",
+    notes: "Dedicated UAT login. Use for Phase 5-7 (Loyalty · Bookings · Invoices · Channels).",
+    isUatTester: true,
+  },
+  {
+    id: "ADM-UAT-3", name: "UAT Tester 3", email: "uat3@thelodgesuites.com", phone: "+973 3500 0003",
+    title: "UAT Tester · Admin", role: "gm",
+    permissions: ADMIN_ROLES.find(r => r.id === "gm").permissions,
+    status: "active", mfa: false, lastLogin: null,
+    avatarColor: "#475569", password: "Test-Lodge-2026", createdAt: "2026-05-13",
+    notes: "Dedicated UAT login. Use for Phase 8-10 + integration tests (Reports · Staff · CMS · End-to-end).",
+    isUatTester: true,
   },
 ];
 
@@ -3512,6 +3640,62 @@ export function DataProvider({ children }) {
   const [rfps,     setRfps]     = useState(SAMPLE_RFPS);
   const [channels, setChannels] = useState(SAMPLE_CHANNELS);
   const [adminUsers, setAdminUsers] = useState(SAMPLE_ADMIN_USERS);
+
+  // Admin Testing & Training Plan — assignments handed out by the owner
+  // for UAT / onboarding / pre-launch sign-off. Each record carries the
+  // tester identity, every phase from TESTING_PLAN_PHASES with its own
+  // status + feedback, and the rolled-up sign-off feedback fields. The
+  // markdown at /public/docs/admin-testing-plan.md is the canonical
+  // step-by-step content; this slice is the *progress + feedback ledger*.
+  const [testingPlanAssignments, setTestingPlanAssignments] = useState([]);
+
+  // Create a new assignment for a tester (typically a UAT admin user).
+  // Idempotency: if an active assignment for this tester already exists
+  // (pending or in-progress), we return that one rather than spawning a
+  // duplicate. The owner can remove + reassign explicitly via the UI.
+  const assignTestingPlan = useCallback(({ testerId, owner }) => {
+    const tester = adminUsers.find((u) => u.id === testerId);
+    if (!tester) return null;
+    let createdId = null;
+    setTestingPlanAssignments((prev) => {
+      const existing = prev.find((a) => a.testerId === testerId && a.status !== "completed");
+      if (existing) { createdId = existing.id; return prev; }
+      const rec = makeTestingPlanAssignment({ tester, owner: owner || staffSession });
+      createdId = rec.id;
+      return [rec, ...prev];
+    });
+    return createdId;
+  }, [adminUsers, staffSession]);
+
+  // Patch a single phase on an assignment (status + feedback). Wraps the
+  // pure `applyPhasePatch` helper so the rollup logic stays testable.
+  const updateTestingPhase = useCallback((assignmentId, phaseId, patch) => {
+    setTestingPlanAssignments((prev) =>
+      prev.map((a) => (a.id === assignmentId ? applyPhasePatch(a, phaseId, patch) : a))
+    );
+  }, []);
+
+  // Patch the overall feedback fields (free-text plus confidence rating).
+  // Accepts a partial object so callers can save one field at a time.
+  const updateTestingFeedback = useCallback((assignmentId, patch) => {
+    setTestingPlanAssignments((prev) =>
+      prev.map((a) =>
+        a.id === assignmentId
+          ? {
+              ...a,
+              overallFeedback: { ...a.overallFeedback, ...(patch.overallFeedback || {}) },
+              confidence: patch.confidence != null ? patch.confidence : a.confidence,
+            }
+          : a
+      )
+    );
+  }, []);
+
+  // Hard-remove an assignment. Used by the owner to retire a stale
+  // assignment when re-issuing the plan to the same tester.
+  const removeTestingPlanAssignment = useCallback((assignmentId) => {
+    setTestingPlanAssignments((prev) => prev.filter((a) => a.id !== assignmentId));
+  }, []);
   // Audit trail + active impersonation. Both live in-memory only; in
   // production these would persist server-side and the impersonation state
   // would carry an expiry token. Helpers below append to logs idempotently
@@ -3734,6 +3918,7 @@ export function DataProvider({ children }) {
       fetchAll("rfps")               .then(d => { if (!cancelled && d && d.length > 0) setRfps(d); }),
       fetchAll("channels")           .then(d => { if (!cancelled && d && d.length > 0) setChannels(d); }),
       fetchAll("admin_users")        .then(d => { if (!cancelled && d && d.length > 0) setAdminUsers(d); }),
+      fetchAll("testing_plan_assignments").then(d => { if (!cancelled && d && d.length > 0) setTestingPlanAssignments(d); }),
       fetchAll("audit_logs")         .then(d => { if (!cancelled && d && d.length > 0) setAuditLogs(d); }),
       fetchAll("prospects")          .then(d => { if (!cancelled && d && d.length > 0) setProspects(d); }),
       fetchAll("activities")         .then(d => { if (!cancelled && d && d.length > 0) setActivities(d); }),
@@ -3809,6 +3994,7 @@ export function DataProvider({ children }) {
   useSlicePersistence("rfps",                rfps,               hydrated);
   useSlicePersistence("channels",            channels,           hydrated);
   useSlicePersistence("admin_users",         adminUsers,         hydrated);
+  useSlicePersistence("testing_plan_assignments", testingPlanAssignments, hydrated);
   useSlicePersistence("audit_logs",          auditLogs,          hydrated);
   useSlicePersistence("prospects",           prospects,          hydrated);
   useSlicePersistence("activities",          activities,         hydrated);
@@ -4600,6 +4786,8 @@ export function DataProvider({ children }) {
     setRfps, addRfp, upsertRfp, removeRfp, advanceRfp,
     setChannels, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent,
     setAdminUsers, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword,
+    // Testing plan — assignments + per-phase progress + sign-off feedback
+    testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment,
     auditLogs, appendAuditLog, clearAuditLogs,
     impersonation, startImpersonation, endImpersonation,
     staffSession, signInStaff, signOutStaff,
@@ -4621,7 +4809,7 @@ export function DataProvider({ children }) {
     setCalendar, setCalendarCell,
     setLoyalty,
     addBooking, updateBooking, removeBooking,
-  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
+  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
 
   return <DataStoreContext.Provider value={value}>{children}</DataStoreContext.Provider>;
 }

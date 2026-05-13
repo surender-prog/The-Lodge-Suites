@@ -1,10 +1,12 @@
-import React from "react";
+import React, { useMemo, useState } from "react";
 import {
-  BookOpen, Building2, Calendar as CalendarIcon, ClipboardCheck, Download, FileText, Globe, Layers,
-  Mail, Maximize2, Megaphone, Printer, Sparkles, Target, Users, Wrench,
+  BookOpen, Building2, Calendar as CalendarIcon, Check, CheckCircle2, ChevronRight, Clock,
+  ClipboardCheck, Copy, Download, Eye, FileText, Globe, Layers,
+  Mail, Maximize2, Megaphone, Printer, Send, Sparkles, Star, Target, Trash2, UserCheck, Users, Wrench, X,
 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
-import { Card, GhostBtn, PageHeader, PrimaryBtn, pushToast } from "../ui.jsx";
+import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, SelectField, TableShell, Td, Th, TextField, pushToast } from "../ui.jsx";
+import { useData, TESTING_PLAN_PHASES, TESTING_PLAN_FEEDBACK_FIELDS } from "../../../../data/store.jsx";
 
 // ---------------------------------------------------------------------------
 // SystemDocs — internal training & business-development deck.
@@ -108,6 +110,35 @@ const ASSETS = {
 
 export const SystemDocs = () => {
   const p = usePalette();
+  const {
+    adminUsers, staffSession,
+    testingPlanAssignments,
+    assignTestingPlan,
+    updateTestingPhase,
+    updateTestingFeedback,
+    removeTestingPlanAssignment,
+  } = useData();
+
+  // Assignment workflow state — the picker drawer (Assign button), the
+  // detail drawer (View on an existing assignment), and a transient
+  // confirm modal for removal.
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [activeAssignmentId, setActiveAssignmentId] = useState(null);
+
+  // The candidate pool for assignment: UAT testers first, then every
+  // active staff with a role broader than reservations / housekeeping.
+  // Owners can technically self-assign, but we surface tester accounts
+  // first so the obvious choice is the dedicated UAT seat.
+  const candidates = useMemo(() => {
+    const list = (adminUsers || []).filter((u) => u.status === "active");
+    const score = (u) => (u.isUatTester ? 0 : u.role === "owner" ? 3 : u.role === "gm" ? 1 : u.role === "fom" ? 1 : 2);
+    return list.slice().sort((a, b) => score(a) - score(b));
+  }, [adminUsers]);
+
+  const activeAssignment = useMemo(
+    () => (testingPlanAssignments || []).find((a) => a.id === activeAssignmentId),
+    [testingPlanAssignments, activeAssignmentId]
+  );
 
   // Open the HTML deck in a new tab — the deck has its own toolbar with
   // Print/Save and Download buttons, so once it's open the operator has
@@ -397,9 +428,412 @@ export const SystemDocs = () => {
           </Card>
         </div>
       </div>
+
+      {/* ─────────────────────────────────────────────────────────────────
+          Admin testing & training plan — assignment workspace.
+          Owner picks a tester from the UAT roster, the assignment lands
+          in `testingPlanAssignments`, and the tester then works through
+          each phase with progress + free-text feedback captured per
+          row. The Overall Feedback Summary at the bottom collates into
+          the next iteration's upgrade backlog.
+          ──────────────────────────────────────────────────────────── */}
+      <div className="mt-8" style={{ borderTop: `1px solid ${p.border}`, paddingTop: "2rem" }}>
+        <PageHeader
+          title="Admin testing & training plan"
+          intro="Assign the 10-phase plan to a UAT tester. Their progress and feedback are tracked here so we can prioritise the next iteration. Each tester gets dedicated credentials — see Staff & Access for the seeded uat1@ / uat2@ / uat3@ accounts."
+          action={
+            <PrimaryBtn onClick={() => setAssignOpen(true)}>
+              <Send size={12} /> Assign to a tester
+            </PrimaryBtn>
+          }
+        />
+
+        <TestingAssignmentBoard
+          p={p}
+          assignments={testingPlanAssignments}
+          onOpen={(id) => setActiveAssignmentId(id)}
+        />
+      </div>
+
+      {/* Assignment picker — pick a tester, hand them the plan. */}
+      {assignOpen && (
+        <AssignTesterDrawer
+          p={p}
+          candidates={candidates}
+          existingAssignments={testingPlanAssignments}
+          onClose={() => setAssignOpen(false)}
+          onAssign={(testerId) => {
+            const id = assignTestingPlan({ testerId, owner: staffSession });
+            if (id) {
+              const t = candidates.find((c) => c.id === testerId);
+              pushToast({ message: `Testing plan assigned to ${t?.name || "tester"} · ${t?.email || ""}` });
+              setAssignOpen(false);
+              setActiveAssignmentId(id);
+            } else {
+              pushToast({ message: "Couldn't create assignment — tester not found.", kind: "warn" });
+            }
+          }}
+        />
+      )}
+
+      {/* Per-assignment detail — phase tracker + overall feedback. */}
+      {activeAssignment && (
+        <AssignmentDetailDrawer
+          p={p}
+          assignment={activeAssignment}
+          onClose={() => setActiveAssignmentId(null)}
+          onPhasePatch={(phaseId, patch) => updateTestingPhase(activeAssignment.id, phaseId, patch)}
+          onFeedbackPatch={(patch) => updateTestingFeedback(activeAssignment.id, patch)}
+          onRemove={() => {
+            if (!confirm(`Remove the testing plan assignment for ${activeAssignment.testerName}? Their captured progress + feedback will be lost.`)) return;
+            removeTestingPlanAssignment(activeAssignment.id);
+            setActiveAssignmentId(null);
+            pushToast({ message: "Assignment removed.", kind: "warn" });
+          }}
+        />
+      )}
     </div>
   );
 };
+
+// ─────────────────────────────────────────────────────────────────────────
+// TestingAssignmentBoard — list of every assignment with a progress bar.
+// Empty state nudges the operator to assign the plan to a UAT tester.
+// ─────────────────────────────────────────────────────────────────────────
+function TestingAssignmentBoard({ p, assignments, onOpen }) {
+  if (!assignments || assignments.length === 0) {
+    return (
+      <Card padded>
+        <div className="flex items-start gap-3" style={{ color: p.textMuted, fontSize: "0.86rem", lineHeight: 1.6 }}>
+          <ClipboardCheck size={18} style={{ color: p.accent, flexShrink: 0, marginTop: 2 }} />
+          <div>
+            <div style={{ color: p.textPrimary, fontWeight: 600, fontFamily: "'Manrope', sans-serif" }}>
+              No active assignments
+            </div>
+            <div style={{ marginTop: 4 }}>
+              Click <strong>Assign to a tester</strong> to hand the plan to one of the dedicated UAT logins. Each phase carries its own feedback prompt so we can collate the upgrade backlog directly from their experience.
+            </div>
+          </div>
+        </div>
+      </Card>
+    );
+  }
+  const sorted = assignments.slice().sort((a, b) => String(b.assignedAt || "").localeCompare(String(a.assignedAt || "")));
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+      {sorted.map((a) => {
+        const phases = Array.isArray(a.phases) ? a.phases : [];
+        const total  = phases.length || 1;
+        const done   = phases.filter((ph) => ph.status === "completed").length;
+        const active = phases.filter((ph) => ph.status === "in-progress").length;
+        const pct    = Math.round((done / total) * 100);
+        const statusColor = a.status === "completed" ? p.success : a.status === "in-progress" ? p.warn : p.textMuted;
+        const statusLabel = a.status === "completed" ? "Completed" : a.status === "in-progress" ? "In progress" : "Pending";
+        return (
+          <button
+            key={a.id}
+            onClick={() => onOpen(a.id)}
+            className="text-start p-4 transition-colors"
+            style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}`, cursor: "pointer" }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = p.accent; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = p.border; }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.3rem", color: p.textPrimary, fontWeight: 500, lineHeight: 1.1 }}>
+                  {a.testerName}
+                </div>
+                <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 2 }}>
+                  {a.testerEmail}
+                </div>
+              </div>
+              <span style={{
+                color: statusColor, fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+                padding: "3px 8px", border: `1px solid ${statusColor}`, whiteSpace: "nowrap",
+              }}>{statusLabel}</span>
+            </div>
+            {/* Progress bar */}
+            <div className="mt-3" style={{ height: 6, backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
+              <div style={{ width: `${pct}%`, height: "100%", backgroundColor: p.accent }} />
+            </div>
+            <div className="flex items-center justify-between mt-2" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", color: p.textMuted }}>
+              <span>{done} of {total} phases done{active > 0 ? ` · ${active} active` : ""}</span>
+              <span style={{ color: p.accent, fontWeight: 700 }}>{pct}%</span>
+            </div>
+            <div className="flex items-center gap-1.5 mt-3" style={{ color: p.accent, fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+              <Eye size={11} /> View progress <ChevronRight size={11} />
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// AssignTesterDrawer — picker UI. The owner picks a tester from the
+// candidate pool; UAT-tagged accounts surface first.
+// ─────────────────────────────────────────────────────────────────────────
+function AssignTesterDrawer({ p, candidates, existingAssignments, onClose, onAssign }) {
+  const [pickedId, setPickedId] = useState(candidates.find((c) => c.isUatTester)?.id || "");
+  const activeIds = new Set((existingAssignments || []).filter((a) => a.status !== "completed").map((a) => a.testerId));
+  const picked = candidates.find((c) => c.id === pickedId);
+  const alreadyHasOpen = picked ? activeIds.has(picked.id) : false;
+  return (
+    <Drawer
+      open
+      onClose={onClose}
+      eyebrow="Testing plan"
+      title="Assign to a tester"
+      footer={
+        <>
+          <GhostBtn onClick={onClose} small>Cancel</GhostBtn>
+          <PrimaryBtn onClick={() => onAssign(pickedId)} small>
+            <Send size={11} /> Send assignment
+          </PrimaryBtn>
+        </>
+      }
+    >
+      <Card title="Tester pool">
+        <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", lineHeight: 1.55, marginBottom: 12 }}>
+          UAT-tagged accounts are at the top. The picked tester receives the same 10-phase plan that's downloadable from <strong>Downloads → Admin testing & training plan</strong>. Hand them their credentials separately.
+        </p>
+        <div className="space-y-2">
+          {candidates.map((c) => {
+            const sel = pickedId === c.id;
+            const open = activeIds.has(c.id);
+            return (
+              <button
+                key={c.id}
+                onClick={() => setPickedId(c.id)}
+                className="w-full text-start p-3 transition-colors"
+                style={{
+                  backgroundColor: sel ? p.bgHover : p.bgPanel,
+                  border: `1px solid ${sel ? p.accent : p.border}`,
+                  cursor: "pointer",
+                }}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.92rem", fontWeight: 600 }}>{c.name}</span>
+                      {c.isUatTester && (
+                        <span style={{ color: p.accent, fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, padding: "2px 6px", border: `1px solid ${p.accent}` }}>UAT</span>
+                      )}
+                      {open && (
+                        <span style={{ color: p.warn, fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, padding: "2px 6px", border: `1px solid ${p.warn}` }}>Has open plan</span>
+                      )}
+                    </div>
+                    <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 2 }}>
+                      {c.title} · {c.email}
+                    </div>
+                  </div>
+                  {sel && <Check size={14} style={{ color: p.accent, flexShrink: 0 }} />}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        {alreadyHasOpen && (
+          <p className="mt-3" style={{ color: p.warn, fontSize: "0.78rem", lineHeight: 1.55, fontFamily: "'Manrope', sans-serif" }}>
+            This tester already has an open assignment — the same one will be reused rather than duplicated. Remove the open assignment from the board first if you want a fresh start.
+          </p>
+        )}
+      </Card>
+
+      <Card title="What happens next" className="mt-4">
+        <ol className="space-y-2" style={{ paddingInlineStart: 18, color: p.textSecondary, fontSize: "0.84rem", lineHeight: 1.6 }}>
+          <li>An assignment record lands on the board below. Status = Pending.</li>
+          <li>Share the tester's email + password with them (Staff &amp; Access → tester row → Copy).</li>
+          <li>Send them the <strong>Admin testing & training plan</strong> markdown download.</li>
+          <li>As they work through each phase they (or you) update the phase status + feedback in the assignment drawer.</li>
+          <li>At sign-off they fill the Overall Feedback Summary — that becomes the input to the next iteration.</li>
+        </ol>
+      </Card>
+    </Drawer>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// AssignmentDetailDrawer — the working surface. Phase-by-phase status +
+// feedback, plus the eight sign-off fields and a 1-5 confidence rating.
+// ─────────────────────────────────────────────────────────────────────────
+function AssignmentDetailDrawer({ p, assignment, onClose, onPhasePatch, onFeedbackPatch, onRemove }) {
+  const totalPhases = (assignment.phases || []).length || 1;
+  const donePhases = (assignment.phases || []).filter((ph) => ph.status === "completed").length;
+  const pct = Math.round((donePhases / totalPhases) * 100);
+  return (
+    <Drawer
+      open
+      onClose={onClose}
+      eyebrow={`Assignment · ${assignment.id}`}
+      title={`${assignment.testerName} · testing plan`}
+      fullPage
+      contentMaxWidth="max-w-5xl"
+      footer={
+        <>
+          <GhostBtn onClick={onRemove} small danger><Trash2 size={11} /> Remove assignment</GhostBtn>
+          <PrimaryBtn onClick={onClose} small><Check size={11} /> Done</PrimaryBtn>
+        </>
+      }
+    >
+      {/* Header summary */}
+      <Card>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3" style={{ fontFamily: "'Manrope', sans-serif" }}>
+          <SummaryStat p={p} label="Tester" value={assignment.testerName} hint={assignment.testerEmail} />
+          <SummaryStat p={p} label="Assigned by" value={assignment.assignedByName} hint={fmtRelative(assignment.assignedAt)} />
+          <SummaryStat p={p} label="Status" value={statusLabel(assignment.status)} hint={`${donePhases} of ${totalPhases} phases · ${pct}%`} />
+          <SummaryStat p={p} label="Confidence" value={assignment.confidence != null ? `${assignment.confidence} / 5` : "—"} hint="Self-reported at sign-off" />
+        </div>
+        <div className="mt-3" style={{ height: 6, backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
+          <div style={{ width: `${pct}%`, height: "100%", backgroundColor: p.accent }} />
+        </div>
+      </Card>
+
+      {/* Phase tracker */}
+      <Card title="Phases" padded={false} className="mt-5">
+        <TableShell>
+          <thead>
+            <tr>
+              <Th>#</Th>
+              <Th>Phase</Th>
+              <Th>Scope</Th>
+              <Th>Status</Th>
+              <Th>Feedback</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {(assignment.phases || []).map((ph) => {
+              const meta = TESTING_PLAN_PHASES.find((x) => String(x.id) === String(ph.id)) || {};
+              const sc = ph.status === "completed" ? p.success : ph.status === "in-progress" ? p.warn : p.textMuted;
+              return (
+                <tr key={ph.id} style={{ borderTop: `1px solid ${p.border}` }}>
+                  <Td>
+                    <span style={{ color: p.accent, fontWeight: 700, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.05rem" }}>
+                      {String(ph.id).padStart(2, "0")}
+                    </span>
+                  </Td>
+                  <Td>
+                    <div style={{ color: p.textPrimary, fontWeight: 600 }}>{ph.label}</div>
+                    <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>{meta.duration || ""}</div>
+                  </Td>
+                  <Td muted>{meta.scope || ""}</Td>
+                  <Td>
+                    <SelectField
+                      value={ph.status || "pending"}
+                      onChange={(v) => onPhasePatch(ph.id, { status: v })}
+                      options={[
+                        { value: "pending", label: "Pending" },
+                        { value: "in-progress", label: "In progress" },
+                        { value: "completed", label: "Completed" },
+                      ]}
+                    />
+                    <div className="mt-1" style={{ color: sc, fontSize: "0.62rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}>
+                      ● {statusLabel(ph.status)}
+                    </div>
+                  </Td>
+                  <Td>
+                    <textarea
+                      value={ph.feedback || ""}
+                      onChange={(e) => onPhasePatch(ph.id, { feedback: e.target.value })}
+                      rows={2}
+                      placeholder="Friction, missing fields, ideas raised during this phase…"
+                      className="w-full"
+                      style={{
+                        backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`,
+                        padding: "0.5rem 0.65rem", fontFamily: "'Manrope', sans-serif",
+                        fontSize: "0.82rem", lineHeight: 1.45, resize: "vertical",
+                      }}
+                    />
+                  </Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </TableShell>
+      </Card>
+
+      {/* Overall feedback */}
+      <Card title="Overall feedback (sign-off)" className="mt-5">
+        <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", lineHeight: 1.55, marginBottom: 12 }}>
+          Filled by the tester once they finish all phases. The categories feed the next iteration's backlog — anything under <strong>Showstoppers</strong> blocks go-live.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {TESTING_PLAN_FEEDBACK_FIELDS.map((field) => (
+            <FormGroup key={field.key} label={field.label}>
+              <textarea
+                value={(assignment.overallFeedback || {})[field.key] || ""}
+                onChange={(e) => onFeedbackPatch({ overallFeedback: { [field.key]: e.target.value } })}
+                rows={3}
+                placeholder={field.placeholder}
+                className="w-full"
+                style={{
+                  backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`,
+                  padding: "0.55rem 0.7rem", fontFamily: "'Manrope', sans-serif",
+                  fontSize: "0.84rem", lineHeight: 1.5, resize: "vertical",
+                }}
+              />
+            </FormGroup>
+          ))}
+          <FormGroup label="Confidence rating (1–5)">
+            <div className="flex items-center gap-2">
+              {[1, 2, 3, 4, 5].map((n) => {
+                const sel = assignment.confidence === n;
+                return (
+                  <button
+                    key={n}
+                    onClick={() => onFeedbackPatch({ confidence: n })}
+                    style={{
+                      width: 38, height: 38,
+                      backgroundColor: sel ? p.accent : "transparent",
+                      color: sel ? (p.theme === "light" ? "#FFFFFF" : "#15161A") : p.textSecondary,
+                      border: `1px solid ${sel ? p.accent : p.border}`,
+                      fontFamily: "'Cormorant Garamond', serif", fontSize: "1.1rem", fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                    onMouseEnter={(e) => { if (!sel) e.currentTarget.style.borderColor = p.accent; }}
+                    onMouseLeave={(e) => { if (!sel) e.currentTarget.style.borderColor = p.border; }}
+                  >
+                    {n}
+                  </button>
+                );
+              })}
+              <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", marginInlineStart: 6 }}>
+                1 = not ready · 5 = production-ready
+              </span>
+            </div>
+          </FormGroup>
+        </div>
+      </Card>
+    </Drawer>
+  );
+}
+
+// ─── Small helpers ───────────────────────────────────────────────────────
+function statusLabel(s) {
+  return s === "completed" ? "Completed" : s === "in-progress" ? "In progress" : "Pending";
+}
+function fmtRelative(iso) {
+  if (!iso) return "—";
+  const now = Date.now();
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "—";
+  const diffH = (now - then) / 3600000;
+  if (diffH < 1) return `${Math.max(1, Math.round(diffH * 60))} min ago`;
+  if (diffH < 24) return `${Math.round(diffH)} h ago`;
+  if (diffH < 24 * 7) return `${Math.round(diffH / 24)} d ago`;
+  try { return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }); }
+  catch { return iso; }
+}
+function SummaryStat({ p, label, value, hint }) {
+  return (
+    <div style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}`, padding: "10px 14px" }}>
+      <div style={{ color: p.textMuted, fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>{label}</div>
+      <div className="mt-1" style={{ color: p.textPrimary, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", fontWeight: 500, lineHeight: 1.15 }}>{value || "—"}</div>
+      {hint && <div className="mt-1" style={{ color: p.textMuted, fontSize: "0.7rem" }}>{hint}</div>}
+    </div>
+  );
+}
 
 // ── Local primitives — kept inside this file because they're only used
 // here and don't justify polluting the shared ui.jsx. The download row
