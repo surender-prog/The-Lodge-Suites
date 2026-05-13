@@ -4,6 +4,7 @@ import {
   CheckCircle2, Coins, FileText, Mail, Phone, Save, Trash2, User2, X, XCircle,
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
+import { formatCurrency } from "../../data/store.jsx";
 
 // ---------------------------------------------------------------------------
 // RfpEditor — full-page drawer for managing a corporate RFP through the
@@ -309,7 +310,7 @@ export function RfpEditor({ open, onClose, rfp, onSave, onRemove, onConvert }) {
                   <SummaryRow label="Account" value={draft.account || "—"} bold />
                   <SummaryRow label="Industry" value={draft.industry || "—"} />
                   <SummaryRow label="Volume" value={`${draft.roomNights || 0} room-nights`} />
-                  <SummaryRow label="Est. value" value={`BHD ${(draft.estValue || 0).toLocaleString()}`} accent />
+                  <SummaryRow label="Est. value" value={formatCurrency(draft.estValue || 0)} accent />
                   <SummaryRow label="Max rate" value={draft.maxRate ? `BHD ${draft.maxRate}/night` : "—"} />
                   <SummaryRow label="Payment" value={draft.paymentTerms || "—"} />
                   <SummaryRow label="Eligible" value={draft.eligibleFrom && draft.eligibleTo ? `${fmtDateShort(draft.eligibleFrom)} → ${fmtDateShort(draft.eligibleTo)}` : "—"} />

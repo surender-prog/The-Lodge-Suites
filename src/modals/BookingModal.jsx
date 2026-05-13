@@ -8,7 +8,7 @@ import { CountrySelect } from "../components/CountrySelect.jsx";
 import { findCountryByCode, parsePhone, DEFAULT_COUNTRY_CODE } from "../data/countryCodes.js";
 import { useT, useLang } from "../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween, todayISO } from "../utils/date.js";
-import { priceExtra, priceLabelFor, useData, evalPackageEligibility, describePackageConditions, roomFitsParty, computePackageCharge, computePackageSaving, packagePriceSuffix, getPackageRoomPrice, getPackageMinPrice, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, applyTaxes, nightlyBreakdown } from "../data/store.jsx";
+import { priceExtra, priceLabelFor, useData, evalPackageEligibility, describePackageConditions, roomFitsParty, computePackageCharge, computePackageSaving, packagePriceSuffix, getPackageRoomPrice, getPackageMinPrice, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, applyTaxes, nightlyBreakdown, formatCurrency } from "../data/store.jsx";
 
 export const BookingModal = ({ open, onClose, initial }) => {
   const t = useT();
@@ -873,11 +873,11 @@ export const BookingModal = ({ open, onClose, initial }) => {
                               {offerEntry ? (
                                 <>
                                   <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", color: pkg.color || C.goldDeep, fontWeight: 600 }}>
-                                    {t("common.bhd")} {offerEntry.price}
+                                    {formatCurrency(offerEntry.price)}
                                     <span style={{ fontSize: "0.7rem", color: C.textDim, fontFamily: "'Manrope', sans-serif", letterSpacing: "0.1em" }}> {packagePriceSuffix(pkg)}</span>
                                   </div>
                                   <div style={{ color: C.textDim, fontSize: "0.72rem", textDecoration: "line-through", fontFamily: "'Manrope', sans-serif" }}>
-                                    {t("common.bhd")} {r.price} / night
+                                    {formatCurrency(r.price)} / night
                                   </div>
                                   <div style={{ color: pkg.color || C.goldDeep, fontSize: "0.62rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, marginTop: 1 }}>
                                     Offer
@@ -885,7 +885,7 @@ export const BookingModal = ({ open, onClose, initial }) => {
                                 </>
                               ) : (
                                 <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", color: C.goldDeep, fontWeight: 500 }}>
-                                  {t("common.bhd")} {r.price}
+                                  {formatCurrency(r.price)}
                                   <span style={{ fontSize: "0.7rem", color: C.textDim, fontFamily: "'Manrope', sans-serif", letterSpacing: "0.1em" }}> {t("common.perNight")}</span>
                                 </div>
                               )}
@@ -906,13 +906,13 @@ export const BookingModal = ({ open, onClose, initial }) => {
                                 <span style={{ color: C.warn, fontWeight: 600 }}> · adults only</span>
                               )}
                               {r.extraBedAvailable && (r.maxExtraBeds || 0) > 0 && (
-                                <span style={{ marginInlineStart: 8, color: C.goldDeep }}>· extra bed BHD {ebUnit}/night</span>
+                                <span style={{ marginInlineStart: 8, color: C.goldDeep }}>· extra bed {formatCurrency(ebUnit)}/night</span>
                               )}
                               {qty > 0 && nights >= 1 && (
                                 <span style={{ marginInlineStart: 12 }}>
                                   {qty} × {nights} {nights === 1 ? t("common.night") : t("common.nights")}
-                                  {ebShow && extraBeds > 0 ? <> + {extraBeds} bed × BHD {ebUnit} × {nights}n</> : null}
-                                  {" "}= <strong style={{ color: C.goldDeep }}>{t("common.bhd")} {lineSubtotal}</strong>
+                                  {ebShow && extraBeds > 0 ? <> + {extraBeds} bed × {formatCurrency(ebUnit)} × {nights}n</> : null}
+                                  {" "}= <strong style={{ color: C.goldDeep }}>{formatCurrency(lineSubtotal)}</strong>
                                 </span>
                               )}
                             </div>
@@ -974,7 +974,7 @@ export const BookingModal = ({ open, onClose, initial }) => {
                               <div style={{ fontFamily: "'Manrope', sans-serif", color: C.bgDeep, fontSize: "0.78rem", lineHeight: 1.5 }}>
                                 <strong>Extra bed</strong>
                                 <span style={{ color: C.textDim }}>
-                                  {" "}— up to {ebCap} for this {qty === 1 ? "suite" : `${qty}-suite line`} · BHD {ebUnit}/night each
+                                  {" "}— up to {ebCap} for this {qty === 1 ? "suite" : `${qty}-suite line`} · {formatCurrency(ebUnit)}/night each
                                   {(r.extraBedAdds?.adults || 0) + (r.extraBedAdds?.children || 0) > 0 && (
                                     <> · adds {[
                                       (r.extraBedAdds?.adults   || 0) > 0 ? `${r.extraBedAdds.adults} adult${r.extraBedAdds.adults === 1 ? "" : "s"}` : null,
@@ -1342,10 +1342,10 @@ export const BookingModal = ({ open, onClose, initial }) => {
                         <span style={{ color: C.cream, fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic", fontSize: "1.05rem" }}>
                           {pkgTitle}
                           <span style={{ color: C.textMuted, fontStyle: "normal", fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginInlineStart: 6 }}>
-                            {t("common.bhd")} {pkgRoomPrice.price} × {nights}n
+                            {formatCurrency(pkgRoomPrice.price)} × {nights}n
                           </span>
                         </span>
-                        <span>{t("common.bhd")} {pkgCharge}</span>
+                        <span>{formatCurrency(pkgCharge)}</span>
                       </div>
                     ) : pkgMode === "first-night" ? (
                       <>
@@ -1356,12 +1356,12 @@ export const BookingModal = ({ open, onClose, initial }) => {
                               1st night
                             </span>
                           </span>
-                          <span>{t("common.bhd")} {pkgFirstNight}</span>
+                          <span>{formatCurrency(pkgFirstNight)}</span>
                         </div>
                         {nights > 1 && (
                           <div className="flex justify-between" style={{ color: C.textMuted, fontSize: "0.82rem" }}>
                             <span>+ {nights - 1} more night{nights - 1 === 1 ? "" : "s"} at suite rate</span>
-                            <span>{t("common.bhd")} {pkgRackNights}</span>
+                            <span>{formatCurrency(pkgRackNights)}</span>
                           </div>
                         )}
                       </>
@@ -1373,13 +1373,13 @@ export const BookingModal = ({ open, onClose, initial }) => {
                             full stay
                           </span>
                         </span>
-                        <span>{t("common.bhd")} {pkgCharge}</span>
+                        <span>{formatCurrency(pkgCharge)}</span>
                       </div>
                     )}
                     {pkgSaving > 0 && (
                       <div className="flex justify-between" style={{ color: C.goldDeep, fontSize: "0.78rem" }}>
                         <span>You save</span>
-                        <span>− {t("common.bhd")} {pkgSaving}</span>
+                        <span>− {formatCurrency(pkgSaving)}</span>
                       </div>
                     )}
                     {roomLines.length > 0 && (
@@ -1407,24 +1407,24 @@ export const BookingModal = ({ open, onClose, initial }) => {
                           <span style={{ color: C.textMuted }}>
                             {t(`rooms.${l.room.id}.short`) || l.room.id}{l.qty > 1 ? ` × ${l.qty}` : ""} · {nights}n
                           </span>
-                          <span>{t("common.bhd")} {l.roomRev}</span>
+                          <span>{formatCurrency(l.roomRev)}</span>
                         </div>
                         {mixed && (
                           <>
                             <div className="flex justify-between" style={{ color: C.textMuted, fontSize: "0.74rem", paddingInlineStart: 12 }}>
-                              <span>{br.weekdayNights} × weekday × {t("common.bhd")} {br.rateWeekday}</span>
-                              <span>{t("common.bhd")} {br.weekdayNights * br.rateWeekday * l.qty}</span>
+                              <span>{br.weekdayNights} × weekday × {formatCurrency(br.rateWeekday)}</span>
+                              <span>{formatCurrency(br.weekdayNights * br.rateWeekday * l.qty)}</span>
                             </div>
                             <div className="flex justify-between" style={{ color: C.textMuted, fontSize: "0.74rem", paddingInlineStart: 12 }}>
-                              <span>{br.weekendNights} × weekend × {t("common.bhd")} {br.rateWeekend}</span>
-                              <span>{t("common.bhd")} {br.weekendNights * br.rateWeekend * l.qty}</span>
+                              <span>{br.weekendNights} × weekend × {formatCurrency(br.rateWeekend)}</span>
+                              <span>{formatCurrency(br.weekendNights * br.rateWeekend * l.qty)}</span>
                             </div>
                           </>
                         )}
                         {l.extraBeds > 0 && (
                           <div className="flex justify-between" style={{ color: C.goldDeep, fontSize: "0.8rem" }}>
                             <span>+ {l.extraBeds} extra bed{l.extraBeds === 1 ? "" : "s"} · {nights}n</span>
-                            <span>{t("common.bhd")} {l.extraBedRev}</span>
+                            <span>{formatCurrency(l.extraBedRev)}</span>
                           </div>
                         )}
                       </React.Fragment>
@@ -1432,20 +1432,20 @@ export const BookingModal = ({ open, onClose, initial }) => {
                   })
                 )}
                 {addOnLines.map((line) => (
-                  <div key={line.id} className="flex justify-between"><span style={{ color: C.textMuted }}>{line.title}</span><span>{t("common.bhd")} {line.total}</span></div>
+                  <div key={line.id} className="flex justify-between"><span style={{ color: C.textMuted }}>{line.title}</span><span>{formatCurrency(line.total)}</span></div>
                 ))}
                 {memberDiscount > 0 && (
                   <div className="flex justify-between" style={{ color: C.gold }}>
                     <span>
                       {(memberTier || "silver").charAt(0).toUpperCase() + (memberTier || "silver").slice(1)} member · {memberPct}% off
                     </span>
-                    <span>− {t("common.bhd")} {memberDiscount}</span>
+                    <span>− {formatCurrency(memberDiscount)}</span>
                   </div>
                 )}
                 {payNowDiscount > 0 && (
                   <div className="flex justify-between" style={{ color: C.success || "#16A34A" }}>
                     <span>Pay-now · {PAY_NOW_DISCOUNT_PCT}% off (non-refundable)</span>
-                    <span>− {t("common.bhd")} {payNowDiscount}</span>
+                    <span>− {formatCurrency(payNowDiscount)}</span>
                   </div>
                 )}
                 {/* Per-component tax breakdown — renders one indented row
@@ -1459,28 +1459,28 @@ export const BookingModal = ({ open, onClose, initial }) => {
                     {taxLines.map((line, i) => {
                       const rateLabel = line.type === "percentage"
                         ? `${line.rate}%${line.calculation === "compound" ? " · compound" : ""}`
-                        : `${t("common.bhd")} ${line.amount}/night`;
+                        : `${formatCurrency(line.amount)}/night`;
                       return (
                         <div key={line.id || i} className="flex justify-between"
                           style={{ color: C.textMuted, fontSize: "0.78rem", paddingInlineStart: 12 }}>
                           <span>{line.name} <span style={{ color: C.textDim }}>· {rateLabel}</span></span>
-                          <span>{t("common.bhd")} {line.taxAmount}</span>
+                          <span>{formatCurrency(line.taxAmount)}</span>
                         </div>
                       );
                     })}
                     <div className="flex justify-between mt-1" style={{ color: C.textMuted, fontSize: "0.82rem" }}>
                       <span>{t("booking.taxLine")}</span>
-                      <span>{t("common.bhd")} {taxAmount}</span>
+                      <span>{formatCurrency(taxAmount)}</span>
                     </div>
                   </div>
                 ) : (
                   <div className="flex justify-between pt-2" style={{ borderTop: `1px solid ${C.border}` }}>
                     <span style={{ color: C.textMuted }}>{t("booking.taxLine")}</span>
-                    <span>{t("common.bhd")} {taxAmount}</span>
+                    <span>{formatCurrency(taxAmount)}</span>
                   </div>
                 )}
                 <div className="flex justify-between pt-3 mt-2" style={{ borderTop: `1px solid ${C.border}`, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: C.gold }}>
-                  <span>{t("booking.total")}</span><span>{t("common.bhd")} {total}</span>
+                  <span>{t("booking.total")}</span><span>{formatCurrency(total)}</span>
                 </div>
 
                 {/* Guarantee status — shown when the operator gets to step
@@ -1640,14 +1640,14 @@ function OfferBanner({ pkg, pkgTitle, headlinePrice, conditions, eligibility, on
             {pkgTitle}
           </span>
           <span style={{ color: accent, fontSize: "0.78rem", fontWeight: 700, fontFamily: "'Cormorant Garamond', serif" }}>
-            BHD {headPrice}
+            {formatCurrency(headPrice)}
           </span>
           <span style={{ color: C.textDim, fontSize: "0.7rem", fontWeight: 600, letterSpacing: "0.04em" }}>
             {priceSuffix}
           </span>
           {headSaving > 0 && (
             <span style={{ color: C.success, fontSize: "0.66rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}>
-              Save BHD {headSaving}
+              Save {formatCurrency(headSaving)}
             </span>
           )}
         </div>
@@ -1721,7 +1721,7 @@ function EligibleOffersStrip({ offers, onApply, t }) {
             >
               <Tag size={11} style={{ color: C.goldDeep }} />
               <span>{title}</span>
-              <span style={{ color: C.goldDeep, fontWeight: 700 }}>From BHD {min.price}</span>
+              <span style={{ color: C.goldDeep, fontWeight: 700 }}>From {formatCurrency(min.price)}</span>
               <span style={{ color: C.textDim, fontSize: "0.66rem", fontWeight: 600 }}>
                 {packagePriceSuffix(o)}
               </span>

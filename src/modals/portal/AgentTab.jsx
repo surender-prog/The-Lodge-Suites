@@ -9,7 +9,7 @@ import { Logo } from "../../components/Logo.jsx";
 import { GoldBtn } from "../../components/primitives.jsx";
 import { useT, useLang } from "../../i18n/LanguageContext.jsx";
 import { fmtDate } from "../../utils/date.js";
-import { useData, legalLine } from "../../data/store.jsx";
+import { useData, legalLine, formatCurrency } from "../../data/store.jsx";
 import { usePalette } from "./theme.jsx";
 import { ContractEditor, defaultAgencyDraft } from "./ContractEditor.jsx";
 import { ContractPreviewModal, downloadContract, emailContract } from "./ContractDocument.jsx";
@@ -264,7 +264,7 @@ export const AgentTab = () => {
           <SmallStat label="Active contracts" value={totals.onContract} hint={`${agencies.length} total`} color={p.accent} />
           <SmallStat label="Avg commission %" value={`${totals.avgComm.toFixed(1)}%`} color={p.success} />
           <SmallStat label="Expiring in 60 days" value={totals.expiring} color={totals.expiring > 0 ? p.warn : p.success} />
-          <SmallStat label="Total credit extended" value={`${t("common.bhd")} ${totals.totalCredit.toLocaleString()}`} hint={`Across ${agencies.length} agencies`} />
+          <SmallStat label="Total credit extended" value={formatCurrency(totals.totalCredit)} hint={`Across ${agencies.length} agencies`} />
         </div>
 
         {/* Filters */}
@@ -357,7 +357,7 @@ export const AgentTab = () => {
                       {hasNet ? `${(mn.studio || 0).toLocaleString()} / ${(mn.oneBed || 0).toLocaleString()} / ${(mn.twoBed || 0).toLocaleString()} / ${(mn.threeBed || 0).toLocaleString()}` : "—"}
                       {Number(a.accommodationFee) > 0 && (
                         <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2, fontWeight: 500 }}>
-                          + BHD {Number(a.accommodationFee).toFixed(3)} fee
+                          + {formatCurrency(Number(a.accommodationFee))} fee
                         </div>
                       )}
                     </td>
@@ -376,7 +376,7 @@ export const AgentTab = () => {
                         <div className="h-full" style={{ width: `${Math.min(100, targetPct)}%`, backgroundColor: p.accent }} />
                       </div>
                       <div style={{ color: p.success, fontSize: "0.72rem", marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
-                        {t("common.bhd")} {(a.ytdCommission || 0).toLocaleString()} paid
+                        {formatCurrency(a.ytdCommission || 0)} paid
                       </div>
                     </td>
                     <td className="px-3 py-3 text-end">
@@ -476,7 +476,7 @@ export const AgentTab = () => {
         />
         <KpiTile
           label="YTD commission"
-          value={`${t("common.bhd")} ${totals.ytdComm.toLocaleString()}`}
+          value={formatCurrency(totals.ytdComm)}
           trend={`${totals.avgComm.toFixed(1)}% avg`}
           icon={Coins}
           color={p.accent}
@@ -496,7 +496,7 @@ export const AgentTab = () => {
         <KpiTile
           label="Top agent"
           value={totals.topAgent?.name || "—"}
-          trend={totals.topAgent ? `${t("common.bhd")} ${totals.topAgent.ytdCommission.toLocaleString()} paid` : ""}
+          trend={totals.topAgent ? `${formatCurrency(totals.topAgent.ytdCommission)} paid` : ""}
           icon={Award}
           small
           p={p}
@@ -540,7 +540,7 @@ export const AgentTab = () => {
         />
         <KpiTile
           label="Credit extended"
-          value={`${t("common.bhd")} ${totals.totalCredit.toLocaleString()}`}
+          value={formatCurrency(totals.totalCredit)}
           trend="Across all contracts"
           icon={ScrollText}
           p={p}
@@ -704,8 +704,8 @@ export const AgentTab = () => {
             return (
               <div className="px-6 py-3 grid grid-cols-3 gap-3" style={{ borderBottom: `1px solid ${p.border}`, backgroundColor: p.bgPanelAlt }}>
                 <Mini label="Bookings" value={tBook.toLocaleString()} hint={`avg ${TOP_AGENTS.length ? Math.round(tBook / TOP_AGENTS.length) : 0}`} p={p} />
-                <Mini label={t("portal.agent.leaderboardHeaders.revenue")} value={`${t("common.bhd")} ${tRev.toLocaleString()}`} hint={`avg ${t("common.bhd")} ${TOP_AGENTS.length ? Math.round(tRev / TOP_AGENTS.length).toLocaleString() : 0}`} p={p} />
-                <Mini label={t("portal.agent.leaderboardHeaders.commission")} value={`${t("common.bhd")} ${tComm.toLocaleString()}`} hint={tRev > 0 ? `${((tComm / tRev) * 100).toFixed(1)}% blended` : ""} accent p={p} />
+                <Mini label={t("portal.agent.leaderboardHeaders.revenue")} value={formatCurrency(tRev)} hint={`avg ${formatCurrency(TOP_AGENTS.length ? Math.round(tRev / TOP_AGENTS.length) : 0)}`} p={p} />
+                <Mini label={t("portal.agent.leaderboardHeaders.commission")} value={formatCurrency(tComm)} hint={tRev > 0 ? `${((tComm / tRev) * 100).toFixed(1)}% blended` : ""} accent p={p} />
               </div>
             );
           })()}
@@ -777,9 +777,9 @@ export const AgentTab = () => {
                           </div>
                         </td>
                         <td className="px-3 py-3 text-end" style={{ fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{a.bookings}</td>
-                        <td className="px-3 py-3 text-end" style={{ fontVariantNumeric: "tabular-nums" }}>{t("common.bhd")} {a.revenue.toLocaleString()}</td>
+                        <td className="px-3 py-3 text-end" style={{ fontVariantNumeric: "tabular-nums" }}>{formatCurrency(a.revenue)}</td>
                         <td className="px-6 py-3 text-end" style={{ color: p.accent, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-                          <div>{t("common.bhd")} {a.commission.toLocaleString()}</div>
+                          <div>{formatCurrency(a.commission)}</div>
                           {/* Hover affordance — kept invisible on rest, surfaced in muted gold on row hover */}
                           {fullAgency && (
                             <div className="row-cta" style={{
@@ -810,7 +810,7 @@ export const AgentTab = () => {
                   <div className="flex items-baseline justify-between gap-3">
                     <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", color: p.textSecondary }}>{t(`portal.agent.agingBuckets.${a.bucket}`)}</div>
                     <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", color: a.color, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-                      {t("common.bhd")} {a.value.toLocaleString()}
+                      {formatCurrency(a.value)}
                     </div>
                   </div>
                   <div className="mt-2 h-1.5" style={{ backgroundColor: p.border }}>
@@ -877,7 +877,7 @@ export const AgentTab = () => {
                       {a.commissionPct}%{a.marketingFundPct ? <span style={{ color: p.textMuted, fontSize: "0.7rem", fontWeight: 500 }}> +{a.marketingFundPct}% MF</span> : null}
                     </td>
                     <td className="px-3 py-3 text-end" style={{ fontVariantNumeric: "tabular-nums" }}>{a.ytdBookings}</td>
-                    <td className="px-3 py-3 text-end" style={{ fontVariantNumeric: "tabular-nums" }}>{t("common.bhd")} {a.ytdRevenue.toLocaleString()}</td>
+                    <td className="px-3 py-3 text-end" style={{ fontVariantNumeric: "tabular-nums" }}>{formatCurrency(a.ytdRevenue)}</td>
                     <td className="px-3 py-3" style={{ whiteSpace: "nowrap", fontSize: "0.78rem", color: p.textMuted }}>
                       <div>{a.endsOn || "—"}</div>
                       <div style={{ color: expiringSoon ? p.warn : p.textDim, fontSize: "0.7rem" }}>
@@ -1162,7 +1162,7 @@ function AgentBookingDrawer({ booking, agencies, selected, onSelectToggle, onOpe
               <Clock size={14} style={{ color: p.warn, marginTop: 2, flexShrink: 0 }} />
               <div style={{ color: p.textSecondary, fontSize: "0.84rem", lineHeight: 1.55 }}>
                 {commDeducted
-                  ? <>Commission for this booking was <strong>deducted at the time of booking</strong>. The hotel paid {`${t("common.bhd")} ${(booking.commissionDeductedAmount ?? booking.comm ?? 0).toLocaleString()}`} by reducing the agency&apos;s bill. It can no longer be added to a commission invoice.</>
+                  ? <>Commission for this booking was <strong>deducted at the time of booking</strong>. The hotel paid {formatCurrency(booking.commissionDeductedAmount ?? booking.comm ?? 0)} by reducing the agency&apos;s bill. It can no longer be added to a commission invoice.</>
                   : booking.invoiced
                     ? <>This booking has already been included on a commission invoice. It can no longer be selected.</>
                     : booking.status === "confirmed"
@@ -1174,10 +1174,10 @@ function AgentBookingDrawer({ booking, agencies, selected, onSelectToggle, onOpe
 
           {/* KPI strip — stay value, commission, marketing fund (if any), nightly value */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-px mb-6" style={{ backgroundColor: p.border }}>
-            <DetailKpi label="Stay value"   value={`${t("common.bhd")} ${(booking.value || 0).toLocaleString()}`} icon={Coins}      color={p.success} hint={`${t("common.bhd")} ${booking.nights > 0 ? Math.round(booking.value / booking.nights).toLocaleString() : "—"}/night`} p={p} />
+            <DetailKpi label="Stay value"   value={formatCurrency(booking.value || 0)} icon={Coins}      color={p.success} hint={`${booking.nights > 0 ? formatCurrency(Math.round(booking.value / booking.nights)) : "—"}/night`} p={p} />
             <DetailKpi
               label="Commission"
-              value={`${t("common.bhd")} ${(booking.comm || 0).toLocaleString()}`}
+              value={formatCurrency(booking.comm || 0)}
               icon={Percent}
               color={commDeducted ? p.success : p.accent}
               hint={commDeducted ? "Paid at booking" : `${commPct}% of stay value`}
@@ -1263,16 +1263,16 @@ function AgentBookingDrawer({ booking, agencies, selected, onSelectToggle, onOpe
             </div>
             <div className="px-5 py-4">
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem" }}>
-                <DetailField label="Stay value"          value={`${t("common.bhd")} ${(booking.value || 0).toLocaleString()}`} p={p} />
+                <DetailField label="Stay value"          value={formatCurrency(booking.value || 0)} p={p} />
                 <DetailField label="Commission rate"     value={`${commPct}%`} p={p} />
-                <DetailField label="Commission BHD"      value={`${t("common.bhd")} ${(booking.comm || 0).toLocaleString()}`} accent p={p} />
-                <DetailField label="Net to hotel"        value={`${t("common.bhd")} ${((booking.value || 0) - (booking.comm || 0)).toLocaleString()}`} p={p} />
+                <DetailField label="Commission"          value={formatCurrency(booking.comm || 0)} accent p={p} />
+                <DetailField label="Net to hotel"        value={formatCurrency((booking.value || 0) - (booking.comm || 0))} p={p} />
               </div>
               {commDeducted && (
                 <div className="mt-4 p-3 flex items-start gap-2" style={{ backgroundColor: `${p.success}10`, border: `1px solid ${p.success}40`, borderInlineStart: `3px solid ${p.success}` }}>
                   <Receipt size={14} style={{ color: p.success, marginTop: 2, flexShrink: 0 }} />
                   <div style={{ color: p.textSecondary, fontSize: "0.78rem", lineHeight: 1.5 }}>
-                    The agency settled this booking <strong style={{ color: p.textPrimary }}>net of commission</strong> at the time of booking. A paid commission invoice of <strong style={{ color: p.textPrimary }}>{t("common.bhd")} {(booking.commissionDeductedAmount ?? booking.comm ?? 0).toLocaleString()}</strong> was issued automatically. No further commission is due.
+                    The agency settled this booking <strong style={{ color: p.textPrimary }}>net of commission</strong> at the time of booking. A paid commission invoice of <strong style={{ color: p.textPrimary }}>{formatCurrency(booking.commissionDeductedAmount ?? booking.comm ?? 0)}</strong> was issued automatically. No further commission is due.
                   </div>
                 </div>
               )}
@@ -1500,7 +1500,7 @@ function CommissionWorkspace({ bookings, agencies, selected, setSelected, onOpen
         {pending.length > 0 && (
           <div className="text-end" style={{ flexShrink: 0 }}>
             <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.accent, fontWeight: 600, lineHeight: 1 }}>
-              {t("common.bhd")} {totalReady.toLocaleString()}
+              {formatCurrency(totalReady)}
             </div>
             <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", marginTop: 4, fontWeight: 700 }}>
               ready to invoice
@@ -1513,8 +1513,8 @@ function CommissionWorkspace({ bookings, agencies, selected, setSelected, onOpen
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-px" style={{ backgroundColor: p.border }}>
         <WorkspaceKpi label="Pending bookings" value={pending.length} color={pending.length > 0 ? p.warn : p.success} hint={pending.length === 0 ? "All settled" : `${pendingByAgency.length} ${pendingByAgency.length === 1 ? "agency" : "agencies"}`} icon={Inbox} p={p} />
         <WorkspaceKpi label="Oldest pending" value={oldestPending ? `${oldestDays}d` : "—"} color={oldestDays > 30 ? p.danger : oldestDays > 14 ? p.warn : p.success} hint={oldestPending ? `${oldestPending.ref} · ${(agencies.find(a => a.id === oldestPending.agencyId)?.name) || "—"}` : "No pending"} icon={CalendarClock} p={p} />
-        <WorkspaceKpi label="Already invoiced" value={invoicedCount} hint={`${t("common.bhd")} ${ytdPaid.toLocaleString()} settled`} icon={Layers} p={p} />
-        <WorkspaceKpi label="Top awaiting" value={pendingByAgency[0]?.agency?.name || "—"} hint={pendingByAgency[0] ? `${t("common.bhd")} ${pendingByAgency[0].total.toLocaleString()} · ${pendingByAgency[0].bookings.length} bkg` : ""} icon={Sparkles} p={p} small />
+        <WorkspaceKpi label="Already invoiced" value={invoicedCount} hint={`${formatCurrency(ytdPaid)} settled`} icon={Layers} p={p} />
+        <WorkspaceKpi label="Top awaiting" value={pendingByAgency[0]?.agency?.name || "—"} hint={pendingByAgency[0] ? `${formatCurrency(pendingByAgency[0].total)} · ${pendingByAgency[0].bookings.length} bkg` : ""} icon={Sparkles} p={p} small />
       </div>
 
       {/* Per-agency pending list */}
@@ -1571,7 +1571,7 @@ function CommissionWorkspace({ bookings, agencies, selected, setSelected, onOpen
                     )}
                   </div>
                   <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.94rem", color: p.accent, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-                    {t("common.bhd")} {entry.total.toLocaleString()}
+                    {formatCurrency(entry.total)}
                   </div>
                   <button
                     onClick={() => invoiceForAgency(entry.agencyId)}

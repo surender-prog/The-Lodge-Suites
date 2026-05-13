@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT } from "../../../../i18n/LanguageContext.jsx";
-import { useData, describePackageConditions, packagePriceSuffix, PACKAGE_PRICING_MODES, getPackageMinPrice } from "../../../../data/store.jsx";
+import { useData, describePackageConditions, packagePriceSuffix, PACKAGE_PRICING_MODES, getPackageMinPrice, formatCurrency } from "../../../../data/store.jsx";
 import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 import { IMG } from "../../../../data/images.js";
 import { C } from "../../../../data/tokens.js";
@@ -177,7 +177,7 @@ export const Offers = () => {
       <div className="grid sm:grid-cols-3 gap-4 mb-6">
         <Stat label="Active offers" value={activeCount} hint={`${packages.length - activeCount} hidden`} color={p.success} />
         <Stat label="Featured" value={featuredCount} hint="Shown with 'Most Popular' badge" />
-        <Stat label="Avg saving" value={`${t("common.bhd")} ${avgSaving}`} color={p.accent} />
+        <Stat label="Avg saving" value={formatCurrency(avgSaving)} color={p.accent} />
       </div>
 
       <Card padded={false} title="All offers">
@@ -207,8 +207,8 @@ export const Offers = () => {
                     <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.05rem", color: p.textPrimary }}>{title}</div>
                     <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>{pkg.id}</div>
                   </Td>
-                  <Td align="end">{t("common.bhd")} {headline.price}</Td>
-                  <Td align="end" className="font-semibold" >{t("common.bhd")} {headline.saving}</Td>
+                  <Td align="end">{formatCurrency(headline.price)}</Td>
+                  <Td align="end" className="font-semibold" >{formatCurrency(headline.saving)}</Td>
                   <Td>{pkg.featured ? "★" : "—"}</Td>
                   <Td>
                     <button onClick={() => togglePackage(pkg.id)} style={{

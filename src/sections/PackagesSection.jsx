@@ -5,7 +5,7 @@ import { Crosshatch } from "../components/Crosshatch.jsx";
 import { Icon } from "../components/Icon.jsx";
 import { SectionLabel, SectionTitle } from "../components/primitives.jsx";
 import { useT } from "../i18n/LanguageContext.jsx";
-import { useData, describePackageConditions, packagePriceSuffix, getPackageMinPrice } from "../data/store.jsx";
+import { useData, describePackageConditions, packagePriceSuffix, getPackageMinPrice, formatCurrency } from "../data/store.jsx";
 
 export const PackagesSection = ({ onBookPackage }) => {
   const t = useT();
@@ -44,7 +44,7 @@ export const PackagesSection = ({ onBookPackage }) => {
                   <div className="absolute top-4 start-4 flex items-center gap-2 px-3 py-1.5" style={{ backgroundColor: C.bgDeep, color: C.gold }}>
                     <Icon name={p.icon} size={14} />
                     <span style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.65rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 600 }}>
-                      {t("packages.save")} {t("common.bhd")} {headline.saving}
+                      {t("packages.save")} {formatCurrency(headline.saving)}
                     </span>
                   </div>
                   {p.featured && (
@@ -88,7 +88,7 @@ export const PackagesSection = ({ onBookPackage }) => {
                       <span style={{ color: C.textDim, fontSize: "0.7rem", letterSpacing: "0.1em" }}>{t("packages.from")}</span>
                       <div className="flex items-baseline gap-1.5">
                         <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: C.bgDeep, fontWeight: 500, lineHeight: 1 }}>
-                          {t("common.bhd")} {headline.price}
+                          {formatCurrency(headline.price)}
                         </div>
                         <span style={{ color: C.textDim, fontSize: "0.7rem", fontFamily: "'Manrope', sans-serif", letterSpacing: "0.04em" }}>
                           {packagePriceSuffix(p)}

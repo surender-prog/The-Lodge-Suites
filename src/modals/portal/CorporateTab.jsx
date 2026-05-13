@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { Field, GoldBtn, Input, Select } from "../../components/primitives.jsx";
 import { useT } from "../../i18n/LanguageContext.jsx";
-import { useData } from "../../data/store.jsx";
+import { useData, formatCurrency } from "../../data/store.jsx";
 import { usePalette } from "./theme.jsx";
 import { ContractEditor, defaultCorporateDraft } from "./ContractEditor.jsx";
 import { ContractPreviewModal, downloadContract, emailContract } from "./ContractDocument.jsx";
@@ -313,7 +313,7 @@ export const CorporateTab = () => {
           <SmallStat label="Active contracts" value={agreements.filter(a => a.status === "active").length} hint={`${agreements.length} total`} color={p.accent} />
           <SmallStat label="On-track this year" value={`${totals.onTrack}/${agreements.length}`} color={totals.onTrack === agreements.length ? p.success : p.warn} />
           <SmallStat label="YTD nights vs target" value={`${totals.ytdNights.toLocaleString()}/${totals.targetNights.toLocaleString()}`} hint={`${Math.round(totals.ytdNights / Math.max(1, totals.targetNights) * 100)}% delivered`} />
-          <SmallStat label="YTD spend" value={`${t("common.bhd")} ${totals.ytdSpend.toLocaleString()}`} hint={`Avg ADR: ${t("common.bhd")} ${totals.totalAdr}`} color={p.success} />
+          <SmallStat label="YTD spend" value={formatCurrency(totals.ytdSpend)} hint={`Avg ADR: ${formatCurrency(totals.totalAdr)}`} color={p.success} />
         </div>
 
         {/* Filters */}
@@ -417,7 +417,7 @@ export const CorporateTab = () => {
                       {(m.studio || 0).toLocaleString()} / {(m.oneBed || 0).toLocaleString()} / {(m.twoBed || 0).toLocaleString()} / {(m.threeBed || 0).toLocaleString()}
                       {Number(a.accommodationFee) > 0 && (
                         <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2, fontWeight: 500 }}>
-                          + BHD {Number(a.accommodationFee).toFixed(3)} fee
+                          + {formatCurrency(Number(a.accommodationFee))} fee
                         </div>
                       )}
                     </td>
@@ -594,7 +594,7 @@ export const CorporateTab = () => {
         />
         <KpiTile
           label={t("portal.corporate.stats.avgDeal")}
-          value={`${t("common.bhd")} ${Math.round(totals.ytdSpend / Math.max(1, agreements.length)).toLocaleString()}`}
+          value={formatCurrency(Math.round(totals.ytdSpend / Math.max(1, agreements.length)))}
           trend={`Top: ${topIndustry}`}
           icon={Coins}
           p={p}
@@ -718,7 +718,7 @@ export const CorporateTab = () => {
                       <div style={{ color: p.textMuted, fontSize: "0.66rem", marginTop: 2 }}>{a.industry}</div>
                     </div>
                     <div style={{ color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", fontWeight: 700, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
-                      {t("common.bhd")} {(a.ytdSpend || 0).toLocaleString()}
+                      {formatCurrency(a.ytdSpend || 0)}
                     </div>
                   </div>
                   <div className="mt-2 h-1" style={{ backgroundColor: p.border }}>
@@ -755,7 +755,7 @@ export const CorporateTab = () => {
                   <div className="flex items-baseline justify-between" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem" }}>
                     <span style={{ color: p.textPrimary, fontWeight: 600 }}>{row.industry}</span>
                     <span style={{ color: p.textMuted, fontSize: "0.74rem", fontVariantNumeric: "tabular-nums" }}>
-                      <strong style={{ color: p.accent }}>{t("common.bhd")} {row.spend.toLocaleString()}</strong>
+                      <strong style={{ color: p.accent }}>{formatCurrency(row.spend)}</strong>
                       <span style={{ color: p.textDim, padding: "0 6px" }}>·</span>
                       {sharePct}%
                     </span>
@@ -1278,7 +1278,7 @@ function RfpPipelineDrawer({ p, t, analytics, rfps, rfpFilter, setRfpFilter, onC
                     {row.maxRate ? <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>≤ BHD {row.maxRate}/n</div> : null}
                   </td>
                   <td className="px-3 py-4 text-end" style={{ whiteSpace: "nowrap" }}>
-                    <div style={{ color: p.accent, fontWeight: 700, fontSize: "0.95rem", fontVariantNumeric: "tabular-nums" }}>{t("common.bhd")} {(row.estValue || 0).toLocaleString()}</div>
+                    <div style={{ color: p.accent, fontWeight: 700, fontSize: "0.95rem", fontVariantNumeric: "tabular-nums" }}>{formatCurrency(row.estValue || 0)}</div>
                   </td>
                   <td className="px-3 py-4">
                     <span style={stagePillStyle(row.status)}>

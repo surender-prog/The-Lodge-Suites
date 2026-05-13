@@ -3,7 +3,7 @@ import { ArrowDown, ArrowUp, Award, BedDouble, Calendar, Check, Copy, Crown, Edi
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween } from "../../../../utils/date.js";
-import { useData } from "../../../../data/store.jsx";
+import { useData, formatCurrency } from "../../../../data/store.jsx";
 import { Icon } from "../../../../components/Icon.jsx";
 import { Card, Drawer, FileUpload, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 import { WalletCardDrawer } from "./WalletCard.jsx";
@@ -166,7 +166,7 @@ export const Loyalty = ({ params, clearParams }) => {
       <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
         <Stat label="Total members" value={members.length} hint="active accounts" />
         <Stat label="Verified · KYC" value={`${verifiedPct}%`} hint={`${verifiedCount} of ${members.length} complete`} color={verifiedPct >= 80 ? p.success : p.warn} />
-        <Stat label="Outstanding points" value={totalPoints.toLocaleString()} hint={`= ${t("common.bhd")} ${equivalentBhd.toLocaleString()} liability`} color={p.warn} />
+        <Stat label="Outstanding points" value={totalPoints.toLocaleString()} hint={`= ${formatCurrency(equivalentBhd)} liability`} color={p.warn} />
         <Stat label="Free-night threshold" value={loyalty.freeNightAfterPts.toLocaleString()} hint="points required" />
         <Stat label={`Earn @ ${topTier?.name || "top tier"}`} value={`${topTier?.earnRate || 1}× pt/BHD`} color={p.accent} />
       </div>
@@ -278,8 +278,8 @@ export const Loyalty = ({ params, clearParams }) => {
               />
               <ImpactRow
                 label="Outstanding liability"
-                from={`${t("common.bhd")} ${equivalentBhd.toLocaleString()}`}
-                to={`${t("common.bhd")} ${newLiability.toLocaleString()}`}
+                from={formatCurrency(equivalentBhd)}
+                to={formatCurrency(newLiability)}
                 delta={newLiability - equivalentBhd}
                 deltaSuffix={t("common.bhd")}
                 deltaSuffixBefore
@@ -1291,12 +1291,12 @@ function BookOnBehalfDrawer({ member, onClose }) {
         <div className="lg:sticky lg:top-4 self-start">
           <Card title="Summary" padded={false}>
             <div className="p-5 space-y-2" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}>
-              <SummaryRow label={`Suite × ${nights} ${nights === 1 ? "night" : "nights"}`} value={`${t("common.bhd")} ${subtotal.toLocaleString()}`} />
+              <SummaryRow label={`Suite × ${nights} ${nights === 1 ? "night" : "nights"}`} value={formatCurrency(subtotal)} />
               <SummaryRow label="Avg nightly rate" value={`${t("common.bhd")} ${Math.round(avgRate)}`} muted />
-              {discountFromPoints > 0 && <SummaryRow label="Points redemption" value={`− ${t("common.bhd")} ${discountFromPoints.toLocaleString()}`} accent />}
+              {discountFromPoints > 0 && <SummaryRow label="Points redemption" value={`− ${formatCurrency(discountFromPoints)}`} accent />}
               <div className="pt-3 mt-3 flex justify-between items-baseline" style={{ borderTop: `1px solid ${p.border}` }}>
                 <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", color: p.textPrimary }}>Total</span>
-                <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.accent, fontWeight: 700 }}>{t("common.bhd")} {total.toLocaleString()}</span>
+                <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.accent, fontWeight: 700 }}>{formatCurrency(total)}</span>
               </div>
               <div className="flex justify-between mt-3 pt-3" style={{ color: p.success, fontSize: "0.78rem", borderTop: `1px solid ${p.border}` }}>
                 <span>Points earned (post-stay)</span>
@@ -1521,7 +1521,7 @@ function MemberProfileDrawer({ member, onClose, onEdit, onBook, onWallet }) {
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <Stat label="Points balance"   value={member.points.toLocaleString()} hint={`= ${t("common.bhd")} ${redeemable} redeemable`} color={p.accent} />
         <Stat label="Lifetime nights"  value={member.lifetimeNights || 0} hint={`${memberBookings.length} stay${memberBookings.length === 1 ? "" : "s"} on file`} color={p.success} />
-        <Stat label="Lifetime spend"   value={`${t("common.bhd")} ${totalSpend.toLocaleString()}`} hint={tier ? `Earn ${tier.earnRate}× pt/BHD` : ""} />
+        <Stat label="Lifetime spend"   value={formatCurrency(totalSpend)} hint={tier ? `Earn ${tier.earnRate}× pt/${t("common.bhd")}` : ""} />
         <Stat
           label="Status"
           value={inHouseCount > 0 ? "In-house" : upcomingCount > 0 ? `${upcomingCount} upcoming` : "—"}
@@ -1718,7 +1718,7 @@ function MemberProfileDrawer({ member, onClose, onEdit, onBook, onWallet }) {
                     </Td>
                     <Td muted>{fmtDate(b.checkIn)} → {fmtDate(b.checkOut)}</Td>
                     <Td align="end">{b.nights}</Td>
-                    <Td align="end" className="font-semibold">{t("common.bhd")} {(b.total || 0).toLocaleString()}</Td>
+                    <Td align="end" className="font-semibold">{formatCurrency(b.total || 0)}</Td>
                     <Td>
                       <span className="inline-flex items-center gap-1.5" style={{
                         fontSize: "0.6rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,

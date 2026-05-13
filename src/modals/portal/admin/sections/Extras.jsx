@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Edit2, Plus, Save, Trash2 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT } from "../../../../i18n/LanguageContext.jsx";
-import { priceLabelFor, useData } from "../../../../data/store.jsx";
+import { priceLabelFor, useData, formatCurrency } from "../../../../data/store.jsx";
 import { Icon } from "../../../../components/Icon.jsx";
 import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 
@@ -219,7 +219,7 @@ function ExtraEditor({ mode, draft, onChange, onClose, onSave }) {
           <div style={{ color: p.textMuted, fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>Preview · 2 guests, 3 nights</div>
           <div className="flex justify-between mt-2">
             <span style={{ color: p.textPrimary }}>{priceLabelFor(draft)}</span>
-            <span style={{ color: p.accent, fontWeight: 700 }}>= {t("common.bhd")} {previewTotal.toLocaleString()}</span>
+            <span style={{ color: p.accent, fontWeight: 700 }}>= {formatCurrency(previewTotal)}</span>
           </div>
         </div>
       </Card>

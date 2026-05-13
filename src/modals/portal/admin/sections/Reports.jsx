@@ -4,7 +4,7 @@ import {
   Download, ExternalLink, Printer, Receipt, RefreshCcw, TrendingDown, TrendingUp, Wrench, X,
 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
-import { MAINTENANCE_CATEGORIES, useData, applyTaxes } from "../../../../data/store.jsx";
+import { MAINTENANCE_CATEGORIES, useData, applyTaxes, formatCurrency } from "../../../../data/store.jsx";
 import {
   Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast,
   SelectField, Stat, TableShell, Td, Th,
@@ -379,18 +379,18 @@ function RevenueReport() {
 
       {/* Headline KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-        <Stat label="Room revenue" value={`BHD ${totals.roomRevenue.toFixed(0)}`} hint={`${totals.roomNights} room-nights`} color={p.accent} />
-        <Stat label="ADR"          value={`BHD ${totals.adr.toFixed(2)}`}        hint="Average daily rate" />
+        <Stat label="Room revenue" value={formatCurrency(totals.roomRevenue)} hint={`${totals.roomNights} room-nights`} color={p.accent} />
+        <Stat label="ADR"          value={formatCurrency(totals.adr)}        hint="Average daily rate" />
         <Stat label="Occupancy"    value={`${(totals.occupancy * 100).toFixed(1)}%`} hint={`${totals.roomNights} of ${TOTAL_INVENTORY * period.days} nights`} color={totals.occupancy >= 0.7 ? p.success : totals.occupancy >= 0.5 ? p.warn : p.textPrimary} />
-        <Stat label="RevPAR"       value={`BHD ${totals.revpar.toFixed(2)}`}     hint="Revenue / available room" />
+        <Stat label="RevPAR"       value={formatCurrency(totals.revpar)}     hint="Revenue / available room" />
       </div>
 
       {/* Cash KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-        <Stat label="Payments captured" value={`BHD ${paymentStats.captured.toFixed(0)}`} hint={`${paymentStats.count} txn · fees BHD ${paymentStats.fees.toFixed(2)}`} color={p.success} />
-        <Stat label="Refunds"            value={`BHD ${paymentStats.refunded.toFixed(0)}`} hint={paymentStats.refunded === 0 ? "None this period" : "Reversed payments"} color={paymentStats.refunded > 0 ? p.danger : p.textPrimary} />
-        <Stat label="Tax collected"      value={`BHD ${totals.taxCollected.toFixed(0)}`}   hint="Estimated from active tax model" />
-        <Stat label="Outstanding A/R"    value={`BHD ${receivables.total.toFixed(0)}`}     hint={`${receivables.count} open · ${receivables.overdue} overdue`} color={receivables.overdue > 0 ? p.danger : p.warn} />
+        <Stat label="Payments captured" value={formatCurrency(paymentStats.captured)} hint={`${paymentStats.count} txn · fees ${formatCurrency(paymentStats.fees)}`} color={p.success} />
+        <Stat label="Refunds"            value={formatCurrency(paymentStats.refunded)} hint={paymentStats.refunded === 0 ? "None this period" : "Reversed payments"} color={paymentStats.refunded > 0 ? p.danger : p.textPrimary} />
+        <Stat label="Tax collected"      value={formatCurrency(totals.taxCollected)}   hint="Estimated from active tax model" />
+        <Stat label="Outstanding A/R"    value={formatCurrency(receivables.total)}     hint={`${receivables.count} open · ${receivables.overdue} overdue`} color={receivables.overdue > 0 ? p.danger : p.warn} />
       </div>
 
       {/* Daily revenue trend + Source/Suite mix */}
@@ -402,7 +402,7 @@ function RevenueReport() {
                 const h = (t.revenue / peak) * 160;
                 return (
                   <div key={t.date} className="flex flex-col items-center" style={{ flex: 1, minWidth: 22 }}>
-                    <div title={`BHD ${t.revenue.toFixed(0)} · ${t.nights} nights`}
+                    <div title={`${formatCurrency(t.revenue)} · ${t.nights} nights`}
                       style={{ width: "100%", height: h || 1, backgroundColor: p.accent }} />
                     <div style={{
                       color: p.textMuted, fontSize: "0.6rem",
@@ -420,7 +420,7 @@ function RevenueReport() {
               })}
             </div>
             <div className="flex items-center gap-4 mt-4" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", color: p.textMuted }}>
-              <Legend color={p.accent} label="Recognised room revenue · BHD per day" />
+              <Legend color={p.accent} label="Recognised room revenue · per day" />
             </div>
           </div>
         </Card>
@@ -437,7 +437,7 @@ function RevenueReport() {
                   <div key={src}>
                     <div className="flex items-center justify-between mb-1" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem" }}>
                       <span style={{ color: p.textPrimary, fontWeight: 600 }}>{SOURCE_LABEL[src] || src}</span>
-                      <span style={{ color: p.textMuted }}>BHD {v.revenue.toFixed(0)} · {pct}%</span>
+                      <span style={{ color: p.textMuted }}>{formatCurrency(v.revenue)} · {pct}%</span>
                     </div>
                     <div className="h-1.5" style={{ backgroundColor: p.border }}>
                       <div className="h-full" style={{ width: `${pct}%`, backgroundColor: c }} />
@@ -476,8 +476,8 @@ function RevenueReport() {
                   <Td align="end" style={{ color: occ >= 0.7 ? p.success : occ >= 0.5 ? p.warn : p.textPrimary, fontWeight: 600 }}>
                     {(occ * 100).toFixed(1)}%
                   </Td>
-                  <Td align="end" style={{ color: p.accent, fontWeight: 600 }}>BHD {v.revenue.toFixed(0)}</Td>
-                  <Td align="end" muted>BHD {adr.toFixed(2)}</Td>
+                  <Td align="end" style={{ color: p.accent, fontWeight: 600 }}>{formatCurrency(v.revenue)}</Td>
+                  <Td align="end" muted>{formatCurrency(adr)}</Td>
                 </tr>
               );
             })}
@@ -638,10 +638,10 @@ function TaxReport() {
 
       {/* Headline KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-        <Stat label="Tax collected" value={`BHD ${totals.totalTax.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`} hint={`${totals.bookingCount} booking${totals.bookingCount === 1 ? "" : "s"}`} color={p.accent} />
-        <Stat label="Avg / booking" value={`BHD ${totals.avgPerBooking.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`} hint={totals.bookingCount > 0 ? "Per-booking mean" : "No bookings in window"} />
-        <Stat label="Taxable base"  value={`BHD ${totals.totalBase.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`} hint="Sum of pre-tax subtotals" />
-        <Stat label="Gross billed"  value={`BHD ${totals.totalGross.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`} hint="Sum of booking totals" />
+        <Stat label="Tax collected" value={formatCurrency(totals.totalTax)} hint={`${totals.bookingCount} booking${totals.bookingCount === 1 ? "" : "s"}`} color={p.accent} />
+        <Stat label="Avg / booking" value={formatCurrency(totals.avgPerBooking)} hint={totals.bookingCount > 0 ? "Per-booking mean" : "No bookings in window"} />
+        <Stat label="Taxable base"  value={formatCurrency(totals.totalBase)} hint="Sum of pre-tax subtotals" />
+        <Stat label="Gross billed"  value={formatCurrency(totals.totalGross)} hint="Sum of booking totals" />
       </div>
 
       {/* Per-component breakdown */}
@@ -666,13 +666,13 @@ function TaxReport() {
                 const share = totals.totalTax > 0 ? (c.total / totals.totalTax) * 100 : 0;
                 const rateLabel = c.type === "percentage"
                   ? (c.rate != null ? `${c.rate}%${c.calculation === "compound" ? " · compound" : ""}` : "—")
-                  : (c.amount != null ? `BHD ${c.amount} / night` : "—");
+                  : (c.amount != null ? `${formatCurrency(c.amount)} / night` : "—");
                 return (
                   <tr key={c.id}>
                     <Td>{c.name}</Td>
                     <Td muted>{c.type === "percentage" ? "Percentage" : c.type === "fixed" ? "Fixed" : c.type}</Td>
                     <Td>{rateLabel}</Td>
-                    <Td align="end" style={{ color: p.accent, fontWeight: 600 }}>BHD {c.total.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</Td>
+                    <Td align="end" style={{ color: p.accent, fontWeight: 600 }}>{formatCurrency(c.total)}</Td>
                     <Td align="end" muted>{share.toFixed(1)}%</Td>
                   </tr>
                 );
@@ -714,8 +714,8 @@ function TaxReport() {
                     <Td muted>{SOURCE_LABEL[b.source] || b.source}</Td>
                     <Td muted>{fmtShort(b.checkIn)}</Td>
                     <Td muted>{b.taxPatternName || "—"}</Td>
-                    <Td align="end">BHD {total.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 3 })}</Td>
-                    <Td align="end" style={{ color: p.accent, fontWeight: 600 }}>BHD {taxAmt.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</Td>
+                    <Td align="end">{formatCurrency(total)}</Td>
+                    <Td align="end" style={{ color: p.accent, fontWeight: 600 }}>{formatCurrency(taxAmt)}</Td>
                     <Td align="end">
                       <button
                         onClick={() => setDetailFor(b)}
@@ -817,14 +817,14 @@ function TaxBreakdownModal({ booking, onClose, p }) {
               {lines.map((line, i) => {
                 const rateLabel = line.type === "percentage"
                   ? `${line.rate}%${line.calculation === "compound" ? " · compound" : ""}`
-                  : `BHD ${line.amount} / night`;
+                  : `${formatCurrency(line.amount)} / night`;
                 return (
                   <div key={line.id || i} className="flex items-center justify-between">
                     <div>
                       <div style={{ color: p.textPrimary, fontWeight: 600 }}>{line.name}</div>
                       <div style={{ color: p.textMuted, fontSize: "0.7rem" }}>{rateLabel}</div>
                     </div>
-                    <div style={{ color: p.accent, fontWeight: 700 }}>BHD {Number(line.taxAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</div>
+                    <div style={{ color: p.accent, fontWeight: 700 }}>{formatCurrency(Number(line.taxAmount || 0))}</div>
                   </div>
                 );
               })}
@@ -832,7 +832,7 @@ function TaxBreakdownModal({ booking, onClose, p }) {
           )}
           <div className="flex items-center justify-between mt-4 pt-3" style={{ borderTop: `1px solid ${p.border}` }}>
             <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.15rem", color: p.textPrimary }}>Total tax</span>
-            <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: p.accent, fontWeight: 700 }}>BHD {total.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</span>
+            <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: p.accent, fontWeight: 700 }}>{formatCurrency(total)}</span>
           </div>
         </div>
       </div>
@@ -1071,7 +1071,7 @@ function AvailabilityReport() {
                   return (
                     <div
                       key={d.date}
-                      title={`${fmtFull(d.date)} · ${ROOM_LABEL[roomId]} · sold ${v.sold}/${v.units} (${(occ * 100).toFixed(0)}%)${v.stopSale ? " · STOP-SALE" : ""}${v.rate ? ` · rate BHD ${v.rate}` : ""}`}
+                      title={`${fmtFull(d.date)} · ${ROOM_LABEL[roomId]} · sold ${v.sold}/${v.units} (${(occ * 100).toFixed(0)}%)${v.stopSale ? " · STOP-SALE" : ""}${v.rate ? ` · rate ${formatCurrency(v.rate)}` : ""}`}
                       style={{
                         width: cellWidth, minWidth: cellWidth, height: 36,
                         backgroundColor: c.bg, color: c.fg,
@@ -1382,21 +1382,21 @@ function MaintenanceReport() {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
         <Stat
           label="Total spend"
-          value={`BHD ${totalSpend.toFixed(0)}`}
-          hint={`Parts BHD ${partsSpend.toFixed(0)} · Labor BHD ${laborSpend.toFixed(0)}`}
+          value={formatCurrency(totalSpend)}
+          hint={`Parts ${formatCurrency(partsSpend)} · Labor ${formatCurrency(laborSpend)}`}
           color={p.accent}
           ctaLabel="View jobs"
           onClick={() => setJobListScope({
             kind: "completed",
             eyebrow: `${period.label} · ${fmtShort(windowStart)} → ${fmtShort(windowEnd)}`,
-            title: `Completed jobs · BHD ${totalSpend.toFixed(0)} total`,
+            title: `Completed jobs · ${formatCurrency(totalSpend)} total`,
             sortBy: "cost",
           })}
         />
         <Stat
           label="Jobs completed"
           value={jobCount}
-          hint={jobCount > 0 ? `Avg cost BHD ${avgPerJob.toFixed(0)}` : "—"}
+          hint={jobCount > 0 ? `Avg cost ${formatCurrency(avgPerJob)}` : "—"}
           ctaLabel="View jobs"
           onClick={() => setJobListScope({
             kind: "completed",
@@ -1433,14 +1433,14 @@ function MaintenanceReport() {
         <Stat
           label="Top category"
           value={topCategory ? topCategory.label : "—"}
-          hint={topCategory ? `BHD ${topCategory.total.toFixed(0)} · ${topCategory.count} jobs` : "No spend"}
+          hint={topCategory ? `${formatCurrency(topCategory.total)} · ${topCategory.count} jobs` : "No spend"}
           color={topCategory ? topCategory.color : p.textMuted}
           ctaLabel={topCategory ? "View jobs" : undefined}
           onClick={topCategory ? () => setJobListScope({
             kind: "category",
             categoryId: topCategory.id,
             eyebrow: `${period.label} · ${fmtShort(windowStart)} → ${fmtShort(windowEnd)}`,
-            title: `${topCategory.label} jobs · BHD ${topCategory.total.toFixed(0)}`,
+            title: `${topCategory.label} jobs · ${formatCurrency(topCategory.total)}`,
             sortBy: "cost",
           }) : undefined}
         />
@@ -1459,7 +1459,7 @@ function MaintenanceReport() {
 
       {/* Spend trend + Category mix */}
       <div className="grid lg:grid-cols-3 gap-5 mb-5">
-        <Card title="Daily spend trend · BHD" className="lg:col-span-2">
+        <Card title="Daily spend trend" className="lg:col-span-2">
           <div className="overflow-x-auto">
             <div className="flex items-end gap-1.5" style={{ minHeight: 200 }}>
               {trend.map((t) => {
@@ -1468,8 +1468,8 @@ function MaintenanceReport() {
                 return (
                   <div key={t.date} className="flex flex-col items-center" style={{ flex: 1, minWidth: 22 }}>
                     <div className="flex flex-col-reverse" style={{ height: 160, justifyContent: "flex-end", width: "100%" }}>
-                      <div title={`Parts: BHD ${t.parts.toFixed(0)}`} style={{ width: "100%", height: partsH, backgroundColor: p.accent }} />
-                      <div title={`Labor: BHD ${t.labor.toFixed(0)}`} style={{ width: "100%", height: laborH, backgroundColor: p.accentDeep }} />
+                      <div title={`Parts: ${formatCurrency(t.parts)}`} style={{ width: "100%", height: partsH, backgroundColor: p.accent }} />
+                      <div title={`Labor: ${formatCurrency(t.labor)}`} style={{ width: "100%", height: laborH, backgroundColor: p.accentDeep }} />
                     </div>
                     <div style={{
                       color: p.textMuted, fontSize: "0.6rem",
@@ -1504,7 +1504,7 @@ function MaintenanceReport() {
                   <div key={c.id}>
                     <div className="flex items-center justify-between mb-1" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem" }}>
                       <span style={{ color: p.textPrimary, fontWeight: 600 }}>{c.label}</span>
-                      <span style={{ color: p.textMuted }}>BHD {c.total.toFixed(0)} · {pct}%</span>
+                      <span style={{ color: p.textMuted }}>{formatCurrency(c.total)} · {pct}%</span>
                     </div>
                     <div className="h-1.5" style={{ backgroundColor: p.border }}>
                       <div className="h-full" style={{ width: `${pct}%`, backgroundColor: c.color }} />
@@ -1567,8 +1567,8 @@ function MaintenanceReport() {
                     {v.id !== "—" && <div style={{ color: p.accent, fontSize: "0.66rem", marginTop: 2 }}>{v.id}</div>}
                   </Td>
                   <Td align="end">{v.count}</Td>
-                  <Td align="end" style={{ color: p.accent, fontWeight: 700 }}>BHD {v.total.toFixed(0)}</Td>
-                  <Td align="end" muted>BHD {avg.toFixed(0)}</Td>
+                  <Td align="end" style={{ color: p.accent, fontWeight: 700 }}>{formatCurrency(v.total)}</Td>
+                  <Td align="end" muted>{formatCurrency(avg)}</Td>
                   <Td align="end" muted>{pct}%</Td>
                 </tr>
               );
@@ -1695,10 +1695,10 @@ function MaintenanceReport() {
                       })}
                     </div>
                   </Td>
-                  <Td align="end" muted>BHD {r.parts.toFixed(0)}</Td>
-                  <Td align="end" muted>BHD {r.labor.toFixed(0)}</Td>
+                  <Td align="end" muted>{formatCurrency(r.parts)}</Td>
+                  <Td align="end" muted>{formatCurrency(r.labor)}</Td>
                   <Td align="end" style={{ color: p.accent, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-                    <div>BHD {r.total.toFixed(0)}</div>
+                    <div>{formatCurrency(r.total)}</div>
                     {pct > 0 && <div style={{ color: p.textMuted, fontSize: "0.7rem", fontWeight: 400, marginTop: 2 }}>{pct}% of total</div>}
                   </Td>
                   <Td muted>
@@ -1801,9 +1801,9 @@ function MaintenanceReport() {
                     }}>{MAINT_CAT_LABEL[j.category] || j.category}</span>
                   </Td>
                   <Td muted style={{ whiteSpace: "nowrap" }}>{j.vendorName || "—"}</Td>
-                  <Td align="end" muted>BHD {(j.productCost || 0).toFixed(0)}</Td>
-                  <Td align="end" muted>BHD {(j.laborCost || 0).toFixed(0)}</Td>
-                  <Td align="end" style={{ color: p.accent, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>BHD {(j.totalCost || 0).toFixed(0)}</Td>
+                  <Td align="end" muted>{formatCurrency(j.productCost || 0)}</Td>
+                  <Td align="end" muted>{formatCurrency(j.laborCost || 0)}</Td>
+                  <Td align="end" style={{ color: p.accent, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{formatCurrency(j.totalCost || 0)}</Td>
                 </tr>
               );
             })}
@@ -1964,7 +1964,7 @@ function RoomExpenseDrawer({ room, onClose }) {
       footer={
         <>
           <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem" }}>
-            {jobCount} {jobCount === 1 ? "job" : "jobs"} in window · all-time total <strong style={{ color: p.textPrimary }}>BHD {allTimeTotal.toFixed(0)}</strong>
+            {jobCount} {jobCount === 1 ? "job" : "jobs"} in window · all-time total <strong style={{ color: p.textPrimary }}>{formatCurrency(allTimeTotal)}</strong>
           </span>
           <div className="flex-1" />
           <GhostBtn small onClick={exportCsv}><Download size={11} /> Export CSV</GhostBtn>
@@ -2024,16 +2024,16 @@ function RoomExpenseDrawer({ room, onClose }) {
 
       {/* KPI strip */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
-        <Stat label="Total spend"    value={`BHD ${totalSpend.toFixed(0)}`} hint={`${sharePctOfAllTime}% of all-time spend`} color={p.accent} />
-        <Stat label="Parts"          value={`BHD ${partsSpend.toFixed(0)}`} hint="Products bought" />
-        <Stat label="Labor"          value={`BHD ${laborSpend.toFixed(0)}`} hint="Manpower hours" />
-        <Stat label="Jobs completed" value={jobCount}                       hint={jobCount > 0 ? `Avg BHD ${avgPerJob.toFixed(0)}/job` : "—"} />
-        <Stat label="All-time spend" value={`BHD ${allTimeTotal.toFixed(0)}`} hint={`${allRoomJobs.length} total job${allRoomJobs.length === 1 ? "" : "s"}`} />
+        <Stat label="Total spend"    value={formatCurrency(totalSpend)} hint={`${sharePctOfAllTime}% of all-time spend`} color={p.accent} />
+        <Stat label="Parts"          value={formatCurrency(partsSpend)} hint="Products bought" />
+        <Stat label="Labor"          value={formatCurrency(laborSpend)} hint="Manpower hours" />
+        <Stat label="Jobs completed" value={jobCount}                       hint={jobCount > 0 ? `Avg ${formatCurrency(avgPerJob)}/job` : "—"} />
+        <Stat label="All-time spend" value={formatCurrency(allTimeTotal)} hint={`${allRoomJobs.length} total job${allRoomJobs.length === 1 ? "" : "s"}`} />
       </div>
 
       {/* Trend + breakdowns */}
       <div className="grid lg:grid-cols-3 gap-5 mb-5">
-        <Card title="Spend timeline · BHD" className="lg:col-span-2">
+        <Card title="Spend timeline" className="lg:col-span-2">
           {trend.length === 0 ? (
             <div style={{ color: p.textMuted, fontSize: "0.84rem" }}>Pick a date range to see the spend timeline.</div>
           ) : (
@@ -2045,8 +2045,8 @@ function RoomExpenseDrawer({ room, onClose }) {
                   return (
                     <div key={t.date} className="flex flex-col items-center" style={{ flex: 1, minWidth: 18 }}>
                       <div className="flex flex-col-reverse" style={{ height: 160, justifyContent: "flex-end", width: "100%" }}>
-                        <div title={`Parts: BHD ${t.parts.toFixed(0)}`} style={{ width: "100%", height: partsH, backgroundColor: p.accent }} />
-                        <div title={`Labor: BHD ${t.labor.toFixed(0)}`} style={{ width: "100%", height: laborH, backgroundColor: p.accentDeep }} />
+                        <div title={`Parts: ${formatCurrency(t.parts)}`} style={{ width: "100%", height: partsH, backgroundColor: p.accent }} />
+                        <div title={`Labor: ${formatCurrency(t.labor)}`} style={{ width: "100%", height: laborH, backgroundColor: p.accentDeep }} />
                       </div>
                       {trend.length <= 31 && (
                         <div style={{
@@ -2080,7 +2080,7 @@ function RoomExpenseDrawer({ room, onClose }) {
                   <div key={c.id}>
                     <div className="flex items-center justify-between mb-1" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem" }}>
                       <span style={{ color: p.textPrimary, fontWeight: 600 }}>{MAINT_CAT_LABEL[c.id] || c.id}</span>
-                      <span style={{ color: p.textMuted }}>BHD {c.total.toFixed(0)} · {pct}%</span>
+                      <span style={{ color: p.textMuted }}>{formatCurrency(c.total)} · {pct}%</span>
                     </div>
                     <div className="h-1.5" style={{ backgroundColor: p.border }}>
                       <div className="h-full" style={{ width: `${pct}%`, backgroundColor: color }} />
@@ -2118,7 +2118,7 @@ function RoomExpenseDrawer({ room, onClose }) {
                       {v.id !== "—" && <div style={{ color: p.accent, fontSize: "0.66rem", marginTop: 2 }}>{v.id}</div>}
                     </Td>
                     <Td align="end">{v.count}</Td>
-                    <Td align="end" style={{ color: p.accent, fontWeight: 700 }}>BHD {v.total.toFixed(0)}</Td>
+                    <Td align="end" style={{ color: p.accent, fontWeight: 700 }}>{formatCurrency(v.total)}</Td>
                     <Td align="end" muted>{pct}%</Td>
                   </tr>
                 );
@@ -2171,9 +2171,9 @@ function RoomExpenseDrawer({ room, onClose }) {
                     }}>{MAINT_CAT_LABEL[j.category] || j.category}</span>
                   </Td>
                   <Td muted style={{ whiteSpace: "nowrap" }}>{j.vendorName || "—"}</Td>
-                  <Td align="end" muted>BHD {(j.productCost || 0).toFixed(0)}</Td>
-                  <Td align="end" muted>BHD {(j.laborCost || 0).toFixed(0)}</Td>
-                  <Td align="end" style={{ color: p.accent, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>BHD {(j.totalCost || 0).toFixed(0)}</Td>
+                  <Td align="end" muted>{formatCurrency(j.productCost || 0)}</Td>
+                  <Td align="end" muted>{formatCurrency(j.laborCost || 0)}</Td>
+                  <Td align="end" style={{ color: p.accent, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{formatCurrency(j.totalCost || 0)}</Td>
                 </tr>
               );
             })}
@@ -2347,7 +2347,7 @@ function VendorExpenseDrawer({ vendor, onClose }) {
       footer={
         <>
           <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem" }}>
-            {jobCount} {jobCount === 1 ? "job" : "jobs"} in window · all-time total <strong style={{ color: p.textPrimary }}>BHD {allTimeTotal.toFixed(0)}</strong>
+            {jobCount} {jobCount === 1 ? "job" : "jobs"} in window · all-time total <strong style={{ color: p.textPrimary }}>{formatCurrency(allTimeTotal)}</strong>
           </span>
           <div className="flex-1" />
           <GhostBtn small onClick={exportCsv}><Download size={11} /> Export CSV</GhostBtn>
@@ -2433,16 +2433,16 @@ function VendorExpenseDrawer({ vendor, onClose }) {
 
       {/* KPI strip */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
-        <Stat label="Total spend"    value={`BHD ${totalSpend.toFixed(0)}`} hint={`${sharePctOfAllTime}% of all-time spend`} color={p.accent} />
-        <Stat label="Parts billed"   value={`BHD ${partsSpend.toFixed(0)}`} hint="Products supplied" />
-        <Stat label="Labor billed"   value={`BHD ${laborSpend.toFixed(0)}`} hint="Manpower hours" />
-        <Stat label="Jobs completed" value={jobCount}                       hint={jobCount > 0 ? `Avg BHD ${avgPerJob.toFixed(0)}/job` : "—"} />
+        <Stat label="Total spend"    value={formatCurrency(totalSpend)} hint={`${sharePctOfAllTime}% of all-time spend`} color={p.accent} />
+        <Stat label="Parts billed"   value={formatCurrency(partsSpend)} hint="Products supplied" />
+        <Stat label="Labor billed"   value={formatCurrency(laborSpend)} hint="Manpower hours" />
+        <Stat label="Jobs completed" value={jobCount}                       hint={jobCount > 0 ? `Avg ${formatCurrency(avgPerJob)}/job` : "—"} />
         <Stat label="Avg resolution" value={avgResolution > 0 ? `${avgResolution.toFixed(1)} h` : "—"} hint="Reported → completed" />
       </div>
 
       {/* Trend + breakdowns */}
       <div className="grid lg:grid-cols-3 gap-5 mb-5">
-        <Card title="Spend timeline · BHD" className="lg:col-span-2">
+        <Card title="Spend timeline" className="lg:col-span-2">
           {trend.length === 0 ? (
             <div style={{ color: p.textMuted, fontSize: "0.84rem" }}>Pick a date range to see the spend timeline.</div>
           ) : (
@@ -2454,8 +2454,8 @@ function VendorExpenseDrawer({ vendor, onClose }) {
                   return (
                     <div key={t.date} className="flex flex-col items-center" style={{ flex: 1, minWidth: 18 }}>
                       <div className="flex flex-col-reverse" style={{ height: 160, justifyContent: "flex-end", width: "100%" }}>
-                        <div title={`Parts: BHD ${t.parts.toFixed(0)}`} style={{ width: "100%", height: partsH, backgroundColor: p.accent }} />
-                        <div title={`Labor: BHD ${t.labor.toFixed(0)}`} style={{ width: "100%", height: laborH, backgroundColor: p.accentDeep }} />
+                        <div title={`Parts: ${formatCurrency(t.parts)}`} style={{ width: "100%", height: partsH, backgroundColor: p.accent }} />
+                        <div title={`Labor: ${formatCurrency(t.labor)}`} style={{ width: "100%", height: laborH, backgroundColor: p.accentDeep }} />
                       </div>
                       {trend.length <= 31 && (
                         <div style={{
@@ -2489,7 +2489,7 @@ function VendorExpenseDrawer({ vendor, onClose }) {
                   <div key={c.id}>
                     <div className="flex items-center justify-between mb-1" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem" }}>
                       <span style={{ color: p.textPrimary, fontWeight: 600 }}>{MAINT_CAT_LABEL[c.id] || c.id}</span>
-                      <span style={{ color: p.textMuted }}>BHD {c.total.toFixed(0)} · {pct}%</span>
+                      <span style={{ color: p.textMuted }}>{formatCurrency(c.total)} · {pct}%</span>
                     </div>
                     <div className="h-1.5" style={{ backgroundColor: p.border }}>
                       <div className="h-full" style={{ width: `${pct}%`, backgroundColor: color }} />
@@ -2535,7 +2535,7 @@ function VendorExpenseDrawer({ vendor, onClose }) {
                     <Td muted>{ROOM_TYPE_LABEL[r.roomTypeId] || r.roomTypeId || "—"}</Td>
                     <Td align="end" muted>{r.floor != null ? `Floor ${r.floor}` : "—"}</Td>
                     <Td align="end">{r.count}</Td>
-                    <Td align="end" style={{ color: p.accent, fontWeight: 700 }}>BHD {r.total.toFixed(0)}</Td>
+                    <Td align="end" style={{ color: p.accent, fontWeight: 700 }}>{formatCurrency(r.total)}</Td>
                     <Td align="end" muted>{pct}%</Td>
                   </tr>
                 );
@@ -2591,9 +2591,9 @@ function VendorExpenseDrawer({ vendor, onClose }) {
                       whiteSpace: "nowrap",
                     }}>{MAINT_CAT_LABEL[j.category] || j.category}</span>
                   </Td>
-                  <Td align="end" muted>BHD {(j.productCost || 0).toFixed(0)}</Td>
-                  <Td align="end" muted>BHD {(j.laborCost || 0).toFixed(0)}</Td>
-                  <Td align="end" style={{ color: p.accent, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>BHD {(j.totalCost || 0).toFixed(0)}</Td>
+                  <Td align="end" muted>{formatCurrency(j.productCost || 0)}</Td>
+                  <Td align="end" muted>{formatCurrency(j.laborCost || 0)}</Td>
+                  <Td align="end" style={{ color: p.accent, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{formatCurrency(j.totalCost || 0)}</Td>
                 </tr>
               );
             })}
@@ -2729,8 +2729,8 @@ function JobListDrawer({ scope, inWindow, windowStart, windowEnd, onClose }) {
         <Stat label="Job count"     value={sorted.length} />
         {!isOpenScope && (
           <>
-            <Stat label="Total spend" value={`BHD ${total.toFixed(0)}`} hint={`Parts BHD ${partsTotal.toFixed(0)} · Labor BHD ${laborTotal.toFixed(0)}`} color={p.accent} />
-            <Stat label="Avg cost"    value={sorted.length > 0 ? `BHD ${(total / sorted.length).toFixed(0)}` : "—"} />
+            <Stat label="Total spend" value={formatCurrency(total)} hint={`Parts ${formatCurrency(partsTotal)} · Labor ${formatCurrency(laborTotal)}`} color={p.accent} />
+            <Stat label="Avg cost"    value={sorted.length > 0 ? formatCurrency(total / sorted.length) : "—"} />
             <Stat label="Avg resolution" value={avgRes > 0 ? `${avgRes.toFixed(1)}h` : "—"} hint="Reported → completed" />
           </>
         )}
@@ -2846,11 +2846,11 @@ function JobListDrawer({ scope, inWindow, windowStart, windowEnd, onClose }) {
                     </Td>
                   )}
                   <Td muted style={{ whiteSpace: "nowrap" }}>{j.vendorName || "—"}</Td>
-                  {!isOpenScope && <Td align="end" muted>BHD {(j.productCost || 0).toFixed(0)}</Td>}
-                  {!isOpenScope && <Td align="end" muted>BHD {(j.laborCost || 0).toFixed(0)}</Td>}
+                  {!isOpenScope && <Td align="end" muted>{formatCurrency(j.productCost || 0)}</Td>}
+                  {!isOpenScope && <Td align="end" muted>{formatCurrency(j.laborCost || 0)}</Td>}
                   {!isOpenScope && (
                     <Td align="end" style={{ color: p.accent, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-                      BHD {(j.totalCost || 0).toFixed(0)}
+                      {formatCurrency(j.totalCost || 0)}
                     </Td>
                   )}
                   <Td align="end" muted style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>

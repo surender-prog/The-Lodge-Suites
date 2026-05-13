@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import { ArrowRight, Banknote, CreditCard, Download, ExternalLink, Mail, Printer, RotateCcw, Smartphone, TrendingUp, X } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
-import { useData } from "../../../../data/store.jsx";
+import { useData, formatCurrency } from "../../../../data/store.jsx";
 import { Card, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th } from "../ui.jsx";
 import { BookingDocPreviewModal, downloadBookingDoc, emailBookingDoc, printBookingDoc } from "../BookingDocs.jsx";
 
@@ -71,10 +71,10 @@ export const Payments = ({ onNavigate }) => {
       />
 
       <div className="grid sm:grid-cols-4 gap-4 mb-6">
-        <Stat label="Captured" value={`${t("common.bhd")} ${totalCaptured.toLocaleString()}`} hint={`${payments.filter(p => p.status === "captured").length} transactions`} color={p.success} />
-        <Stat label="Refunded" value={`${t("common.bhd")} ${totalRefunded.toLocaleString()}`} color={p.warn} />
-        <Stat label="Net (after fees)" value={`${t("common.bhd")} ${(totalCaptured - totalFees - totalRefunded).toLocaleString()}`} color={p.accent} />
-        <Stat label="Processing fees" value={`${t("common.bhd")} ${totalFees.toLocaleString()}`} hint="card + Benefit Pay" />
+        <Stat label="Captured" value={formatCurrency(totalCaptured)} hint={`${payments.filter(p => p.status === "captured").length} transactions`} color={p.success} />
+        <Stat label="Refunded" value={formatCurrency(totalRefunded)} color={p.warn} />
+        <Stat label="Net (after fees)" value={formatCurrency(totalCaptured - totalFees - totalRefunded)} color={p.accent} />
+        <Stat label="Processing fees" value={formatCurrency(totalFees)} hint="card + Benefit Pay" />
       </div>
 
       <SettlementChart payments={payments} />
@@ -99,7 +99,7 @@ export const Payments = ({ onNavigate }) => {
                 <Ic size={22} style={{ color: p.accent, flexShrink: 0 }} />
                 <div className="min-w-0">
                   <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", color: p.textPrimary, fontWeight: 600 }}>{m.label}</div>
-                  <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>{count} txns · {t("common.bhd")} {sum.toLocaleString()}</div>
+                  <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>{count} txns · {formatCurrency(sum)}</div>
                 </div>
               </button>
             );
@@ -176,9 +176,9 @@ export const Payments = ({ onNavigate }) => {
                       {m?.label}
                     </span>
                   </Td>
-                  <Td align="end" className="font-semibold">{t("common.bhd")} {py.amount.toLocaleString()}</Td>
+                  <Td align="end" className="font-semibold">{formatCurrency(py.amount)}</Td>
                   <Td align="end" muted>{t("common.bhd")} {py.fee}</Td>
-                  <Td align="end" style={{ color: p.success, fontWeight: 600 }}>{t("common.bhd")} {py.net.toLocaleString()}</Td>
+                  <Td align="end" style={{ color: p.success, fontWeight: 600 }}>{formatCurrency(py.net)}</Td>
                   <Td muted>{fmtTs(py.ts)}</Td>
                   <Td>
                     <span style={{
@@ -240,7 +240,7 @@ function PaymentDetailDrawer({
 
   const refund = () => {
     if (isRefunded) return;
-    if (!confirm(`Refund ${payment.id} for ${t("common.bhd")} ${payment.amount.toLocaleString()}? This cannot be undone.`)) return;
+    if (!confirm(`Refund ${payment.id} for ${formatCurrency(payment.amount)}? This cannot be undone.`)) return;
     try {
       updatePayment?.(payment.id, { status: "refunded" });
       appendAuditLog?.({
@@ -249,7 +249,7 @@ function PaymentDetailDrawer({
         actorName: staffSession?.name || "Staff",
         action: "payment.refund",
         target: { kind: "payment", id: payment.id },
-        note: `Refunded ${payment.id} (${t("common.bhd")} ${payment.amount.toLocaleString()})`,
+        note: `Refunded ${payment.id} (${formatCurrency(payment.amount)})`,
       });
       pushToast({ message: `${payment.id} refunded` });
     } catch (_) {
@@ -274,7 +274,7 @@ function PaymentDetailDrawer({
           </div>
           <div className="flex items-center gap-3 mt-1">
             <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.55rem", fontStyle: "italic", color: p.textPrimary, lineHeight: 1.1 }}>
-              {t("common.bhd")} {payment.amount.toLocaleString()}
+              {formatCurrency(payment.amount)}
             </span>
             <span style={{
               fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.18em", textTransform: "uppercase",
@@ -321,9 +321,9 @@ function PaymentDetailDrawer({
 
             <Card title="Amounts">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <Stat label="Gross"           value={`${t("common.bhd")} ${payment.amount.toLocaleString()}`} />
-                <Stat label="Processing fee"  value={`${t("common.bhd")} ${(payment.fee || 0).toLocaleString()}`} color={p.warn} />
-                <Stat label="Net to property" value={`${t("common.bhd")} ${(payment.net || payment.amount).toLocaleString()}`} color={p.success} />
+                <Stat label="Gross"           value={formatCurrency(payment.amount)} />
+                <Stat label="Processing fee"  value={formatCurrency(payment.fee || 0)} color={p.warn} />
+                <Stat label="Net to property" value={formatCurrency(payment.net || payment.amount)} color={p.success} />
               </div>
             </Card>
 
@@ -348,8 +348,8 @@ function PaymentDetailDrawer({
                   <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem" }}>
                     <DetailRow p={p} label="Stay" value={`${booking.checkIn} → ${booking.checkOut} · ${booking.nights || "?"}n`} />
                     <DetailRow p={p} label="Suite" value={(rooms.find((r) => r.id === booking.roomId)?.id || booking.roomId)} />
-                    <DetailRow p={p} label="Total" value={`${t("common.bhd")} ${(booking.total || 0).toLocaleString()}`} />
-                    <DetailRow p={p} label="Paid"  value={`${t("common.bhd")} ${(booking.paid || 0).toLocaleString()}`} />
+                    <DetailRow p={p} label="Total" value={formatCurrency(booking.total || 0)} />
+                    <DetailRow p={p} label="Paid"  value={formatCurrency(booking.paid || 0)} />
                   </div>
                   <div className="mt-4">
                     <PrimaryBtn onClick={() => onOpenBooking(booking.id)} small>
@@ -478,7 +478,7 @@ function SettlementChart({ payments }) {
       action={
         <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem" }}>
           <TrendingUp size={11} className="inline mr-1.5" style={{ color: p.success }} />
-          {t("common.bhd")} {total.toLocaleString()} captured
+          {formatCurrency(total)} captured
         </span>
       }
     >
@@ -490,7 +490,7 @@ function SettlementChart({ payments }) {
             const refundH = b.refunded > 0 ? Math.max(2, Math.round((b.refunded / max) * CHART_H)) : 0;
             const isToday = b.date.toDateString() === new Date().toDateString();
             return (
-              <div key={i} className="flex flex-col items-center gap-1.5" title={`${dayLabel(b.date)} · ${t("common.bhd")} ${b.captured.toLocaleString()}`}>
+              <div key={i} className="flex flex-col items-center gap-1.5" title={`${dayLabel(b.date)} · ${formatCurrency(b.captured)}`}>
                 <div className="w-full flex flex-col gap-0.5" style={{ height: CHART_H, justifyContent: "flex-end" }}>
                   {refundH > 0 && (
                     <div style={{ height: refundH, backgroundColor: p.danger, opacity: 0.8 }} />

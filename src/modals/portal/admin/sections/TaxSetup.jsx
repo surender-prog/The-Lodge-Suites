@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import { AlertCircle, ArrowDown, ArrowUp, BookmarkPlus, Check, ChevronDown, Edit2, Plus, Save, Trash2, Zap } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT } from "../../../../i18n/LanguageContext.jsx";
-import { applyTaxes, useData } from "../../../../data/store.jsx";
+import { applyTaxes, useData, formatCurrency } from "../../../../data/store.jsx";
 import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 
 const APPLIES_TO_LABEL = { all: "All charges", room: "Room rate only", extras: "Extras only" };
@@ -116,13 +116,13 @@ export const TaxSetup = () => {
                 <Row
                   key={line.id}
                   label={<>+ {line.name} <span style={{ color: p.textMuted, fontSize: "0.74rem" }}>· {note}</span></>}
-                  value={`${t("common.bhd")} ${line.taxAmount.toFixed(3)}`}
+                  value={formatCurrency(line.taxAmount)}
                 />
               );
             })}
             <div className="pt-3 mt-3 flex justify-between items-baseline" style={{ borderTop: `2px solid ${p.border}` }}>
               <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", color: p.textPrimary }}>Gross at checkout</span>
-              <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.accent, fontWeight: 600 }}>{t("common.bhd")} {sampleResult.gross.toFixed(3)}</span>
+              <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.accent, fontWeight: 600 }}>{formatCurrency(sampleResult.gross)}</span>
             </div>
             <p className="mt-4" style={{ color: p.textMuted, fontSize: "0.75rem", lineHeight: 1.6 }}>
               Compound percentage rates apply to (net + previous taxes). Straight percentage rates apply to the net only.
@@ -514,12 +514,12 @@ function PatternEditor({ mode, initial, onClose, onSave, isActive }) {
           {preview.lines.map((line) => {
             const note = line.type === "percentage" ? `${line.rate}%${line.calculation === "compound" ? " · compound" : ""}` : `${t("common.bhd")} ${line.amount}`;
             return (
-              <Row key={line.id} label={<>+ {line.name} <span style={{ color: p.textMuted, fontSize: "0.74rem" }}>· {note}</span></>} value={`${t("common.bhd")} ${line.taxAmount.toFixed(3)}`} />
+              <Row key={line.id} label={<>+ {line.name} <span style={{ color: p.textMuted, fontSize: "0.74rem" }}>· {note}</span></>} value={formatCurrency(line.taxAmount)} />
             );
           })}
           <div className="pt-3 mt-3 flex justify-between items-baseline" style={{ borderTop: `2px solid ${p.border}` }}>
             <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", color: p.textPrimary }}>Gross at checkout</span>
-            <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.accent, fontWeight: 600 }}>{t("common.bhd")} {preview.gross.toFixed(3)}</span>
+            <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.accent, fontWeight: 600 }}>{formatCurrency(preview.gross)}</span>
           </div>
           <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 8 }}>
             Combined {totalPct}% on percentage components.
@@ -579,7 +579,7 @@ function RoomPreview() {
                   <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>{r.sqm} m² · sleeps {r.occupancy}</div>
                 </Td>
                 <Td align="end">{t("common.bhd")} {r.price}</Td>
-                <Td align="end" muted>+ {t("common.bhd")} {taxComponent.toFixed(3)}</Td>
+                <Td align="end" muted>+ {formatCurrency(taxComponent)}</Td>
                 <Td align="end" className="font-semibold" style={{ color: p.accent, fontWeight: 700 }}>{t("common.bhd")} {Math.round(oneNight)}</Td>
                 <Td align="end">{t("common.bhd")} {Math.round(grossOf(r.price, 3))}</Td>
                 <Td align="end">{t("common.bhd")} {Math.round(grossOf(r.price, 7))}</Td>

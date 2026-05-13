@@ -3,7 +3,7 @@ import { ArrowRight, Bell, CheckCircle2, CreditCard, Download, ExternalLink, Fil
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate, inDays } from "../../../../utils/date.js";
-import { applyTaxes, inverseApplyTaxes, useData } from "../../../../data/store.jsx";
+import { applyTaxes, inverseApplyTaxes, useData, formatCurrency } from "../../../../data/store.jsx";
 import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 
 const STATUS_LABEL = { paid: "Paid", issued: "Issued", overdue: "Overdue", void: "Void" };
@@ -108,9 +108,9 @@ export const Invoices = ({ onNavigate }) => {
       />
 
       <div className="grid sm:grid-cols-4 gap-4 mb-6">
-        <Stat label="Issued (YTD)" value={`${t("common.bhd")} ${totals.amount.toLocaleString()}`} hint={`${invoices.length} invoices`} />
-        <Stat label="Collected" value={`${t("common.bhd")} ${totals.paid.toLocaleString()}`} hint={`${Math.round(totals.paid / Math.max(1, totals.amount) * 100)}%`} color={p.success} />
-        <Stat label="Outstanding" value={`${t("common.bhd")} ${totals.outstanding.toLocaleString()}`} color={p.warn} />
+        <Stat label="Issued (YTD)" value={formatCurrency(totals.amount)} hint={`${invoices.length} invoices`} />
+        <Stat label="Collected" value={formatCurrency(totals.paid)} hint={`${Math.round(totals.paid / Math.max(1, totals.amount) * 100)}%`} color={p.success} />
+        <Stat label="Outstanding" value={formatCurrency(totals.outstanding)} color={p.warn} />
         <Stat label="Awaiting invoice" value={unbilled.length} hint={unbilled.length > 0 ? "Bookings · click + Generate" : "All caught up"} color={unbilled.length > 0 ? p.warn : p.success} />
       </div>
 
@@ -227,9 +227,9 @@ export const Invoices = ({ onNavigate }) => {
                   </Td>
                   <Td muted>{fmtDate(iv.issued, lang)}</Td>
                   <Td muted>{fmtDate(iv.due, lang)}</Td>
-                  <Td align="end" className="font-semibold">{t("common.bhd")} {iv.amount.toLocaleString()}</Td>
-                  <Td align="end">{t("common.bhd")} {iv.paid.toLocaleString()}</Td>
-                  <Td align="end" style={{ color: balance > 0 ? p.warn : p.success, fontWeight: 600 }}>{t("common.bhd")} {balance.toLocaleString()}</Td>
+                  <Td align="end" className="font-semibold">{formatCurrency(iv.amount)}</Td>
+                  <Td align="end">{formatCurrency(iv.paid)}</Td>
+                  <Td align="end" style={{ color: balance > 0 ? p.warn : p.success, fontWeight: 600 }}>{formatCurrency(balance)}</Td>
                   <Td>
                     <span style={{
                       fontSize: "0.6rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
@@ -312,7 +312,7 @@ function AgingCard({ aging }) {
                 <span style={{ color: p.textMuted, fontSize: "0.7rem", fontVariantNumeric: "tabular-nums" }}>{pct}%</span>
               </div>
               <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.5rem", color: value > 0 ? b.color : p.textMuted, fontWeight: 500, lineHeight: 1.1, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
-                {t("common.bhd")} {value.toLocaleString()}
+                {formatCurrency(value)}
               </div>
               <div className="mt-2 h-1" style={{ backgroundColor: p.border }}>
                 <div className="h-full" style={{ width: `${pct}%`, backgroundColor: b.color }} />
@@ -417,7 +417,7 @@ function InvoiceGenerator({ preset, onClose, unbilled }) {
                       </td>
                       <td className="px-3 py-3" style={{ color: p.textMuted }}>{t(`rooms.${b.roomId}.name`)}</td>
                       <td className="px-3 py-3" style={{ color: p.textMuted, whiteSpace: "nowrap" }}>{fmtDate(b.checkIn, lang)} → {fmtDate(b.checkOut, lang)}</td>
-                      <td className="px-3 py-3 text-end" style={{ fontWeight: 600 }}>{t("common.bhd")} {b.total.toLocaleString()}</td>
+                      <td className="px-3 py-3 text-end" style={{ fontWeight: 600 }}>{formatCurrency(b.total)}</td>
                       <td className="px-5 py-3 text-end">
                         <span style={{ color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
                           Pick →
@@ -534,7 +534,7 @@ function InvoiceDetailsStep({ booking, onClose, onBack }) {
         </div>
         <div className="text-end">
           <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>Booking value</div>
-          <div style={{ color: p.accent, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", fontWeight: 600 }}>{t("common.bhd")} {booking.total.toLocaleString()}</div>
+          <div style={{ color: p.accent, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", fontWeight: 600 }}>{formatCurrency(booking.total)}</div>
         </div>
       </div>
 
@@ -631,21 +631,21 @@ function InvoiceDetailsStep({ booking, onClose, onBack }) {
         <div className="lg:sticky lg:top-4 self-start">
           <Card title="Folio preview" padded={false}>
             <div className="p-5 space-y-2" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.85rem" }}>
-              <SummaryRow label={`Room × ${booking.nights} nights @ ${t("common.bhd")} ${booking.rate}`} value={`${t("common.bhd")} ${subtotal.toLocaleString()}`} />
+              <SummaryRow label={`Room × ${booking.nights} nights @ ${formatCurrency(booking.rate)}`} value={formatCurrency(subtotal)} />
               {draft.extras.filter(e => e.name).map((e) => (
-                <SummaryRow key={e.id} label={e.name || "Extra"} value={`${t("common.bhd")} ${(Number(e.amount) || 0).toLocaleString()}`} />
+                <SummaryRow key={e.id} label={e.name || "Extra"} value={formatCurrency(Number(e.amount) || 0)} />
               ))}
               {extrasTotal > 0 && <div style={{ height: 1, backgroundColor: p.border, margin: "6px 0" }} />}
-              <SummaryRow label="Subtotal" value={`${t("common.bhd")} ${(subtotal + extrasTotal).toLocaleString()}`} />
+              <SummaryRow label="Subtotal" value={formatCurrency(subtotal + extrasTotal)} />
               {taxResult.lines.map((line) => {
                 const note = line.type === "percentage" ? `${line.rate}%${line.calculation === "compound" ? " · compound" : ""}` : `${t("common.bhd")} ${line.amount}`;
                 return (
-                  <SummaryRow key={line.id} label={`+ ${line.name} · ${note}`} value={`${t("common.bhd")} ${line.taxAmount.toFixed(3)}`} muted />
+                  <SummaryRow key={line.id} label={`+ ${line.name} · ${note}`} value={formatCurrency(line.taxAmount)} muted />
                 );
               })}
               <div className="pt-3 mt-3 flex justify-between items-baseline" style={{ borderTop: `2px solid ${p.border}` }}>
                 <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.15rem", color: p.textPrimary }}>Total</span>
-                <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.6rem", color: p.accent, fontWeight: 700 }}>{t("common.bhd")} {total.toLocaleString()}</span>
+                <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.6rem", color: p.accent, fontWeight: 700 }}>{formatCurrency(total)}</span>
               </div>
             </div>
           </Card>
@@ -691,7 +691,7 @@ function MarkPaidDrawer({ invoice, onClose }) {
       method: draft.method,
       amount: amt,
     });
-    pushToast({ message: `${t("common.bhd")} ${amt.toLocaleString()} · ${invoice.id} ${newStatus === "paid" ? "settled" : "partial payment"}` });
+    pushToast({ message: `${formatCurrency(amt)} · ${invoice.id} ${newStatus === "paid" ? "settled" : "partial payment"}` });
     onClose();
   };
 
@@ -711,7 +711,7 @@ function MarkPaidDrawer({ invoice, onClose }) {
       <div className="space-y-4">
         <div className="p-3" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
           <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>Outstanding</div>
-          <div style={{ color: p.warn, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", fontWeight: 600 }}>{t("common.bhd")} {balance.toLocaleString()}</div>
+          <div style={{ color: p.warn, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", fontWeight: 600 }}>{formatCurrency(balance)}</div>
           <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 2 }}>{invoice.clientName}</div>
         </div>
         <FormGroup label="Amount received">
@@ -769,9 +769,9 @@ function InvoiceDetail({ invoice, onClose, onMarkPaid, onOpenBooking }) {
       }
     >
       <div className="grid sm:grid-cols-3 gap-4 mb-6">
-        <Stat label="Amount" value={`${t("common.bhd")} ${invoice.amount.toLocaleString()}`} />
-        <Stat label="Collected" value={`${t("common.bhd")} ${invoice.paid.toLocaleString()}`} color={p.success} />
-        <Stat label="Balance" value={`${t("common.bhd")} ${balance.toLocaleString()}`} color={balance > 0 ? p.warn : p.success} hint={balance > 0 ? "Outstanding" : "Settled"} />
+        <Stat label="Amount" value={formatCurrency(invoice.amount)} />
+        <Stat label="Collected" value={formatCurrency(invoice.paid)} color={p.success} />
+        <Stat label="Balance" value={formatCurrency(balance)} color={balance > 0 ? p.warn : p.success} hint={balance > 0 ? "Outstanding" : "Settled"} />
       </div>
 
       <Card title="Folio breakdown" padded={false}>
@@ -779,7 +779,7 @@ function InvoiceDetail({ invoice, onClose, onMarkPaid, onOpenBooking }) {
           <tbody>
             <tr style={{ borderBottom: `1px solid ${p.border}` }}>
               <td className="px-5 py-3" style={{ color: p.textMuted }}>Room charges (subtotal)</td>
-              <td className="px-5 py-3 text-end" style={{ fontVariantNumeric: "tabular-nums" }}>{t("common.bhd")} {subtotal.toLocaleString()}</td>
+              <td className="px-5 py-3 text-end" style={{ fontVariantNumeric: "tabular-nums" }}>{formatCurrency(subtotal)}</td>
             </tr>
             {breakdown.lines.map((line) => {
               const note = line.type === "percentage"
@@ -788,13 +788,13 @@ function InvoiceDetail({ invoice, onClose, onMarkPaid, onOpenBooking }) {
               return (
                 <tr key={line.id} style={{ borderBottom: `1px solid ${p.border}` }}>
                   <td className="px-5 py-3" style={{ color: p.textMuted }}>{line.name} <span style={{ color: p.textDim, fontSize: "0.74rem" }}>· {note}</span></td>
-                  <td className="px-5 py-3 text-end" style={{ fontVariantNumeric: "tabular-nums" }}>{t("common.bhd")} {line.taxAmount.toLocaleString()}</td>
+                  <td className="px-5 py-3 text-end" style={{ fontVariantNumeric: "tabular-nums" }}>{formatCurrency(line.taxAmount)}</td>
                 </tr>
               );
             })}
             <tr>
               <td className="px-5 py-3" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.15rem", color: p.textPrimary, fontWeight: 600 }}>Total invoiced</td>
-              <td className="px-5 py-3 text-end" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.5rem", color: p.accent, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{t("common.bhd")} {invoice.amount.toLocaleString()}</td>
+              <td className="px-5 py-3 text-end" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.5rem", color: p.accent, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{formatCurrency(invoice.amount)}</td>
             </tr>
           </tbody>
         </table>
@@ -832,7 +832,7 @@ function InvoiceDetail({ invoice, onClose, onMarkPaid, onOpenBooking }) {
       <Card title="Activity" className="mt-6">
         <ul className="space-y-2.5" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.82rem" }}>
           <Activity color={p.accent}  text={`${(invoice.kind || "booking") === "commission" ? "Commission invoice issued" : "Issued"} on ${fmtDate(invoice.issued, lang)}`} />
-          {invoice.paid > 0 && <Activity color={p.success} text={`Payment received · ${t("common.bhd")} ${invoice.paid.toLocaleString()}`} />}
+          {invoice.paid > 0 && <Activity color={p.success} text={`Payment received · ${formatCurrency(invoice.paid)}`} />}
           {invoice.status === "overdue" && <Activity color={p.danger}  text={`Marked overdue (due ${fmtDate(invoice.due, lang)})`} />}
         </ul>
       </Card>

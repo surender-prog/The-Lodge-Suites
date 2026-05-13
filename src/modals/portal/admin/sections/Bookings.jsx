@@ -3,7 +3,7 @@ import { Ban, Briefcase, Building2, Calculator, CalendarCheck, Check, CheckCircl
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween } from "../../../../utils/date.js";
-import { useData, applyTaxes, roomFitsParty, canViewCardOnFile, maskCardNumber, cardOnFileExpired, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, describePackageConditions, packagePriceSuffix, getPackageRoomPrice } from "../../../../data/store.jsx";
+import { useData, applyTaxes, roomFitsParty, canViewCardOnFile, maskCardNumber, cardOnFileExpired, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, describePackageConditions, packagePriceSuffix, getPackageRoomPrice, formatCurrency } from "../../../../data/store.jsx";
 import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 import { BookingDocPreviewModal, emailBookingDoc, printBookingDoc } from "../BookingDocs.jsx";
 
@@ -217,14 +217,14 @@ export const Bookings = ({ onNavigate, params, clearParams }) => {
         />
         <Stat
           label="Filtered value"
-          value={`${t("common.bhd")} ${totalValue.toLocaleString()}`}
+          value={formatCurrency(totalValue)}
           hint={`${filtered.length} bookings`}
           ctaLabel="View list"
           onClick={() => scrollToTable()}
         />
         <Stat
           label="Filtered paid"
-          value={`${t("common.bhd")} ${totalPaid.toLocaleString()}`}
+          value={formatCurrency(totalPaid)}
           hint={`${Math.round(totalPaid / Math.max(1, totalValue) * 100)}% collected`}
           color={p.accent}
           ctaLabel="View paid"
@@ -354,7 +354,7 @@ export const Bookings = ({ onNavigate, params, clearParams }) => {
                 <Td>{t(`rooms.${b.roomId}.name`)}</Td>
                 <Td muted>{fmtDate(b.checkIn, lang)} → {fmtDate(b.checkOut, lang)}</Td>
                 <Td align="end">{b.nights}</Td>
-                <Td align="end" className="font-semibold">{t("common.bhd")} {b.total.toLocaleString()}</Td>
+                <Td align="end" className="font-semibold">{formatCurrency(b.total)}</Td>
                 <Td>
                   {/* Distinguish "Pay-now, card captured, awaiting the
                       operator's Mark-as-charged" from a plain pending
@@ -1113,19 +1113,19 @@ function BookingCreator({ onClose }) {
             <div className="p-5 space-y-2" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}>
               <SummaryRow label="Source" value={SOURCE_LABEL[source] || source} />
               <SummaryRow label="Client" value={finalGuest || "—"} muted />
-              <SummaryRow label={`Suite × ${nights} ${nights === 1 ? "night" : "nights"}`} value={`${t("common.bhd")} ${subtotal.toLocaleString()}`} />
+              <SummaryRow label={`Suite × ${nights} ${nights === 1 ? "night" : "nights"}`} value={formatCurrency(subtotal)} />
               <SummaryRow label="Avg rate" value={`${t("common.bhd")} ${Math.round(avgRate)}`} muted />
-              {memberDiscount  > 0 && <SummaryRow label="Member tier discount" value={`− ${t("common.bhd")} ${memberDiscount.toLocaleString()}`} accent />}
-              {pointsDiscount  > 0 && <SummaryRow label="Points redemption" value={`− ${t("common.bhd")} ${pointsDiscount.toLocaleString()}`} accent />}
-              {payNowDiscount  > 0 && <SummaryRow label={`Pay-now · ${PAY_NOW_DISCOUNT_PCT}% off`} value={`− ${t("common.bhd")} ${payNowDiscount.toLocaleString()}`} accent />}
+              {memberDiscount  > 0 && <SummaryRow label="Member tier discount" value={`− ${formatCurrency(memberDiscount)}`} accent />}
+              {pointsDiscount  > 0 && <SummaryRow label="Points redemption" value={`− ${formatCurrency(pointsDiscount)}`} accent />}
+              {payNowDiscount  > 0 && <SummaryRow label={`Pay-now · ${PAY_NOW_DISCOUNT_PCT}% off`} value={`− ${formatCurrency(payNowDiscount)}`} accent />}
               <div className="pt-3 mt-3 flex justify-between items-baseline" style={{ borderTop: `1px solid ${p.border}` }}>
                 <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", color: p.textPrimary }}>Guest total</span>
-                <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.accent, fontWeight: 700 }}>{t("common.bhd")} {total.toLocaleString()}</span>
+                <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.accent, fontWeight: 700 }}>{formatCurrency(total)}</span>
               </div>
               {agentCommission > 0 && (
                 <div className="flex justify-between mt-3 pt-3" style={{ color: p.warn, fontSize: "0.78rem", borderTop: `1px solid ${p.border}` }}>
                   <span>Commission to agency ({client?.commissionPct}%)</span>
-                  <span style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>− {t("common.bhd")} {agentCommission.toLocaleString()}</span>
+                  <span style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>− {formatCurrency(agentCommission)}</span>
                 </div>
               )}
             </div>
@@ -1331,7 +1331,7 @@ function BookingEditor({ booking, onClose }) {
       taxPatternId: activePatternId || draft.taxPatternId || null,
       taxPatternName: activePattern?.name || draft.taxPatternName || null,
     });
-    pushToast({ message: `Total recalculated · ${t("common.bhd")} ${liveTotal.toLocaleString()} · tax ${t("common.bhd")} ${liveTaxAmount.toLocaleString()}` });
+    pushToast({ message: `Total recalculated · ${formatCurrency(liveTotal)} · tax ${formatCurrency(liveTaxAmount)}` });
   };
 
   const removeExtra = (idx) => {
@@ -1614,14 +1614,14 @@ function BookingEditor({ booking, onClose }) {
                     Rate breakdown
                   </div>
                   <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", lineHeight: 1.55 }}>
-                    {draft.weekdayNights} weekday × {t("common.bhd")} {Number(draft.rateWeekday || 0).toLocaleString()}
+                    {draft.weekdayNights} weekday × {formatCurrency(Number(draft.rateWeekday || 0))}
                     {" + "}
-                    {draft.weekendNights} weekend × {t("common.bhd")} {Number(draft.rateWeekend || 0).toLocaleString()}
+                    {draft.weekendNights} weekend × {formatCurrency(Number(draft.rateWeekend || 0))}
                   </div>
                 </div>
               )}
               <FormGroup label="Subtotal (auto)">
-                <ReadOnlyField p={p} value={`${t("common.bhd")} ${subtotal.toLocaleString()}`} hint={`${draft.rate || 0} × ${nights} ${nights === 1 ? "night" : "nights"}`} />
+                <ReadOnlyField p={p} value={formatCurrency(subtotal)} hint={`${draft.rate || 0} × ${nights} ${nights === 1 ? "night" : "nights"}`} />
               </FormGroup>
               <FormGroup label="Total (BHD)">
                 <TextField type="number" value={draft.total} onChange={(v) => update({ total: Number(v) || 0 })} suffix="BHD" />
@@ -1630,17 +1630,17 @@ function BookingEditor({ booking, onClose }) {
                 <TextField type="number" value={draft.paid} onChange={(v) => update({ paid: Number(v) || 0 })} suffix="BHD" />
               </FormGroup>
               <FormGroup label="Balance (auto)">
-                <ReadOnlyField p={p} value={`${t("common.bhd")} ${balance.toLocaleString()}`} valueColor={balance > 0 ? p.warn : p.success} hint={balance > 0 ? "Outstanding" : "Settled"} />
+                <ReadOnlyField p={p} value={formatCurrency(balance)} valueColor={balance > 0 ? p.warn : p.success} hint={balance > 0 ? "Outstanding" : "Settled"} />
               </FormGroup>
               {extrasTotal > 0 && (
                 <FormGroup label="Extras subtotal">
-                  <ReadOnlyField p={p} value={`${t("common.bhd")} ${extrasTotal.toLocaleString()}`} hint={`${extrasList.length} item${extrasList.length === 1 ? "" : "s"}`} />
+                  <ReadOnlyField p={p} value={formatCurrency(extrasTotal)} hint={`${extrasList.length} item${extrasList.length === 1 ? "" : "s"}`} />
                 </FormGroup>
               )}
               <FormGroup label="Tax (BHD)">
                 <ReadOnlyField
                   p={p}
-                  value={`${t("common.bhd")} ${taxAmount.toLocaleString()}`}
+                  value={formatCurrency(taxAmount)}
                   hint={hasStoredBreakdown
                     ? (storedTaxLines && storedTaxLines.length > 0
                         ? `${storedTaxLines.length} component${storedTaxLines.length === 1 ? "" : "s"} · ${draft.taxPatternName || "stored"}`
@@ -1651,7 +1651,7 @@ function BookingEditor({ booking, onClose }) {
               <FormGroup label="Live tax (Recalc)">
                 <ReadOnlyField
                   p={p}
-                  value={`${t("common.bhd")} ${liveTaxAmount.toLocaleString()}`}
+                  value={formatCurrency(liveTaxAmount)}
                   hint={liveTaxLines.length > 0
                     ? liveTaxLines.map((l) => {
                         const r = l.type === "percentage"
@@ -1680,7 +1680,7 @@ function BookingEditor({ booking, onClose }) {
                     return (
                       <div key={line.id || i} className="flex items-center justify-between py-1" style={{ color: p.textSecondary }}>
                         <span>{line.name} <span style={{ color: p.textMuted, fontSize: "0.7rem" }}>· {rateLabel}</span></span>
-                        <span style={{ color: p.textPrimary, fontWeight: 600 }}>{t("common.bhd")} {Number(line.taxAmount || 0).toLocaleString()}</span>
+                        <span style={{ color: p.textPrimary, fontWeight: 600 }}>{formatCurrency(Number(line.taxAmount || 0))}</span>
                       </div>
                     );
                   })}
@@ -1708,7 +1708,7 @@ function BookingEditor({ booking, onClose }) {
                       Paid at booking
                     </div>
                     <div style={{ color: p.textSecondary, fontSize: "0.84rem", lineHeight: 1.55, fontFamily: "'Manrope', sans-serif" }}>
-                      Commission · deducted at booking · <strong style={{ color: p.textPrimary }}>{t("common.bhd")} {(Number(draft.commissionDeductedAmount ?? draft.comm ?? 0)).toLocaleString()}</strong>. An auto-paid commission invoice was issued at confirmation; this booking is excluded from commission-invoice bundling.
+                      Commission · deducted at booking · <strong style={{ color: p.textPrimary }}>{formatCurrency(Number(draft.commissionDeductedAmount ?? draft.comm ?? 0))}</strong>. An auto-paid commission invoice was issued at confirmation; this booking is excluded from commission-invoice bundling.
                     </div>
                   </div>
                 )}
@@ -1785,15 +1785,15 @@ function BookingEditor({ booking, onClose }) {
                   </span>
                 </SnapRow>
                 <SnapRow p={p} label="Stay" value={`${nights} ${nights === 1 ? "night" : "nights"} · ${draft.guests || 0} ${draft.guests === 1 ? "guest" : "guests"}`} />
-                <SnapRow p={p} label="Total" value={`${t("common.bhd")} ${grandTotal.toLocaleString()}`} accent />
+                <SnapRow p={p} label="Total" value={formatCurrency(grandTotal)} accent />
                 {draft.taxPatternName && (
                   <div className="flex justify-between" style={{ fontSize: "0.66rem", color: p.textMuted, fontFamily: "'Manrope', sans-serif", letterSpacing: "0.02em" }}>
                     <span style={{ color: p.textMuted }}>Tax pattern</span>
                     <span style={{ color: p.textSecondary }}>{draft.taxPatternName}</span>
                   </div>
                 )}
-                <SnapRow p={p} label="Paid"  value={`${t("common.bhd")} ${paid.toLocaleString()}`} success={paid > 0} />
-                <SnapRow p={p} label="Balance" value={`${t("common.bhd")} ${balance.toLocaleString()}`} warn={balance > 0} success={balance === 0 && paid > 0} />
+                <SnapRow p={p} label="Paid"  value={formatCurrency(paid)} success={paid > 0} />
+                <SnapRow p={p} label="Balance" value={formatCurrency(balance)} warn={balance > 0} success={balance === 0 && paid > 0} />
               </div>
             </div>
 
@@ -2329,7 +2329,7 @@ function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLo
         actorName: chargedBy,
         action: "payment.charge-recorded",
         target: { kind: "booking", id: booking.id },
-        note: `Recorded card-on-file charge of BHD ${amount.toLocaleString()} · txn ${trimmed}${notes ? ` · ${notes}` : ""}`,
+        note: `Recorded card-on-file charge of ${formatCurrency(amount)} · txn ${trimmed}${notes ? ` · ${notes}` : ""}`,
       });
     } catch (_) {}
     pushToast({ message: `Charge recorded · ${trimmed}`, kind: "success" });
@@ -2584,7 +2584,7 @@ function OfferAppliedCard({ p, booking, pkg, t }) {
             color: p.success, fontFamily: "'Manrope', sans-serif",
             fontSize: "0.6rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
             padding: "1px 6px", border: `1px solid ${p.success}`, backgroundColor: `${p.success}1F`,
-          }}>Save BHD {saving.toLocaleString()}</span>
+          }}>Save {formatCurrency(saving)}</span>
         )}
       </div>
       <div className="px-4 py-3 space-y-2.5" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem" }}>
@@ -2598,7 +2598,7 @@ function OfferAppliedCard({ p, booking, pkg, t }) {
           <SnapRow
             p={p}
             label="Offer price"
-            value={`${t("common.bhd")} ${roomPrice.price.toLocaleString()} ${priceSuffix}`}
+            value={`${formatCurrency(roomPrice.price)} ${priceSuffix}`}
             accent
           />
         )}
@@ -2695,7 +2695,7 @@ function RecordPaymentPanel({
         actorName: staffSession?.name || "Staff",
         action: "payment.record",
         target: { kind: "booking", id: booking.id },
-        note: `Recorded ${meta.label} payment of BHD ${amt.toLocaleString()} (${id})`,
+        note: `Recorded ${meta.label} payment of ${formatCurrency(amt)} (${id})`,
       });
     } catch (_) {}
 
@@ -2736,7 +2736,7 @@ function RecordPaymentPanel({
                 </div>
                 <div className="text-end">
                   <div style={{ color: py.status === "refunded" ? p.danger : p.textPrimary, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
-                    {py.status === "refunded" ? "− " : ""}BHD {py.amount.toLocaleString()}
+                    {py.status === "refunded" ? "− " : ""}{formatCurrency(py.amount)}
                   </div>
                   <div style={{ color: py.status === "captured" ? p.success : py.status === "refunded" ? p.danger : p.textMuted, fontSize: "0.6rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}>
                     {py.status}
@@ -2750,7 +2750,7 @@ function RecordPaymentPanel({
         {!expanded ? (
           <>
             {balance > 0 ? (
-              <SidebarBtn p={p} icon={<Plus size={12} />} label={`Record payment · BHD ${balance.toLocaleString()} due`} onClick={() => setExpanded(true)} />
+              <SidebarBtn p={p} icon={<Plus size={12} />} label={`Record payment · ${formatCurrency(balance)} due`} onClick={() => setExpanded(true)} />
             ) : (
               <div style={{ color: p.success, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.5 }}>
                 <CheckCircle2 size={11} style={{ display: "inline", marginInlineEnd: 4, verticalAlign: -1 }} />
@@ -2766,7 +2766,7 @@ function RecordPaymentPanel({
                   Just recorded · {lastReceipt.id}
                 </div>
                 <div style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 4 }}>
-                  BHD {lastReceipt.amount.toLocaleString()} · {(PAYMENT_METHODS.find((m) => m.value === lastReceipt.method)?.label) || lastReceipt.method}
+                  {formatCurrency(lastReceipt.amount)} · {(PAYMENT_METHODS.find((m) => m.value === lastReceipt.method)?.label) || lastReceipt.method}
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <SidebarBtn p={p} icon={<Eye size={12} />}     label="Preview receipt" onClick={onPreviewReceipt} />
@@ -2827,7 +2827,7 @@ function RecordPaymentPanel({
                     fontSize: "0.66rem", letterSpacing: "0.18em", textTransform: "uppercase",
                     fontWeight: 700, marginTop: 6, background: "transparent", border: "none", cursor: "pointer", padding: 0,
                   }}
-                >Set to balance · BHD {balance.toLocaleString()}</button>
+                >Set to balance · {formatCurrency(balance)}</button>
               )}
             </div>
 
@@ -2896,7 +2896,7 @@ function RecordPaymentPanel({
                   display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
                 }}
               >
-                <CheckCircle2 size={12} /> Record · BHD {Number(amount || 0).toLocaleString()}
+                <CheckCircle2 size={12} /> Record · {formatCurrency(Number(amount || 0))}
               </button>
               <button
                 onClick={() => setExpanded(false)}

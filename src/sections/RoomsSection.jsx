@@ -4,7 +4,7 @@ import { C } from "../data/tokens.js";
 import { Crosshatch } from "../components/Crosshatch.jsx";
 import { GoldBtn, SectionLabel, SectionTitle } from "../components/primitives.jsx";
 import { useT } from "../i18n/LanguageContext.jsx";
-import { useData } from "../data/store.jsx";
+import { useData, formatCurrency } from "../data/store.jsx";
 
 export const RoomsSection = ({ onBookRoom }) => {
   const t = useT();
@@ -84,7 +84,7 @@ export const RoomsSection = ({ onBookRoom }) => {
                   {t("common.fromPerNight")}
                 </div>
                 <div className="flex items-baseline gap-2 mt-1">
-                  <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "2.6rem", color: C.gold, fontWeight: 500 }}>{t("common.bhd")} {room.price}</span>
+                  <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "2.6rem", color: C.gold, fontWeight: 500 }}>{formatCurrency(room.price)}</span>
                   <span style={{ color: C.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", letterSpacing: "0.18em", textTransform: "uppercase" }}>{t("common.excl")}</span>
                 </div>
                 {/* Weekend tag — only rendered when the property charges a
@@ -92,7 +92,7 @@ export const RoomsSection = ({ onBookRoom }) => {
                     so the guest sees the higher amount before they book. */}
                 {room.priceWeekend && Number(room.priceWeekend) > Number(room.price) && (
                   <div style={{ color: C.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", letterSpacing: "0.05em", marginTop: 6 }}>
-                    Weekend <span style={{ color: C.gold, fontWeight: 600 }}>{t("common.bhd")} {room.priceWeekend}</span>
+                    Weekend <span style={{ color: C.gold, fontWeight: 600 }}>{formatCurrency(room.priceWeekend)}</span>
                   </div>
                 )}
               </div>

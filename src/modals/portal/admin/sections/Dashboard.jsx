@@ -6,7 +6,7 @@ import {
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate } from "../../../../utils/date.js";
-import { useData } from "../../../../data/store.jsx";
+import { useData, formatCurrency } from "../../../../data/store.jsx";
 import { Card, PageHeader, Stat } from "../ui.jsx";
 
 // ---------------------------------------------------------------------------
@@ -101,14 +101,14 @@ export const Dashboard = ({ onNavigate }) => {
         />
         <Stat
           label="ADR (MTD)"
-          value={`${t("common.bhd")} 64`}
-          hint="+BHD 4 vs LY"
+          value={formatCurrency(64)}
+          hint={`+${formatCurrency(4)} vs LY`}
           onClick={() => go("admin", "calendar")}
           ctaLabel="Open rates"
         />
         <Stat
           label="RevPAR (MTD)"
-          value={`${t("common.bhd")} 51`}
+          value={formatCurrency(51)}
           hint="+12% YoY"
           onClick={() => go("admin", "calendar")}
           ctaLabel="Open rates"

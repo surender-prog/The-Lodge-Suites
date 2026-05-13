@@ -6,7 +6,7 @@ import {
 import { usePalette } from "../../theme.jsx";
 import { useT } from "../../../../i18n/LanguageContext.jsx";
 import {
-  applyTaxes, ROOM_UNIT_STATUSES, ROOM_VIEWS, useData,
+  applyTaxes, ROOM_UNIT_STATUSES, ROOM_VIEWS, useData, formatCurrency,
 } from "../../../../data/store.jsx";
 import {
   Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast,
@@ -101,8 +101,8 @@ export const RoomsRates = () => {
       <div className="grid sm:grid-cols-4 gap-4 mb-6">
         <Stat label="Active room types" value={rooms.length} />
         <Stat label="Inventory (units)" value={totalUnits} hint={`${activeUnits} active · ${oooUnits} out of order`} color={p.accent} />
-        <Stat label="Lowest rate" value={`${t("common.bhd")} ${lowestRate}`} hint="excl. tax" color={p.success} />
-        <Stat label="Tax-inclusive lowest" value={`${t("common.bhd")} ${grossOf(lowestRate)}`} hint="At checkout" />
+        <Stat label="Lowest rate" value={formatCurrency(lowestRate)} hint="excl. tax" color={p.success} />
+        <Stat label="Tax-inclusive lowest" value={formatCurrency(grossOf(lowestRate))} hint="At checkout" />
       </div>
 
       {/* ── Room types ──────────────────────────────────────────────── */}
@@ -130,8 +130,8 @@ export const RoomsRates = () => {
                 <Td align="end">{r.sqm} m²</Td>
                 <Td align="end">{r.occupancy}</Td>
                 <Td align="end" style={{ color: p.accent, fontWeight: 700 }}>{unitCountByType[r.id] || 0}</Td>
-                <Td align="end" className="font-semibold">{t("common.bhd")} {r.price}</Td>
-                <Td align="end" muted>{t("common.bhd")} {grossOf(r.price)}</Td>
+                <Td align="end" className="font-semibold">{formatCurrency(r.price)}</Td>
+                <Td align="end" muted>{formatCurrency(grossOf(r.price))}</Td>
                 <Td>
                   <span style={{
                     fontSize: "0.6rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
@@ -258,21 +258,21 @@ function RoomTypeEditor({ room, draft, setDraft, tax, unitCount, onCancel, onSav
             <div className="p-4" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
               <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, fontFamily: "'Manrope', sans-serif" }}>Weekday gross</div>
               <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.accent, fontWeight: 600, lineHeight: 1.05, marginTop: 4 }}>
-                {t("common.bhd")} {grossPN}
+                {formatCurrency(grossPN)}
               </div>
               <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>incl. VAT / service / tourism levy</div>
             </div>
             <div className="p-4" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
               <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, fontFamily: "'Manrope', sans-serif" }}>Weekend gross</div>
               <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.accent, fontWeight: 600, lineHeight: 1.05, marginTop: 4 }}>
-                {t("common.bhd")} {grossWeekend}
+                {formatCurrency(grossWeekend)}
               </div>
               <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>incl. taxes</div>
             </div>
             <div className="p-4" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
               <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, fontFamily: "'Manrope', sans-serif" }}>With extra bed</div>
               <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: draft.extraBedAvailable ? p.accent : p.textMuted, fontWeight: 600, lineHeight: 1.05, marginTop: 4 }}>
-                {draft.extraBedAvailable ? <>{t("common.bhd")} {grossWithBed}</> : "—"}
+                {draft.extraBedAvailable ? formatCurrency(grossWithBed) : "—"}
               </div>
               <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>
                 {draft.extraBedAvailable ? `+ BHD ${ebFee}/night per bed (excl. tax)` : "Extra bed not offered"}
@@ -476,7 +476,7 @@ function RoomTypeEditor({ room, draft, setDraft, tax, unitCount, onCancel, onSav
                   {t(`rooms.${room.id}.name`) || room.id}
                 </h4>
                 <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", color: p.accent, fontWeight: 500 }}>
-                  {t("common.bhd")} {rate}<span style={{ fontSize: "0.7rem", color: p.textMuted, fontFamily: "'Manrope', sans-serif", letterSpacing: "0.1em" }}> /night</span>
+                  {formatCurrency(rate)}<span style={{ fontSize: "0.7rem", color: p.textMuted, fontFamily: "'Manrope', sans-serif", letterSpacing: "0.1em" }}> /night</span>
                 </div>
               </div>
               <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 6 }}>
@@ -935,7 +935,7 @@ function UnitEditor({ unit, onClose }) {
             />
             {room && (
               <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 4 }}>
-                {room.sqm} m² · sleeps {room.occupancy} · {t("common.bhd")} {room.price}/night
+                {room.sqm} m² · sleeps {room.occupancy} · {formatCurrency(room.price)}/night
               </div>
             )}
           </FormGroup>

@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
 import { supabase, SUPABASE_CONFIGURED } from "../../lib/supabase.js";
+import { formatCurrency } from "../../data/store.jsx";
 import { pushToast } from "./admin/ui.jsx";
 
 // ---------------------------------------------------------------------------
@@ -675,7 +676,7 @@ function ContractPreview({ draft, kind }) {
         }
         <PreviewRow label="Term" value={`${fmtDateShort(draft.startsOn)} → ${fmtDateShort(draft.endsOn)}`} />
         <PreviewRow label="Payment" value={draft.paymentTerms || "—"} />
-        <PreviewRow label="Credit limit" value={draft.creditLimit ? `BHD ${Number(draft.creditLimit).toLocaleString()}` : "—"} />
+        <PreviewRow label="Credit limit" value={draft.creditLimit ? formatCurrency(Number(draft.creditLimit)) : "—"} />
         {draft.taxIncluded && <PreviewRow label="Tax" value="Inclusive" muted />}
       </div>
       <div className="px-5 pt-3 pb-2" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, borderTop: `1px solid ${p.border}` }}>
@@ -692,7 +693,7 @@ function ContractPreview({ draft, kind }) {
                 <strong>{daily ? `BHD ${daily}` : "—"}</strong>
                 <span style={{ color: p.textMuted, fontSize: "0.7rem" }}> /night</span>
                 <span style={{ color: p.textDim, padding: "0 6px" }}>·</span>
-                <strong>{monthly ? `BHD ${monthly.toLocaleString()}` : "—"}</strong>
+                <strong>{monthly ? formatCurrency(monthly) : "—"}</strong>
                 <span style={{ color: p.textMuted, fontSize: "0.7rem" }}> /month</span>
               </span>
             </div>
@@ -713,7 +714,7 @@ function ContractPreview({ draft, kind }) {
             Total monthly basket
           </span>
           <span style={{ color: p.textPrimary, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
-            BHD {monthlyTotal.toLocaleString()}
+            {formatCurrency(monthlyTotal)}
           </span>
         </div>
       )}
@@ -724,7 +725,7 @@ function ContractPreview({ draft, kind }) {
             Accommodation fee
           </span>
           <span style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
-            + BHD {Number(draft.accommodationFee).toFixed(3)}/night
+            + {formatCurrency(Number(draft.accommodationFee))}/night
           </span>
         </div>
       )}

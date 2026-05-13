@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Save, Trash2 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
-import { useData } from "../../../../data/store.jsx";
+import { useData, formatCurrency } from "../../../../data/store.jsx";
 import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, SelectField, Stat, TextField } from "../ui.jsx";
 
 // Convert a Date → 'YYYY-MM-DD' in local time so cell edits don't drift across
@@ -166,7 +166,7 @@ export const CalendarView = () => {
 
       <div className="grid sm:grid-cols-3 gap-4 mb-6">
         <Stat label="Window" value={`${dayCount} days`} hint={rangeLabel} />
-        <Stat label="Forecast revenue" value={`${t("common.bhd")} ${revenueWindow.toLocaleString()}`} hint="Based on current bookings × rates" color={p.success} />
+        <Stat label="Forecast revenue" value={formatCurrency(revenueWindow)} hint="Based on current bookings × rates" color={p.success} />
         <Stat label="Stop-sale dates" value={stopSaleCount} hint={stopSaleCount === 0 ? "All open" : "Across all rooms"} color={stopSaleCount > 0 ? p.warn : p.success} />
       </div>
 

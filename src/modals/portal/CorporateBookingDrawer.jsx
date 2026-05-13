@@ -336,7 +336,7 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
                           <option key={r.id} value={r.id}>
                             {t(`rooms.${r.id}.name`)}
                             {daily > 0 ? ` · BHD ${daily}/n` : ""}
-                            {monthly > 0 ? ` · BHD ${monthly.toLocaleString()}/mo` : ""}
+                            {monthly > 0 ? ` · ${formatCurrency(monthly)}/mo` : ""}
                             {daily === 0 && monthly === 0 ? ` · BHD ${r.price}/n (rack)` : ""}
                           </option>
                         );
