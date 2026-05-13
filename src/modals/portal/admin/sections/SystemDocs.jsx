@@ -1,6 +1,6 @@
 import React from "react";
 import {
-  BookOpen, Building2, Calendar as CalendarIcon, Download, FileText, Globe, Layers,
+  BookOpen, Building2, Calendar as CalendarIcon, ClipboardCheck, Download, FileText, Globe, Layers,
   Mail, Maximize2, Megaphone, Printer, Sparkles, Target, Users, Wrench,
 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
@@ -99,6 +99,11 @@ const PARTS = [
 const ASSETS = {
   markdown: "/docs/system-presentation.md",
   html:     "/docs/system-presentation.html",
+  // Hands-on testing plan — phase-by-phase walkthrough an admin uses to
+  // validate every operational surface. Drives onboarding, UAT, and
+  // post-release change-validation; feedback prompts at the end of each
+  // phase channel back into the upgrade backlog.
+  testingPlan: "/docs/admin-testing-plan.md",
 };
 
 export const SystemDocs = () => {
@@ -303,6 +308,18 @@ export const SystemDocs = () => {
                 hint="Opens browser print dialog · choose 'Save as PDF'"
                 onClick={printDeck}
                 cta="Print"
+              />
+              {/* Admin testing & training plan — separate document with a
+                  phase-by-phase walkthrough and feedback prompts at every
+                  stage. Assign this to admin users for onboarding, UAT, or
+                  pre-launch sign-off. */}
+              <DownloadRow
+                p={p}
+                Icon={ClipboardCheck}
+                title="Admin testing & training plan"
+                hint="10 phases · ~6–8h · phase-by-phase checklist + feedback prompts"
+                onClick={() => download(ASSETS.testingPlan, "the-lodge-suites-admin-testing-plan.md")}
+                cta="Download"
               />
             </div>
 
