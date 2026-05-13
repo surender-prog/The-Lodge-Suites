@@ -573,31 +573,94 @@ function RoomUnitsManager() {
 
   return (
     <div>
-      {/* Per-type summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+      {/* Per-type summary cards — surface every field the operator can edit
+          for this room type so the inventory pane doubles as a quick
+          reference. Clicking a card filters the unit table to that type. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
         {rooms.map((r) => {
           const v = byType[r.id] || { active: 0, ooo: 0, reserved: 0, total: 0 };
+          // Resolve i18n strings — fall back to humanised id when a
+          // translation isn't present so a freshly-added type still
+          // renders cleanly.
+          const typeName = t(`rooms.${r.id}.name`) || r.id;
+          const typeShort = t(`rooms.${r.id}.short`);
+          const isActive = filterType === r.id;
+          // Pricing block — show weekday / weekend if they differ so the
+          // operator sees the spread at a glance.
+          const wkPrice = Number(r.price) || 0;
+          const wePrice = Number(r.priceWeekend) || wkPrice;
+          const priceLabel = wePrice && wePrice !== wkPrice
+            ? `${formatCurrency(wkPrice)} · weekend ${formatCurrency(wePrice)}`
+            : `${formatCurrency(wkPrice)} / night`;
+          // Capacity block — combines headcount limits with the floor area
+          // and extra-bed policy for a single information-dense line.
+          const capacityParts = [
+            r.sqm ? `${r.sqm} m²` : null,
+            r.maxAdults != null ? `${r.maxAdults} adult${r.maxAdults === 1 ? "" : "s"}` : null,
+            r.maxChildren != null ? `${r.maxChildren} child${r.maxChildren === 1 ? "" : "ren"}` : null,
+          ].filter(Boolean);
           return (
             <button
               key={r.id}
-              onClick={() => setFilterType(filterType === r.id ? "all" : r.id)}
+              onClick={() => setFilterType(isActive ? "all" : r.id)}
               className="p-4 text-start transition-colors"
               style={{
-                backgroundColor: filterType === r.id ? p.bgHover : p.bgPanel,
-                border: `1px solid ${filterType === r.id ? p.accent : p.border}`,
+                backgroundColor: isActive ? p.bgHover : p.bgPanel,
+                border: `1px solid ${isActive ? p.accent : p.border}`,
+                borderInlineStart: `3px solid ${isActive ? p.accent : "transparent"}`,
                 cursor: "pointer",
               }}
-              onMouseEnter={(e) => { if (filterType !== r.id) e.currentTarget.style.borderColor = p.accent; }}
-              onMouseLeave={(e) => { if (filterType !== r.id) e.currentTarget.style.borderColor = p.border; }}
+              onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.borderColor = p.accent; }}
+              onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.borderColor = p.border; }}
             >
-              <div style={{ color: p.textMuted, fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700 }}>
-                {t(`rooms.${r.id}.short`) || r.id}
+              {/* Eyebrow — room id badge for quick scanning when the
+                  operator knows the technical key. */}
+              <div style={{ color: p.accent, fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700 }}>
+                {r.id}
               </div>
-              <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.textPrimary, fontWeight: 500, lineHeight: 1.05, marginTop: 6 }}>
-                {v.total} <span style={{ color: p.textMuted, fontSize: "0.74rem" }}>units</span>
+              {/* Room type name — the headline. Cormorant Garamond like
+                  the room cards on the public site so this pane mirrors
+                  the guest-facing identity. */}
+              <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.35rem", color: p.textPrimary, fontWeight: 500, lineHeight: 1.1, marginTop: 4 }}>
+                {typeName}
               </div>
-              <div className="flex items-center gap-3 mt-2" style={{ fontSize: "0.72rem", color: p.textMuted }}>
-                <span style={{ color: p.success, fontWeight: 600 }}>● {v.active}</span>
+              {/* Short description — the same one-liner the booking
+                  surfaces use. Falls back to the longer description when
+                  the short isn't translated. */}
+              {typeShort && (
+                <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 6, lineHeight: 1.5 }}>
+                  {typeShort}
+                </div>
+              )}
+              {/* Capacity + size — one compact info line. */}
+              {capacityParts.length > 0 && (
+                <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", marginTop: 8, letterSpacing: "0.04em" }}>
+                  {capacityParts.join(" · ")}
+                </div>
+              )}
+              {/* Extra-bed policy — only when available so the card stays
+                  uncluttered for studios. */}
+              {r.extraBedAvailable && r.maxExtraBeds > 0 && (
+                <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", marginTop: 4 }}>
+                  + up to {r.maxExtraBeds} extra bed{r.maxExtraBeds === 1 ? "" : "s"} · {formatCurrency(r.extraBedFee || 0)}/night
+                </div>
+              )}
+              {/* Pricing pill — weekday + weekend at a glance. */}
+              <div style={{ color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", fontWeight: 700, marginTop: 8, letterSpacing: "0.02em" }}>
+                {priceLabel}
+              </div>
+              {/* Unit count headline — matches the original card style. */}
+              <div className="flex items-baseline gap-2" style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${p.border}` }}>
+                <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.textPrimary, fontWeight: 500, lineHeight: 1 }}>
+                  {v.total}
+                </span>
+                <span style={{ color: p.textMuted, fontSize: "0.72rem", letterSpacing: "0.04em" }}>
+                  {v.total === 1 ? "unit" : "units"} in inventory
+                </span>
+              </div>
+              {/* Status counts — active / OOO / reserved. */}
+              <div className="flex items-center gap-3 mt-1.5" style={{ fontSize: "0.72rem", color: p.textMuted, flexWrap: "wrap" }}>
+                <span style={{ color: p.success, fontWeight: 600 }}>● {v.active} active</span>
                 {v.ooo > 0 && <span style={{ color: p.danger, fontWeight: 600 }}>● {v.ooo} OOO</span>}
                 {v.reserved > 0 && <span style={{ color: p.warn, fontWeight: 600 }}>● {v.reserved} held</span>}
               </div>
