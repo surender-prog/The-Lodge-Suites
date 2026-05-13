@@ -1,12 +1,13 @@
 import React, { useMemo, useState } from "react";
 import {
   BookOpen, Building2, Calendar as CalendarIcon, Check, CheckCircle2, ChevronRight, Clock,
-  ClipboardCheck, Copy, Download, Eye, FileText, Globe, Layers,
+  ClipboardCheck, Copy, Download, Eye, FileEdit, FileText, Globe, Layers,
   Mail, Maximize2, Megaphone, Printer, Send, Sparkles, Star, Target, Trash2, UserCheck, Users, Wrench, X,
 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, SelectField, TableShell, Td, Th, TextField, pushToast } from "../ui.jsx";
 import { useData, TESTING_PLAN_PHASES, TESTING_PLAN_FEEDBACK_FIELDS } from "../../../../data/store.jsx";
+import { fetchTestingPlanMarkdown, renderTestingPlanHtml, renderTestingPlanWordHtml } from "../../../../utils/renderTestingPlan.js";
 
 // ---------------------------------------------------------------------------
 // SystemDocs — internal training & business-development deck.
@@ -200,6 +201,87 @@ export const SystemDocs = () => {
     pushToast({ message: `Downloading ${filename}…` });
   };
 
+  // Wrap a string in a Blob → object URL → anchor-click → revoke.
+  // Used for the on-the-fly testing-plan downloads where the file
+  // content is rendered client-side from the source markdown rather
+  // than served as a static asset.
+  const downloadBlob = (content, filename, mime) => {
+    const blob = new Blob([content], { type: mime });
+    const url  = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    pushToast({ message: `Downloading ${filename}…` });
+  };
+
+  // ─── Testing plan downloads ────────────────────────────────────────────
+  // Three flavours, one source of truth (the markdown file).
+  //   PDF — render to brand-styled HTML, open in a hidden iframe, trigger
+  //         the browser print dialog; user picks "Save as PDF".
+  //   DOC — render to Word-flavoured HTML (MS Office namespaces + ProgId)
+  //         and download as a .doc file. Opens cleanly in Word / Google
+  //         Docs / Pages with formatting intact.
+  //   MD  — the raw markdown source (kept for editors who want plain text).
+  const fetchPlan = async () => {
+    try {
+      return await fetchTestingPlanMarkdown(ASSETS.testingPlan);
+    } catch (e) {
+      pushToast({ message: "Couldn't load testing plan source. Try again.", kind: "warn" });
+      throw e;
+    }
+  };
+
+  const downloadTestingPlanPdf = async () => {
+    let md;
+    try { md = await fetchPlan(); } catch (_) { return; }
+    const html = renderTestingPlanHtml(md);
+    // Open the rendered HTML in a hidden iframe and fire the browser
+    // print dialog. Same pattern as the system-presentation Print path —
+    // it's the most reliable way to produce a PDF without server-side
+    // rendering or a heavy PDF library.
+    try {
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      const url  = URL.createObjectURL(blob);
+      const iframe = document.createElement("iframe");
+      iframe.style.position = "fixed";
+      iframe.style.right    = "-9999px";
+      iframe.style.bottom   = "-9999px";
+      iframe.style.width    = "0";
+      iframe.style.height   = "0";
+      iframe.style.border   = "0";
+      iframe.src            = url;
+      iframe.onload = () => {
+        setTimeout(() => {
+          try {
+            iframe.contentWindow.focus();
+            iframe.contentWindow.print();
+          } catch (_) {
+            const w = window.open(url, "_blank", "noopener,noreferrer");
+            if (!w) pushToast({ message: "Pop-up blocked — allow it for this site to print.", kind: "warn" });
+          }
+          setTimeout(() => { iframe.remove(); URL.revokeObjectURL(url); }, 8000);
+        }, 600);
+      };
+      document.body.appendChild(iframe);
+      pushToast({ message: "Print dialog opening — pick 'Save as PDF' to export." });
+    } catch (_) {
+      // Fallback — download the HTML so the user can print from a real tab.
+      downloadBlob(html, "the-lodge-suites-admin-testing-plan.html", "text/html;charset=utf-8");
+    }
+  };
+
+  const downloadTestingPlanDoc = async () => {
+    let md;
+    try { md = await fetchPlan(); } catch (_) { return; }
+    const html = renderTestingPlanWordHtml(md);
+    // application/msword + .doc extension is the magic combo: Word /
+    // Google Docs / Pages all open the file as an editable document and
+    // honour the embedded styles. Saving inside Word writes a real
+    // .docx — we avoid shipping a docx-zip builder dependency.
+    downloadBlob(html, "the-lodge-suites-admin-testing-plan.doc", "application/msword");
+  };
+
   return (
     <div>
       <PageHeader
@@ -340,18 +422,45 @@ export const SystemDocs = () => {
                 onClick={printDeck}
                 cta="Print"
               />
-              {/* Admin testing & training plan — separate document with a
-                  phase-by-phase walkthrough and feedback prompts at every
-                  stage. Assign this to admin users for onboarding, UAT, or
-                  pre-launch sign-off. */}
-              <DownloadRow
-                p={p}
-                Icon={ClipboardCheck}
-                title="Admin testing & training plan"
-                hint="10 phases · ~6–8h · phase-by-phase checklist + feedback prompts"
-                onClick={() => download(ASSETS.testingPlan, "the-lodge-suites-admin-testing-plan.md")}
-                cta="Download"
-              />
+              {/* Admin testing & training plan — three flavours, one
+                  source of truth (the canonical markdown at
+                  /docs/admin-testing-plan.md). PDF + DOC are generated
+                  client-side on click so a markdown edit reflows both
+                  derived formats automatically. */}
+              <div className="pt-3 mt-3" style={{ borderTop: `1px dashed ${p.border}` }}>
+                <div style={{
+                  fontFamily: "'Manrope', sans-serif",
+                  fontSize: "0.62rem", letterSpacing: "0.22em",
+                  textTransform: "uppercase", color: p.textMuted, fontWeight: 700,
+                  marginBottom: 8,
+                }}>Admin testing & training plan</div>
+                <div className="space-y-2">
+                  <DownloadRow
+                    p={p}
+                    Icon={Printer}
+                    title="Download as PDF"
+                    hint="Brand-styled · opens print dialog · pick 'Save as PDF'"
+                    onClick={downloadTestingPlanPdf}
+                    cta="Print"
+                  />
+                  <DownloadRow
+                    p={p}
+                    Icon={FileEdit}
+                    title="Download as Word (.doc)"
+                    hint="Opens in Word / Google Docs / Pages · editable"
+                    onClick={downloadTestingPlanDoc}
+                    cta="Download"
+                  />
+                  <DownloadRow
+                    p={p}
+                    Icon={ClipboardCheck}
+                    title="Download as Markdown"
+                    hint="Plain-text source · GitHub-ready · raw checklist"
+                    onClick={() => download(ASSETS.testingPlan, "the-lodge-suites-admin-testing-plan.md")}
+                    cta="Download"
+                  />
+                </div>
+              </div>
             </div>
 
             <div className="mt-5 pt-4" style={{ borderTop: `1px solid ${p.border}` }}>
