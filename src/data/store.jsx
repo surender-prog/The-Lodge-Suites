@@ -3653,6 +3653,12 @@ export function DataProvider({ children }) {
   // Idempotency: if an active assignment for this tester already exists
   // (pending or in-progress), we return that one rather than spawning a
   // duplicate. The owner can remove + reassign explicitly via the UI.
+  //
+  // `owner` is required — pass `staffSession` from the calling component.
+  // We resolve it on the call site (rather than referencing staffSession
+  // here directly) because the staffSession state lives further down in
+  // this provider; pulling it into a useCallback that's evaluated above
+  // its declaration trips the temporal-dead-zone and crashes mount.
   const assignTestingPlan = useCallback(({ testerId, owner }) => {
     const tester = adminUsers.find((u) => u.id === testerId);
     if (!tester) return null;
@@ -3660,12 +3666,12 @@ export function DataProvider({ children }) {
     setTestingPlanAssignments((prev) => {
       const existing = prev.find((a) => a.testerId === testerId && a.status !== "completed");
       if (existing) { createdId = existing.id; return prev; }
-      const rec = makeTestingPlanAssignment({ tester, owner: owner || staffSession });
+      const rec = makeTestingPlanAssignment({ tester, owner: owner || null });
       createdId = rec.id;
       return [rec, ...prev];
     });
     return createdId;
-  }, [adminUsers, staffSession]);
+  }, [adminUsers]);
 
   // Patch a single phase on an assignment (status + feedback). Wraps the
   // pure `applyPhasePatch` helper so the rollup logic stays testable.
