@@ -1317,7 +1317,7 @@ export const BookingModal = ({ open, onClose, initial }) => {
                       {totalRooms} suites
                     </div>
                     <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", color: C.textMuted, marginTop: 2 }}>
-                      {roomLines.map((l) => `${l.qty} × ${t(`rooms.${l.room.id}.short`) || l.room.id}`).join(" · ")}
+                      {roomLines.map((l) => `${l.qty} × ${t(`rooms.${l.room.id}.name`) || l.room.id}`).join(" · ")}
                     </div>
                   </div>
                 )}
@@ -1384,7 +1384,7 @@ export const BookingModal = ({ open, onClose, initial }) => {
                     )}
                     {roomLines.length > 0 && (
                       <div style={{ color: C.textMuted, fontSize: "0.74rem", marginTop: 2 }}>
-                        Booked against {roomLines.map((l) => `${t(`rooms.${l.room.id}.short`) || l.room.id}${l.qty > 1 ? ` × ${l.qty}` : ""}`).join(" · ")}
+                        Booked against {roomLines.map((l) => `${t(`rooms.${l.room.id}.name`) || l.room.id}${l.qty > 1 ? ` × ${l.qty}` : ""}`).join(" · ")}
                       </div>
                     )}
                   </>
@@ -1405,7 +1405,7 @@ export const BookingModal = ({ open, onClose, initial }) => {
                       <React.Fragment key={l.room.id}>
                         <div className="flex justify-between">
                           <span style={{ color: C.textMuted }}>
-                            {t(`rooms.${l.room.id}.short`) || l.room.id}{l.qty > 1 ? ` × ${l.qty}` : ""} · {nights}n
+                            {t(`rooms.${l.room.id}.name`) || l.room.id}{l.qty > 1 ? ` × ${l.qty}` : ""} · {nights}n
                           </span>
                           <span>{formatCurrency(l.roomRev)}</span>
                         </div>

@@ -679,7 +679,7 @@ function RoomUnitsManager() {
             <SelectField
               value={filterType}
               onChange={setFilterType}
-              options={[{ value: "all", label: "All types" }, ...rooms.map((r) => ({ value: r.id, label: t(`rooms.${r.id}.short`) || r.id }))]}
+              options={[{ value: "all", label: "All types" }, ...rooms.map((r) => ({ value: r.id, label: t(`rooms.${r.id}.name`) || r.id }))]}
             />
           </div>
           <div style={{ minWidth: 130 }}>
@@ -903,7 +903,7 @@ function FloorGrid({ units, rooms, onEdit }) {
                     {u.number}
                   </div>
                   <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700 }}>
-                    {room ? (t(`rooms.${room.id}.short`) || room.id) : u.roomTypeId}
+                    {room ? (t(`rooms.${room.id}.name`) || room.id) : u.roomTypeId}
                   </div>
                 </button>
               );

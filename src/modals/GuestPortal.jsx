@@ -4483,7 +4483,7 @@ function ReservationRail({ p, checkIn, checkOut, nights, stayTotals, partySize, 
             return (
               <React.Fragment key={s.id}>
                 <div className="flex items-center justify-between">
-                  <span style={{ color: p.textSecondary }}>{t(`rooms.${s.roomId}.short`) || s.roomId} × {s.quantity}</span>
+                  <span style={{ color: p.textSecondary }}>{t(`rooms.${s.roomId}.name`) || s.roomId} × {s.quantity}</span>
                   <span style={{ color: p.textPrimary, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtBhd(s.roomRevenue)}</span>
                 </div>
                 {/* Weekday/weekend split — shown when the stay spans both

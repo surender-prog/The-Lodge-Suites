@@ -69,7 +69,7 @@ export const PackagesSection = ({ onBookPackage }) => {
                     ))}
                   </ul>
                   {(() => {
-                    const cond = describePackageConditions(p, (id) => t(`rooms.${id}.short`) || t(`rooms.${id}.name`) || id);
+                    const cond = describePackageConditions(p, (id) => t(`rooms.${id}.name`) || id);
                     return cond ? (
                       <div className="mt-4 px-2.5 py-1.5"
                         style={{

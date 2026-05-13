@@ -858,7 +858,7 @@ function OfferCardPreview({ draft, t, p }) {
   const Icn = ICON_OPTIONS.find((o) => o.value === draft.icon)?.Cmp || Sparkles;
   const headline = getPackageMinPrice(draft);
   const total = headline.price + headline.saving;
-  const conditions = describePackageConditions(draft, (id) => t(`rooms.${id}.short`) || t(`rooms.${id}.name`) || id);
+  const conditions = describePackageConditions(draft, (id) => t(`rooms.${id}.name`) || id);
 
   return (
     <div
