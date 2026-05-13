@@ -17,23 +17,50 @@ import { AgencyWorkspaceDrawer } from "./AgencyWorkspace.jsx";
 import { ProspectExplorerDrawer } from "./ProspectExplorer.jsx";
 import { pushToast } from "./admin/ui.jsx";
 
-const SAMPLE_BOOKINGS = [
-  // Globepass Travel — top agent, 2 stays pending invoice + 1 invoiced
-  { ref: "LSA-7805", agencyId: "AGT-0124", guest: "P. Rashid",     checkIn: "2026-04-22", checkOut: "2026-04-25", nights:  3, suite: "1-Bed",  value: 174, comm: 17, status: "stayed",    invoiced: false },
-  { ref: "LSA-7821", agencyId: "AGT-0124", guest: "L. Caretti",    checkIn: "2026-05-04", checkOut: "2026-05-08", nights:  4, suite: "1-Bed",  value: 232, comm: 23, status: "stayed",    invoiced: false },
-  { ref: "LSA-7843", agencyId: "AGT-0124", guest: "M. Al-Ansari",  checkIn: "2026-05-12", checkOut: "2026-05-19", nights:  7, suite: "Studio", value: 294, comm: 29, status: "stayed",    invoiced: true  },
-  // Cleartrip Bahrain — 1 pending, 1 future
-  { ref: "LSA-7895", agencyId: "AGT-0211", guest: "F. Hassan",     checkIn: "2026-04-15", checkOut: "2026-04-20", nights:  5, suite: "Studio", value: 220, comm: 20, status: "stayed",    invoiced: false },
-  { ref: "LSA-7902", agencyId: "AGT-0211", guest: "K. Tanaka",     checkIn: "2026-06-01", checkOut: "2026-06-04", nights:  3, suite: "2-Bed",  value: 267, comm: 24, status: "confirmed", invoiced: false },
-  // Almosafer Wholesale — 2 pending, 1 future
-  { ref: "LSA-7770", agencyId: "AGT-0287", guest: "A. Sharif",     checkIn: "2026-04-10", checkOut: "2026-04-13", nights:  3, suite: "Studio", value: 132, comm: 16, status: "stayed",    invoiced: false },
-  { ref: "LSA-7812", agencyId: "AGT-0287", guest: "J. Williams",   checkIn: "2026-05-01", checkOut: "2026-05-05", nights:  4, suite: "2-Bed",  value: 312, comm: 38, status: "stayed",    invoiced: false },
-  { ref: "LSA-7958", agencyId: "AGT-0287", guest: "S. Holloway",   checkIn: "2026-06-18", checkOut: "2026-07-02", nights: 14, suite: "1-Bed",  value: 812, comm: 97, status: "confirmed", invoiced: false },
-  // Gulf DMC — already settled
-  { ref: "LSA-7920", agencyId: "AGT-0344", guest: "R. Park",       checkIn: "2026-04-08", checkOut: "2026-04-10", nights:  2, suite: "Studio", value:  88, comm:  7, status: "stayed",    invoiced: true  },
-  // Innovative Travels — oldest pending
-  { ref: "LSA-7888", agencyId: "AGT-0392", guest: "N. Khoury",     checkIn: "2026-04-05", checkOut: "2026-04-09", nights:  4, suite: "1-Bed",  value: 232, comm: 16, status: "stayed",    invoiced: false },
-];
+// Short suite labels — used in the agent bookings table and the commission
+// invoice line items. Keyed by room id so a freshly-added room type still
+// renders something readable (falls back to the raw id).
+const SUITE_SHORT_LABEL = {
+  studio:      "Studio",
+  "one-bed":   "1-Bed",
+  "two-bed":   "2-Bed",
+  "three-bed": "3-Bed",
+};
+
+// Map a live booking record (from `useData().bookings`) into the shape the
+// Agent workspace expects. `agentBookingFromStore` is the single conversion
+// point so the table, the commission workspace, and the invoice generator
+// all read consistent fields.
+//   ref       — booking id (the canonical reference; mock used "LSA-xxxx")
+//   agencyId  — agency the booking is contracted under
+//   suite     — short room-type label resolved from roomId
+//   value     — booking total (gross billable on the stay)
+//   comm      — commission accrued on the stay
+//   status    — collapsed to "stayed" (checked-out) | "confirmed" (anything
+//               else) so the existing filters and badges keep working
+//   invoiced  — true when a kind:"commission" invoice already references
+//               this booking (i.e. the hotel has settled it already)
+function agentBookingFromStore(b, commissionInvoiceIds) {
+  return {
+    ref: b.id,
+    agencyId: b.agencyId,
+    guest: b.guest,
+    email: b.email,
+    checkIn: b.checkIn,
+    checkOut: b.checkOut,
+    nights: b.nights,
+    suite: SUITE_SHORT_LABEL[b.roomId] || b.roomId,
+    roomId: b.roomId,
+    value: Number(b.total) || 0,
+    comm: Number(b.comm) || 0,
+    status: b.status === "checked-out" ? "stayed" : "confirmed",
+    invoiced: commissionInvoiceIds.has(b.id),
+    commissionDeducted: !!b.commissionDeducted,
+    commissionDeductedAmount: b.commissionDeductedAmount,
+    paymentStatus: b.paymentStatus,
+    notes: b.notes,
+  };
+}
 
 // Aging bucket colors are derived from the active palette so light/dark modes
 // keep semantic meaning while staying readable.
@@ -63,8 +90,28 @@ export const AgentTab = () => {
   const t = useT();
   const p = usePalette();
   const { lang } = useLang();
-  const { agencies, upsertAgency, removeAgency, prospects, hotelInfo, tax, addInvoice } = useData();
-  const [bookings] = useState(SAMPLE_BOOKINGS);
+  const {
+    agencies, upsertAgency, removeAgency, prospects, hotelInfo, tax, addInvoice,
+    bookings: storeBookings, invoices: storeInvoices,
+  } = useData();
+  // Build the agent bookings table from live store data. The previous
+  // SAMPLE_BOOKINGS hardcode is gone — every row now reflects an actual
+  // `source: "agent"` booking in the store, with `invoiced` derived from
+  // the live invoices ledger (a booking counts as invoiced as soon as a
+  // kind:"commission" invoice references it).
+  const bookings = useMemo(() => {
+    const commissionInvoiceIds = new Set(
+      (storeInvoices || [])
+        .filter((i) => i.kind === "commission" && i.bookingId)
+        .map((i) => i.bookingId)
+    );
+    return (storeBookings || [])
+      .filter((b) => b.source === "agent" && b.status !== "cancelled")
+      .map((b) => agentBookingFromStore(b, commissionInvoiceIds))
+      // Newest stay first so recently-checked-out guests surface at the top
+      // of the table, matching the rest of the admin bookings UI.
+      .sort((a, b) => String(b.checkIn || "").localeCompare(String(a.checkIn || "")));
+  }, [storeBookings, storeInvoices]);
   const [selected, setSelected] = useState({});
   const [view, setView] = useState("dashboard");
   const [showInvoice, setShowInvoice] = useState(false);
@@ -126,6 +173,21 @@ export const AgentTab = () => {
   // ---- Invoice view ------------------------------------------------------
   if (showInvoice) {
     const today = new Date().toLocaleDateString(lang === "ar" ? "ar-BH" : "en-GB", { day: "numeric", month: "long", year: "numeric" });
+    // Payable-to block — resolves to the actual selected agency when every
+    // picked line belongs to the same agency. When the operator has picked
+    // bookings across more than one agency we surface "Multiple agencies"
+    // and the per-agency split happens at the addInvoice step below.
+    const selectedAgencyIds = Array.from(new Set(selectedBookings.map((b) => b.agencyId).filter(Boolean)));
+    const singleAgency = selectedAgencyIds.length === 1
+      ? agencies.find((a) => a.id === selectedAgencyIds[0])
+      : null;
+    const payableName = singleAgency?.name
+      || (selectedAgencyIds.length > 1 ? "Multiple agencies" : t("portal.agent.payableToName"));
+    const payableAccountId = singleAgency?.id || (selectedAgencyIds.length > 1 ? `${selectedAgencyIds.length} agencies` : "—");
+    const payableCommissionLabel = singleAgency?.commissionPct != null
+      ? `${singleAgency.commissionPct}% commission`
+      : t("portal.agent.commission");
+    const payablePaymentTerms = singleAgency?.paymentTerms || t("portal.agent.paymentTerms");
     return (
       <div>
         <button onClick={() => setShowInvoice(false)} className="mb-4 flex items-center gap-2" style={{ color: p.textMuted, fontSize: "0.78rem", letterSpacing: "0.18em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif" }}>
@@ -152,10 +214,10 @@ export const AgentTab = () => {
             </div>
             <div>
               <div style={{ fontSize: "0.65rem", letterSpacing: "0.28em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>{t("portal.agent.payableTo")}</div>
-              <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", fontWeight: 600 }}>{t("portal.agent.payableToName")}</div>
-              <div>Account ID: AGT-0124</div>
-              <div>{t("portal.agent.commission")}</div>
-              <div className="mt-2">{t("portal.agent.paymentTerms")}</div>
+              <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", fontWeight: 600 }}>{payableName}</div>
+              <div>Account ID: {payableAccountId}</div>
+              <div>{payableCommissionLabel}</div>
+              <div className="mt-2">{payablePaymentTerms}</div>
             </div>
           </div>
           <table className="w-full mb-6" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.85rem" }}>
