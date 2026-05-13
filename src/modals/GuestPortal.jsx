@@ -1350,15 +1350,22 @@ function BookingDetail({
     pushToast({ message: `Downloaded · ${pay.id}` });
   };
 
-  // Charge breakdown — derived from stored fields. Tax is reverse-computed
-  // when not explicit so the math always reconciles to the stored total.
-  const subtotal   = (booking.rate || 0) * (booking.nights || 0);
-  const extrasList = Array.isArray(booking.extras) ? booking.extras : extras;
-  const extrasSum  = extrasList.reduce((s, e) => s + (Number(e.price) || 0), 0);
-  const grandTotal = Number(booking.total) || 0;
-  const taxAmount  = Math.max(0, +(grandTotal - subtotal - extrasSum).toFixed(3));
-  const paid       = Number(booking.paid) || 0;
-  const balance    = Math.max(0, +(grandTotal - paid).toFixed(3));
+  // Charge breakdown — derived from stored fields. Prefer the explicit
+  // `taxAmount` stamp when present; only reverse-compute as a fallback for
+  // legacy bookings written before the field existed. When the commission
+  // was deducted at booking, `total` is the net obligation and we surface
+  // the deduction as its own line so the math reconciles for the booker.
+  const subtotal       = (booking.rate || 0) * (booking.nights || 0);
+  const extrasList     = Array.isArray(booking.extras) ? booking.extras : extras;
+  const extrasSum      = extrasList.reduce((s, e) => s + (Number(e.price) || 0), 0);
+  const grandTotal     = Number(booking.total) || 0;
+  const commissionCut  = booking.commissionDeducted ? Number(booking.commissionDeductedAmount ?? booking.comm ?? 0) : 0;
+  const taxAmount      = (typeof booking.taxAmount === "number")
+    ? booking.taxAmount
+    : Math.max(0, +(grandTotal + commissionCut - subtotal - extrasSum).toFixed(3));
+  const grossBookingTotal = Math.max(0, +(subtotal + extrasSum + taxAmount).toFixed(3));
+  const paid           = Number(booking.paid) || 0;
+  const balance        = Math.max(0, +(grandTotal - paid).toFixed(3));
 
   const totalPaidPayments = payments.reduce((s, x) => s + (x.status === "captured" ? (Number(x.amount) || 0) : 0), 0);
   const totalDueInvoices  = invoices.reduce((s, x) => s + Math.max(0, (Number(x.amount) || 0) - (Number(x.paid) || 0)), 0);
@@ -1433,7 +1440,15 @@ function BookingDetail({
           )}
           {taxAmount > 0 && <ChargeRow label="Taxes & service" value={fmtBhd(taxAmount)} p={p} subtle />}
           <div style={{ borderTop: `1px solid ${p.border}`, marginTop: 14, paddingTop: 12 }}>
-            <ChargeRow label="Total" value={fmtBhd(grandTotal)} p={p} bold accent />
+            {commissionCut > 0 ? (
+              <>
+                <ChargeRow label="Booking total" value={fmtBhd(grossBookingTotal)} p={p} subtle />
+                <ChargeRow label="Commission deducted" value={`− ${fmtBhd(commissionCut)}`} p={p} success />
+                <ChargeRow label="Net due" value={fmtBhd(grandTotal)} p={p} bold accent />
+              </>
+            ) : (
+              <ChargeRow label="Total" value={fmtBhd(grandTotal)} p={p} bold accent />
+            )}
             {paid > 0 && <ChargeRow label="Paid" value={fmtBhd(paid)} p={p} success />}
             {balance > 0 && <ChargeRow label="Balance due" value={fmtBhd(balance)} p={p} warn />}
             {balance === 0 && paid > 0 && (
@@ -2616,13 +2631,17 @@ function invoiceHtml(inv, bookings, hotel) {
 }
 
 function bookingConfirmHtml(b, { policyText, channelLabel, hotel } = {}) {
-  const subtotal   = (b.rate || 0) * (b.nights || 0);
-  const extrasList = Array.isArray(b.extras) ? b.extras : [];
-  const extrasSum  = extrasList.reduce((s, e) => s + (Number(e.price) || 0), 0);
-  const grandTotal = Number(b.total) || 0;
-  const taxAmount  = Math.max(0, +(grandTotal - subtotal - extrasSum).toFixed(3));
-  const paid       = Number(b.paid) || 0;
-  const balance    = Math.max(0, +(grandTotal - paid).toFixed(3));
+  const subtotal       = (b.rate || 0) * (b.nights || 0);
+  const extrasList     = Array.isArray(b.extras) ? b.extras : [];
+  const extrasSum      = extrasList.reduce((s, e) => s + (Number(e.price) || 0), 0);
+  const grandTotal     = Number(b.total) || 0;
+  const commissionCut  = b.commissionDeducted ? Number(b.commissionDeductedAmount ?? b.comm ?? 0) : 0;
+  const taxAmount      = (typeof b.taxAmount === "number")
+    ? b.taxAmount
+    : Math.max(0, +(grandTotal + commissionCut - subtotal - extrasSum).toFixed(3));
+  const grossBookingTotal = Math.max(0, +(subtotal + extrasSum + taxAmount).toFixed(3));
+  const paid           = Number(b.paid) || 0;
+  const balance        = Math.max(0, +(grandTotal - paid).toFixed(3));
   const phone = (hotel && hotel.phone) || "+973 1616 8146";
   const front = (hotel && hotel.email) || "reservations@thelodgesuites.com";
   return docShell({
@@ -2649,7 +2668,9 @@ function bookingConfirmHtml(b, { policyText, channelLabel, hotel } = {}) {
       <tr><td>${esc(ROOM_LABEL[b.roomId] || b.roomId)} · ${esc(b.nights)} ${b.nights === 1 ? "night" : "nights"} @ ${esc(fmtBhd(b.rate))}</td><td style="text-align:right;">${esc(fmtBhd(subtotal))}</td></tr>
       ${extrasList.map((e) => `<tr><td>Extra · ${esc(e.title)}</td><td style="text-align:right;">${esc(fmtBhd(e.price))}</td></tr>`).join("")}
       ${taxAmount > 0 ? `<tr><td>Taxes &amp; service</td><td style="text-align:right;">${esc(fmtBhd(taxAmount))}</td></tr>` : ""}
-      <tr><td><strong>Total</strong></td><td style="text-align:right;" class="total">${esc(fmtBhd(grandTotal))}</td></tr>
+      ${commissionCut > 0 ? `<tr><td>Booking total</td><td style="text-align:right;">${esc(fmtBhd(grossBookingTotal))}</td></tr>` : ""}
+      ${commissionCut > 0 ? `<tr><td>Commission deducted</td><td style="text-align:right;color:#16A34A;font-weight:700;">− ${esc(fmtBhd(commissionCut))}</td></tr>` : ""}
+      <tr><td><strong>${commissionCut > 0 ? "Net due" : "Total"}</strong></td><td style="text-align:right;" class="total">${esc(fmtBhd(grandTotal))}</td></tr>
       ${paid > 0 ? `<tr><td>Paid</td><td style="text-align:right;color:#16A34A;font-weight:700;">${esc(fmtBhd(paid))}</td></tr>` : ""}
       ${balance > 0 ? `<tr><td>Balance due</td><td style="text-align:right;color:#9A3A30;font-weight:700;">${esc(fmtBhd(balance))}</td></tr>` : ""}
     </table>
@@ -2880,7 +2901,27 @@ function BookStayTab({ session, kind, account, onComplete }) {
   const tier = kind === "member" ? tiers.find((t) => t.id === account.tier) : null;
   const pointsEarned = kind === "member" && tier ? Math.round((tier.earnRate || 1) * grandTotal) : 0;
   const memberDiscountPct = kind === "member" ? (MEMBER_DISCOUNT_PCT[account.tier] || 0) : 0;
-  const agentCommission = kind === "agent" ? Math.round((subTotalRoom * (account.commissionPct || 0) / 100) * 1000) / 1000 : 0;
+  // Commission base — rooms-only after pay-now discount. Matches the
+  // per-line commission in confirm() (booking.comm = roomTotal × pct/100,
+  // where roomTotal excludes extra beds and is net of the pay-now split).
+  // Sum across all booking rows equals this number, so the rail's displayed
+  // commission stays consistent with the figures stamped on each booking.
+  const roomGrossSum  = stayTotals.reduce((sum, s) => sum + (s.roomRevenue || 0), 0);
+  const commissionBase = Math.max(0, roomGrossSum - payNowDiscount);
+  const agentCommission = kind === "agent"
+    ? Math.round((commissionBase * (account.commissionPct || 0) / 100) * 1000) / 1000
+    : 0;
+  // Final calculation — when the agent opts to settle this booking net of
+  // commission, deduct the accrued commission from the displayed grand
+  // total and from each booking line's `total`. The auto-issued AR booking
+  // invoice (kind:"booking") is raised for this net amount, and the
+  // commission invoice (kind:"commission") is auto-issued as paid for the
+  // deducted figure. Together the agent's net obligation matches what the
+  // rail surfaces.
+  const commissionDeduction = (kind === "agent" && canDeductCommission && deductCommission)
+    ? agentCommission
+    : 0;
+  const grandTotalNet = Math.max(0, Math.round((grandTotal - commissionDeduction) * 1000) / 1000);
 
   const addRoomType = (roomId) => {
     setStays((ss) => {
@@ -2994,7 +3035,14 @@ function BookStayTab({ session, kind, account, onComplete }) {
           ? { totalTax: 0, lines: [] }
           : applyTaxes(lineTaxBase, tax, Math.max(1, nights));
         const lineTax = lineTaxResult.totalTax;
-        const total = Math.round((roomTotal + lineExtras + lineTax) * 1000) / 1000;
+        // Commission deduction at booking — when the agent opts to settle
+        // net of commission, drop this line's commission from `total` so
+        // the booking record stamps the net obligation. Tax stays on the
+        // gross room base for accounting; only the bottom-line drops.
+        const lineCommissionDeduction = (kind === "agent" && canDeductCommission && deductCommission)
+          ? Math.round((roomTotal * (account.commissionPct || 0) / 100) * 1000) / 1000
+          : 0;
+        const total = Math.round((roomTotal + lineExtras + lineTax - lineCommissionDeduction) * 1000) / 1000;
         const bookedByOther = bookFor === "other";
         // Payment status mapping mirrors the public BookingModal contract.
         // For pre-payment-contracted partners, pay-now captures the card
@@ -3106,6 +3154,25 @@ function BookStayTab({ session, kind, account, onComplete }) {
           description: `Commission · auto-deducted at booking ${c.bookingId}`,
         });
       });
+      // Pair the paid commission invoice with an AR booking invoice (the
+      // net amount the agent now owes the hotel) when the contract isn't
+      // pre-payment — pay-now / pay-on-arrival contracts settle directly,
+      // no Net-X invoice required. The AR invoice is the agent-side
+      // counterpart of the corporate Net-X invoice issued below.
+      if (!isPrepay) {
+        const leadTotal = created.reduce((s, c) => s + (c.total || 0), 0);
+        if (leadTotal > 0) {
+          addInvoice({
+            clientType: "agent", clientName: account.name, bookingId: null,
+            issued: todayISO(),
+            due: addDaysISO(todayISO(), parseInt((account.paymentTerms || "Net 30").match(/\d+/)?.[0] || "30", 10)),
+            amount: leadTotal, paid: 0, status: "issued",
+            // Booking-AR — agent owes the hotel net of commission.
+            kind: "booking",
+            description: `Booking · net of commission · ${created.length} ${created.length === 1 ? "stay" : "stays"}`,
+          });
+        }
+      }
     }
     // Skip the auto-issue invoice when the corporate contract is prepay —
     // the funds either landed at booking (pay-now) or will land in cash on
@@ -3122,8 +3189,8 @@ function BookStayTab({ session, kind, account, onComplete }) {
         kind: "booking",
       });
     }
-    pushToast({ message: `Booking confirmed · ${created.length} room${created.length === 1 ? "" : "s"} · ${nights} nights · ${fmtBhd(grandTotal)}` });
-    setConfirmation({ count: created.length, total: grandTotal, checkIn, checkOut, nights, kind, account });
+    pushToast({ message: `Booking confirmed · ${created.length} room${created.length === 1 ? "" : "s"} · ${nights} nights · ${fmtBhd(grandTotalNet)}` });
+    setConfirmation({ count: created.length, total: grandTotalNet, checkIn, checkOut, nights, kind, account });
     onComplete?.();
   };
 
@@ -3225,6 +3292,7 @@ function BookStayTab({ session, kind, account, onComplete }) {
               stayTotals={stayTotals} extrasList={extrasList} partySize={partySize}
               taxBreakdown={taxBreakdown} taxIncluded={taxIncluded}
               subTotalRoom={subTotalRoom} extrasTotal={extrasTotal} grandTotal={grandTotal}
+              commissionDeduction={commissionDeduction} grandTotalNet={grandTotalNet}
               requestNotes={requestNotes}
               kind={kind} account={account} session={session}
               tier={tier} pointsEarned={pointsEarned} memberDiscountPct={memberDiscountPct} agentCommission={agentCommission}
@@ -3256,6 +3324,9 @@ function BookStayTab({ session, kind, account, onComplete }) {
               guest={guest} bookFor={bookFor}
               totalAdults={totalAdults} totalChildren={totalChildren}
               payNowDiscount={payNowDiscount} payNowDiscountPct={PAY_NOW_DISCOUNT_PCT}
+              commissionDeduction={commissionDeduction}
+              commissionPct={kind === "agent" ? account?.commissionPct : 0}
+              grandTotalNet={grandTotalNet}
             />
 
             {step < 4 ? (
@@ -3287,7 +3358,7 @@ function BookStayTab({ session, kind, account, onComplete }) {
                   fontWeight: 700, letterSpacing: "0.25em", textTransform: "uppercase",
                   cursor: cardMissing ? "not-allowed" : "pointer",
                 }}
-              ><CheckCircle2 size={14} /> Confirm · {fmtBhd(grandTotal)}</button>
+              ><CheckCircle2 size={14} /> Confirm · {fmtBhd(grandTotalNet)}</button>
             )}
             {cardMissing && (
               <div style={{ color: p.warn, fontSize: "0.72rem", textAlign: "center", lineHeight: 1.55, fontFamily: "'Manrope', sans-serif" }}>
@@ -3979,6 +4050,7 @@ function ExtrasStep({ activeExtras, pickedExtras, setPickedExtras, partySize, ni
 function ConfirmStep({
   checkIn, checkOut, nights, stayTotals, extrasList, partySize,
   taxBreakdown, taxIncluded, subTotalRoom, extrasTotal, grandTotal,
+  commissionDeduction = 0, grandTotalNet,
   requestNotes, kind, account, session, tier, pointsEarned, memberDiscountPct, agentCommission,
   guest, bookFor, totalAdults, totalChildren,
   isPrepay, paymentTiming, setPaymentTiming, payNowDiscount, payNowDiscountPct,
@@ -4108,6 +4180,7 @@ function ConfirmStep({
               checked={!!deductCommission}
               onChange={(v) => setDeductCommission?.(v)}
               subtotal={subTotalRoom}
+              bookingTotal={grandTotal}
               commissionPct={account.commissionPct}
               commissionAmount={agentCommission}
             />
@@ -4223,6 +4296,7 @@ function ConfirmStep({
               checked={!!deductCommission}
               onChange={(v) => setDeductCommission?.(v)}
               subtotal={subTotalRoom}
+              bookingTotal={grandTotal}
               commissionPct={account.commissionPct}
               commissionAmount={agentCommission}
               prepay
@@ -4243,8 +4317,13 @@ function ConfirmStep({
 //     auto-issues a paid commission invoice on confirm()
 // Reads from the active palette so it adapts to light/dark mode.
 // ---------------------------------------------------------------------------
-function DeductCommissionToggle({ p, checked, onChange, subtotal, commissionPct, commissionAmount, prepay = false, paymentTiming = "later" }) {
-  const netDue = Math.max(0, Math.round((Number(subtotal || 0) - Number(commissionAmount || 0)) * 1000) / 1000);
+function DeductCommissionToggle({ p, checked, onChange, subtotal, commissionPct, commissionAmount, bookingTotal, prepay = false, paymentTiming = "later" }) {
+  // Headline number — the booking total when supplied (so the mini-
+  // breakdown stays in sync with the rail). Falls back to the room
+  // subtotal for legacy callers that pre-date the bookingTotal prop.
+  const grossLine = (typeof bookingTotal === "number" && bookingTotal > 0) ? bookingTotal : Number(subtotal || 0);
+  const netDue = Math.max(0, Math.round((grossLine - Number(commissionAmount || 0)) * 1000) / 1000);
+  const grossLabel = (typeof bookingTotal === "number" && bookingTotal > 0) ? "Booking total" : "Subtotal";
   return (
     <div className="mt-3 p-3" style={{
       backgroundColor: p.bgPanelAlt,
@@ -4286,9 +4365,9 @@ function DeductCommissionToggle({ p, checked, onChange, subtotal, commissionPct,
           fontSize: "0.84rem",
         }}>
           <div className="flex items-baseline justify-between py-1" style={{ color: p.textSecondary }}>
-            <span>Subtotal</span>
+            <span>{grossLabel}</span>
             <span style={{ color: p.textPrimary, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
-              {fmtBhd(subtotal)}
+              {fmtBhd(grossLine)}
             </span>
           </div>
           <div className="flex items-baseline justify-between py-1" style={{ color: p.textSecondary }}>
@@ -4356,7 +4435,7 @@ function PortalPaymentChoice({ active, title, hint, badge, onClick, p }) {
 }
 
 // ─── Sticky reservation rail ────────────────────────────────────────────
-function ReservationRail({ p, checkIn, checkOut, nights, stayTotals, partySize, extrasList, subTotalRoom, grandTotal, taxBreakdown, taxIncluded, guest, bookFor, totalAdults, totalChildren, payNowDiscount = 0, payNowDiscountPct = 0 }) {
+function ReservationRail({ p, checkIn, checkOut, nights, stayTotals, partySize, extrasList, subTotalRoom, grandTotal, taxBreakdown, taxIncluded, guest, bookFor, totalAdults, totalChildren, payNowDiscount = 0, payNowDiscountPct = 0, commissionDeduction = 0, commissionPct = 0, grandTotalNet }) {
   const t = useT();
   const guestsLabel = (() => {
     const a = Number(totalAdults) || 0;
@@ -4449,10 +4528,30 @@ function ReservationRail({ p, checkIn, checkOut, nights, stayTotals, partySize, 
               All taxes are included in your contract rate.
             </div>
           )}
+          {/* Booking-total row appears whenever a commission deduction
+              follows — separates the gross figure from the net obligation
+              so the agent sees both. When there's no deduction this is
+              omitted and the bottom row keeps showing the headline total. */}
+          {commissionDeduction > 0 && (
+            <div className="flex items-center justify-between" style={{ color: p.textMuted, fontSize: "0.78rem" }}>
+              <span>Booking total</span>
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtBhd(grandTotal)}</span>
+            </div>
+          )}
+          {commissionDeduction > 0 && (
+            <div className="flex items-center justify-between" style={{ color: p.success, fontSize: "0.78rem", fontWeight: 700 }}>
+              <span>Commission deducted{commissionPct ? ` · ${commissionPct}%` : ""}</span>
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>− {fmtBhd(commissionDeduction)}</span>
+            </div>
+          )}
           <div style={{ height: 1, backgroundColor: p.border, margin: "10px 0" }} />
           <div className="flex items-center justify-between">
-            <span style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>Total</span>
-            <span style={{ color: p.accent, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtBhd(grandTotal)}</span>
+            <span style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+              {commissionDeduction > 0 ? "Net due" : "Total"}
+            </span>
+            <span style={{ color: p.accent, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+              {fmtBhd(commissionDeduction > 0 ? (grandTotalNet ?? grandTotal) : grandTotal)}
+            </span>
           </div>
         </div>
       )}

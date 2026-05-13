@@ -3,7 +3,7 @@ import { Ban, Briefcase, Building2, Calculator, CalendarCheck, Check, CheckCircl
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween } from "../../../../utils/date.js";
-import { useData, applyTaxes, roomFitsParty, canViewCardOnFile, maskCardNumber, cardOnFileExpired, CARD_VAULT_RETENTION_DAYS, describePackageConditions, packagePriceSuffix, getPackageRoomPrice } from "../../../../data/store.jsx";
+import { useData, applyTaxes, roomFitsParty, canViewCardOnFile, maskCardNumber, cardOnFileExpired, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, describePackageConditions, packagePriceSuffix, getPackageRoomPrice } from "../../../../data/store.jsx";
 import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 import { BookingDocPreviewModal, emailBookingDoc, printBookingDoc } from "../BookingDocs.jsx";
 
@@ -751,6 +751,28 @@ function BookingCreator({ onClose }) {
     notes: "",
     redeemPoints: 0,
   });
+  // Pre-payment branch — when a corporate/agent client's underlying
+  // contract is on "Pre-payment (cash)" terms, the admin needs to pick
+  // the same Pay-on-arrival / Pay-now choice the partner / B2C surfaces
+  // present, and capture a card on file when Pay-now is selected. Reset
+  // whenever the client or source changes so the staff member confirms
+  // the choice explicitly before each save.
+  const [paymentTiming, setPaymentTiming] = useState("later"); // "later" | "now"
+  const [cardName, setCardName] = useState("");
+  const [cardNum,  setCardNum]  = useState("");
+  const [cardExp,  setCardExp]  = useState("");
+  const [cardCvc,  setCardCvc]  = useState("");
+  useEffect(() => {
+    setPaymentTiming("later");
+    setCardName(""); setCardNum(""); setCardExp(""); setCardCvc("");
+  }, [source, client?.id]);
+  const PAY_NOW_DISCOUNT_PCT = 5;
+
+  const isPrepay = (source === "corporate" || source === "agent")
+    && (client?.paymentTerms || "") === "Pre-payment (cash)";
+  const needsCard = isPrepay && paymentTiming === "now";
+  const cardComplete = !!cardName.trim() && !!cardNum.trim() && !!cardExp.trim() && !!cardCvc.trim();
+  const cardMissing = needsCard && !cardComplete;
 
   const room = rooms.find(r => r.id === draft.roomId);
   const nights = nightsBetween(draft.checkIn, draft.checkOut);
@@ -812,7 +834,13 @@ function BookingCreator({ onClose }) {
     ? Math.min(subtotal - memberDiscount, Math.floor(Number(draft.redeemPoints || 0) / loyalty.redeemBhdPerPoints))
     : 0;
   const agentCommission = source === "agent" && client ? Math.round(subtotal * (client.commissionPct / 100)) : 0;
-  const total = Math.max(0, subtotal - memberDiscount - pointsDiscount);
+  // Pre-payment Pay-now discount — mirrors the partner/B2C 5% saving on
+  // the room subtotal. Only applies when the contract is pre-payment AND
+  // the admin chose Pay-now.
+  const payNowDiscount = (isPrepay && paymentTiming === "now")
+    ? Math.round(subtotal * (PAY_NOW_DISCOUNT_PCT / 100))
+    : 0;
+  const total = Math.max(0, subtotal - memberDiscount - pointsDiscount - payNowDiscount);
 
   // What name/email lands on the booking record.
   const finalGuest = source === "direct" ? guestName : (client?.name || client?.account || "");
@@ -821,12 +849,32 @@ function BookingCreator({ onClose }) {
   const valid = (
     nights > 0 && room &&
     (source === "direct" ? guestName.trim() && guestEmail.includes("@") : !!client) &&
-    Number(draft.redeemPoints || 0) <= (client?.points || 0)
+    Number(draft.redeemPoints || 0) <= (client?.points || 0) &&
+    !cardMissing
   );
 
   const submit = () => {
-    if (!valid) return;
+    if (!valid) {
+      if (cardMissing) {
+        pushToast({ message: "Card details required for Pay-now bookings.", kind: "warn" });
+      }
+      return;
+    }
     const id = `LS-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    // Card on file — captured only for pre-payment Pay-now bookings, the
+    // raw PAN is masked by buildCardOnFile before persistence and
+    // auto-purges after the configured retention window.
+    const cardOnFile = needsCard
+      ? buildCardOnFile({ name: cardName, number: cardNum, exp: cardExp })
+      : null;
+    const guaranteed = cardOnFile != null;
+    // Payment status mapping mirrors the partner-portal BookStayTab
+    // contract — pre-payment Pay-now sits at "pending" until the admin
+    // records the transaction ID via the Card-on-file panel; corporate
+    // Net-X bills as "invoiced"; everything else as "pending".
+    const paymentStatus = isPrepay
+      ? "pending"
+      : (source === "corporate" ? "invoiced" : "pending");
     addBooking({
       id,
       guest: finalGuest,
@@ -841,7 +889,14 @@ function BookingCreator({ onClose }) {
       total,
       paid: 0,
       status: "confirmed",
-      paymentStatus: source === "corporate" ? "invoiced" : "pending",
+      paymentStatus,
+      paymentTiming: isPrepay ? paymentTiming : "later",
+      nonRefundable: isPrepay && paymentTiming === "now",
+      payNowDiscountPct: (isPrepay && paymentTiming === "now") ? PAY_NOW_DISCOUNT_PCT : 0,
+      payNowDiscount,
+      cardOnFile,
+      guaranteed,
+      guaranteeMode: guaranteed ? "card" : "none",
     });
     if (source === "member" && client) {
       const tier = tiers.find((t) => t.id === client.tier);
@@ -964,6 +1019,93 @@ function BookingCreator({ onClose }) {
               <FormGroup label="Notes (internal)"><TextField value={draft.notes} onChange={(v) => setDraft({ ...draft, notes: v })} placeholder="High floor, late arrival, special occasion…" /></FormGroup>
             </div>
           </Card>
+
+          {/* Pre-payment branch — shown only when the selected corporate /
+              agency contract is on "Pre-payment (cash)" terms. Mirrors the
+              partner-portal BookStayTab / CorporateBookingDrawer flow:
+              Pay-now (with card capture) or Pay-on-arrival cash. Card
+              capture is required for Pay-now to guarantee the booking. */}
+          {isPrepay && (
+            <Card title="Payment" className="mt-6">
+              <div className="grid sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPaymentTiming("later")}
+                  className="text-start p-4 transition-all"
+                  style={{
+                    backgroundColor: paymentTiming === "later" ? p.bgHover : "transparent",
+                    border: `1px solid ${paymentTiming === "later" ? p.accent : p.border}`,
+                  }}
+                >
+                  <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.82rem", color: p.textPrimary, fontWeight: 600 }}>Pay on arrival</div>
+                  <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", marginTop: 4, lineHeight: 1.4 }}>
+                    Settled in cash at check-in. Booking held against the contract until then.
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentTiming("now")}
+                  className="text-start p-4 transition-all"
+                  style={{
+                    backgroundColor: paymentTiming === "now" ? p.bgHover : "transparent",
+                    border: `1px solid ${paymentTiming === "now" ? p.accent : p.border}`,
+                  }}
+                >
+                  <div className="flex items-center gap-2">
+                    <span style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.82rem", color: p.textPrimary, fontWeight: 600 }}>Pay now</span>
+                    <span style={{
+                      color: p.accent, fontSize: "0.58rem", letterSpacing: "0.22em",
+                      textTransform: "uppercase", fontWeight: 700,
+                      border: `1px solid ${p.accent}`, padding: "2px 6px",
+                    }}>Save {PAY_NOW_DISCOUNT_PCT}%</span>
+                  </div>
+                  <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", marginTop: 4, lineHeight: 1.4 }}>
+                    Card charged immediately. Non-refundable.
+                  </div>
+                </button>
+              </div>
+              {paymentTiming === "now" && (
+                <>
+                  <div className="mt-3 p-3" style={{
+                    backgroundColor: `${p.warn}14`,
+                    border: `1px solid ${p.warn}45`,
+                    fontSize: "0.78rem", lineHeight: 1.55, color: p.textPrimary,
+                  }}>
+                    <div style={{
+                      color: p.warn, fontSize: "0.58rem", letterSpacing: "0.22em",
+                      textTransform: "uppercase", fontWeight: 700, marginBottom: 4,
+                    }}>
+                      Non-refundable rate · Save {PAY_NOW_DISCOUNT_PCT}%
+                    </div>
+                    Capture a card to guarantee the room. The booking sits at
+                    Pending until the transaction ID is recorded on the
+                    Card-on-file panel.
+                  </div>
+                  {/* Card capture — raw PAN never persists; buildCardOnFile
+                      masks before write. */}
+                  <div className="mt-3 grid gap-3">
+                    <FormGroup label="Name on card">
+                      <TextField value={cardName} onChange={setCardName} />
+                    </FormGroup>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="col-span-3">
+                        <FormGroup label="Card number">
+                          <TextField value={cardNum} onChange={setCardNum} placeholder="•••• •••• •••• ••••" />
+                        </FormGroup>
+                      </div>
+                      <FormGroup label="Exp"><TextField value={cardExp} onChange={setCardExp} placeholder="MM/YY" /></FormGroup>
+                      <FormGroup label="CVC"><TextField value={cardCvc} onChange={setCardCvc} placeholder="•••" /></FormGroup>
+                    </div>
+                    {cardMissing && (
+                      <div style={{ color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.5 }}>
+                        Card details required for Pay-now bookings.
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </Card>
+          )}
         </div>
 
         <div className="lg:sticky lg:top-4 self-start">
@@ -975,6 +1117,7 @@ function BookingCreator({ onClose }) {
               <SummaryRow label="Avg rate" value={`${t("common.bhd")} ${Math.round(avgRate)}`} muted />
               {memberDiscount  > 0 && <SummaryRow label="Member tier discount" value={`− ${t("common.bhd")} ${memberDiscount.toLocaleString()}`} accent />}
               {pointsDiscount  > 0 && <SummaryRow label="Points redemption" value={`− ${t("common.bhd")} ${pointsDiscount.toLocaleString()}`} accent />}
+              {payNowDiscount  > 0 && <SummaryRow label={`Pay-now · ${PAY_NOW_DISCOUNT_PCT}% off`} value={`− ${t("common.bhd")} ${payNowDiscount.toLocaleString()}`} accent />}
               <div className="pt-3 mt-3 flex justify-between items-baseline" style={{ borderTop: `1px solid ${p.border}` }}>
                 <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", color: p.textPrimary }}>Guest total</span>
                 <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.accent, fontWeight: 700 }}>{t("common.bhd")} {total.toLocaleString()}</span>
@@ -996,6 +1139,11 @@ function BookingCreator({ onClose }) {
           {!valid && source !== "direct" && !client && (
             <p className="mt-3" style={{ color: p.danger, fontFamily: "'Manrope', sans-serif", fontSize: "0.8rem" }}>
               Pick a {(SOURCE_LABEL[source] || source).toLowerCase()} above to continue.
+            </p>
+          )}
+          {cardMissing && (
+            <p className="mt-3" style={{ color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.8rem" }}>
+              Card details required for Pay-now bookings.
             </p>
           )}
         </div>

@@ -48,7 +48,15 @@ const SOURCE_LABEL = {
 function buildFolio(booking, tax, rooms, extras) {
   const room = rooms?.find((r) => r.id === booking.roomId);
   const nights = booking.nights || 0;
-  const gross = booking.total || 0;
+  // When commission was deducted at booking, `booking.total` records the
+  // NET obligation (gross − commissionDeducted). The folio surfaces both
+  // figures so the gross/tax math still reconciles; the agent's bill is
+  // shown net at the bottom.
+  const commissionCut = booking.commissionDeducted
+    ? Number(booking.commissionDeductedAmount ?? booking.comm ?? 0)
+    : 0;
+  const netTotal = booking.total || 0;
+  const gross    = netTotal + commissionCut;
   const inv   = inverseApplyTaxes(gross, tax || { components: [] }, nights);
   const net   = inv?.net || gross;
   const compsApplied = inv?.components || [];
@@ -73,8 +81,10 @@ function buildFolio(booking, tax, rooms, extras) {
     extras:      [], // line items — bookings as stored don't carry per-extra entries; left empty
     components:  built.components || compsApplied || [],
     gross,
+    netTotal,
+    commissionCut,
     paid:        booking.paid || 0,
-    balance:     gross - (booking.paid || 0),
+    balance:     netTotal - (booking.paid || 0),
     weekdayNights, weekendNights, rateWeekday, rateWeekend, mixedNights,
   };
 }
@@ -256,11 +266,25 @@ export function BookingDocView({ booking, kind, tax, rooms, extras }) {
               <td style={tdNumStyle}>{fmtBhd(c.amount)}</td>
             </tr>
           ))}
+          {folio.commissionCut > 0 && (
+            <>
+              <tr>
+                <td style={{ ...tdStyle, fontWeight: 600 }} colSpan={3}>Booking total</td>
+                <td style={tdNumStyle}>{fmtBhd(folio.gross)}</td>
+              </tr>
+              <tr>
+                <td style={{ ...tdStyle, color: "#15803D" }} colSpan={3}>Commission deducted at booking</td>
+                <td style={{ ...tdNumStyle, color: "#15803D" }}>− {fmtBhd(folio.commissionCut)}</td>
+              </tr>
+            </>
+          )}
           <tr>
             <td style={{ ...tdStyle, fontWeight: 700, backgroundColor: "rgba(201,169,97,0.08)" }} colSpan={3}>
-              {isReceipt ? "Folio total" : isConfirm ? "Total" : "Total due"}
+              {folio.commissionCut > 0
+                ? (isReceipt ? "Net folio total" : isConfirm ? "Net due" : "Net due")
+                : (isReceipt ? "Folio total" : isConfirm ? "Total" : "Total due")}
             </td>
-            <td style={{ ...tdNumStyle, fontWeight: 700, backgroundColor: "rgba(201,169,97,0.08)", fontSize: "1rem" }}>{fmtBhd(folio.gross)}</td>
+            <td style={{ ...tdNumStyle, fontWeight: 700, backgroundColor: "rgba(201,169,97,0.08)", fontSize: "1rem" }}>{fmtBhd(folio.netTotal)}</td>
           </tr>
         </tbody>
       </table>
@@ -478,9 +502,21 @@ export function buildBookingDocHtml(booking, kind, { tax, rooms, hotel } = {}) {
         <td class="num">${escapeHtml(fmtBhd(folio.netRoom))}</td>
       </tr>
       ${taxRows}
+      ${folio.commissionCut > 0 ? `
+        <tr>
+          <td colspan="3" style="font-weight:600;">Booking total</td>
+          <td class="num">${escapeHtml(fmtBhd(folio.gross))}</td>
+        </tr>
+        <tr>
+          <td colspan="3" style="color:#15803D;">Commission deducted at booking</td>
+          <td class="num" style="color:#15803D;">− ${escapeHtml(fmtBhd(folio.commissionCut))}</td>
+        </tr>
+      ` : ""}
       <tr>
-        <td class="total" colspan="3">${isReceipt ? "Folio total" : isConfirm ? "Total" : "Total due"}</td>
-        <td class="num total" style="font-size:1rem;">${escapeHtml(fmtBhd(folio.gross))}</td>
+        <td class="total" colspan="3">${folio.commissionCut > 0
+          ? (isReceipt ? "Net folio total" : "Net due")
+          : (isReceipt ? "Folio total" : isConfirm ? "Total" : "Total due")}</td>
+        <td class="num total" style="font-size:1rem;">${escapeHtml(fmtBhd(folio.netTotal))}</td>
       </tr>
     </tbody>
   </table>
