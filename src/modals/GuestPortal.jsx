@@ -788,9 +788,23 @@ function AgentPortal({ session, setSession, pendingNav, consumePendingNav }) {
     () => bookings.filter((b) => b.source === "agent" && b.agencyId === agency.id),
     [bookings, agency.id]
   );
+  // All agent-tagged invoices for this agency. Kept for back-compat and for
+  // anything that needs the full ledger (e.g. dashboard outstanding totals).
   const accInvoices = useMemo(
     () => invoices.filter((i) => i.clientType === "agent" && i.clientName?.toLowerCase().includes(agency.name.toLowerCase())),
     [invoices, agency]
+  );
+  // Booking ledger — what the agency owes the hotel for stays. Treat missing
+  // `kind` as "booking" so legacy invoices keep working.
+  const accBookingInvoices = useMemo(
+    () => accInvoices.filter((i) => (i.kind || "booking") === "booking"),
+    [accInvoices]
+  );
+  // Commission ledger — what the hotel owes the agency for bringing the
+  // business. Only invoices explicitly tagged `kind: "commission"`.
+  const accCommissionInvoices = useMemo(
+    () => accInvoices.filter((i) => i.kind === "commission"),
+    [accInvoices]
   );
   const bookingIds = new Set(accBookings.map((b) => b.id));
   const accPayments = useMemo(
@@ -821,7 +835,7 @@ function AgentPortal({ session, setSession, pendingNav, consumePendingNav }) {
         selectedBookingId ? (
           <BookingDetail
             booking={accBookings.find((b) => b.id === selectedBookingId)}
-            invoices={accInvoices.filter((i) => i.bookingId === selectedBookingId)}
+            invoices={accBookingInvoices.filter((i) => i.bookingId === selectedBookingId)}
             payments={accPayments.filter((pay) => pay.bookingId === selectedBookingId)}
             viewer={{ type: "agent", id: agency.id, name: `${session.displayName} · ${agency.name}` }}
             palette={p}
@@ -836,9 +850,9 @@ function AgentPortal({ session, setSession, pendingNav, consumePendingNav }) {
           <BookingsList bookings={accBookings} kindLabel="agent" showCommission onSelect={(b) => setSelectedBookingId(b.id)} />
         )
       )}
-      {tab === "invoices"  && <InvoicesList invoices={accInvoices} bookings={accBookings} />}
+      {tab === "invoices"  && <InvoicesList invoices={accBookingInvoices} bookings={accBookings} />}
       {tab === "receipts"  && <ReceiptsList payments={accPayments} bookings={accBookings} />}
-      {tab === "statement" && <StatementView account={agency} kind="agent" invoices={accInvoices} payments={accPayments} />}
+      {tab === "statement" && <StatementView account={agency} kind="agent" invoices={accCommissionInvoices} payments={accPayments} ledger="commission" />}
       {tab === "messages"  && <CustomerMessagesTab kind="agent" account={agency} session={session} bookings={accBookings} />}
       {tab === "profile"   && <AgentProfileTab session={session} agency={agency} upsertAgency={upsertAgency} setSession={setSession} />}
     </PortalLayout>
@@ -1741,27 +1755,70 @@ function ReceiptsList({ payments, bookings }) {
   );
 }
 
-function StatementView({ account, kind, invoices, payments }) {
+function StatementView({ account, kind, invoices, payments, ledger = "booking" }) {
   const p = usePalette();
   const today = new Date().toISOString().slice(0, 10);
   const [from, setFrom] = useState(new Date(new Date().setMonth(new Date().getMonth() - 3)).toISOString().slice(0, 10));
   const [to,   setTo]   = useState(today);
 
+  // `ledger` controls the rhetoric of the page. "commission" means the
+  // money flow is hotel → agent, so we relabel charged/paid/balance to
+  // describe commission earned vs paid out. "booking" keeps the
+  // traditional AR statement copy.
+  const isCommission = ledger === "commission";
+  const copy = isCommission
+    ? {
+        title:           "Commission ledger",
+        downloadAction:  "Download commission ledger",
+        downloadToast:   "Commission ledger downloaded",
+        statCharged:     "Commission earned",
+        statPaid:        "Commission paid",
+        statBalance:     "Commission owed by hotel",
+        rowType:         "Commission invoice",
+        filePrefix:      "Commission",
+      }
+    : {
+        title:           "Statement",
+        downloadAction:  "Download statement",
+        downloadToast:   "Statement downloaded",
+        statCharged:     "Charged",
+        statPaid:        "Paid",
+        statBalance:     "Closing balance",
+        rowType:         "Invoice",
+        filePrefix:      "Statement",
+      };
+
   const filteredInv = invoices.filter((i) => (!from || i.issued >= from) && (!to || i.issued <= to));
-  const filteredPay = payments.filter((pay) => {
-    const d = (pay.ts || "").slice(0, 10);
-    return (!from || d >= from) && (!to || d <= to);
-  });
+  const filteredPay = isCommission
+    // The commission ledger is "hotel pays agent" only — we don't pool the
+    // agency's own card-payment activity into this view. The "paid" column
+    // is sourced from the invoice's own `paid` amount instead.
+    ? []
+    : payments.filter((pay) => {
+        const d = (pay.ts || "").slice(0, 10);
+        return (!from || d >= from) && (!to || d <= to);
+      });
 
   const totalCharged = filteredInv.reduce((s, i) => s + (i.amount || 0), 0);
   const totalPaid    = filteredInv.reduce((s, i) => s + (i.paid || 0), 0);
   const balance      = totalCharged - totalPaid;
 
   const downloadStatement = () => {
-    const html = statementHtml({ account, kind, from, to, invoices: filteredInv, payments: filteredPay });
-    downloadHtmlFile(html, `Statement-${(account.id || account.name).toString().replace(/\s+/g, "_")}-${from}_${to}.html`);
-    pushToast({ message: "Statement downloaded" });
+    const html = statementHtml({ account, kind, from, to, invoices: filteredInv, payments: filteredPay, ledger });
+    const fname = `${copy.filePrefix}-${(account.id || account.name).toString().replace(/\s+/g, "_")}-${from}_${to}.html`;
+    downloadHtmlFile(html, fname);
+    pushToast({ message: copy.downloadToast });
   };
+
+  // Commission ledger sources the "paid" column from the invoice itself
+  // (the hotel either settled the commission or it's still outstanding).
+  // Booking ledger keeps the original "interleave invoices + payments" view.
+  const ledgerRows = isCommission
+    ? filteredInv.map((i) => ({ kind: copy.rowType, date: i.issued, ref: i.id, charged: i.amount, paid: i.paid || 0 }))
+    : [
+        ...filteredInv.map((i) => ({ kind: copy.rowType, date: i.issued, ref: i.id, charged: i.amount, paid: 0 })),
+        ...filteredPay.map((pay) => ({ kind: "Payment", date: (pay.ts || "").slice(0, 10), ref: pay.id, charged: 0, paid: pay.amount * (pay.status === "refunded" ? -1 : 1) })),
+      ];
 
   return (
     <div>
@@ -1784,30 +1841,29 @@ function StatementView({ account, kind, invoices, payments }) {
           </div>
           <button onClick={downloadStatement} className="inline-flex items-center gap-1.5"
             style={{ backgroundColor: p.accent, color: p.theme === "light" ? "#FFFFFF" : "#15161A", border: `1px solid ${p.accent}`, padding: "0.55rem 1rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}
-          ><Download size={12} /> Download statement</button>
+          ><Download size={12} /> {copy.downloadAction}</button>
         </div>
       </Card>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-        <Stat label="Window"          value={`${fmtDate(from)} → ${fmtDate(to)}`} />
-        <Stat label="Charged"         value={fmtBhd(totalCharged)} color={p.accent} />
-        <Stat label="Paid"            value={fmtBhd(totalPaid)} color={p.success} />
-        <Stat label="Closing balance" value={fmtBhd(balance)} color={balance > 0 ? p.warn : p.success} />
+        <Stat label="Window"        value={`${fmtDate(from)} → ${fmtDate(to)}`} />
+        <Stat label={copy.statCharged} value={fmtBhd(totalCharged)} color={p.accent} />
+        <Stat label={copy.statPaid}    value={fmtBhd(totalPaid)}    color={p.success} />
+        <Stat label={copy.statBalance} value={fmtBhd(balance)}      color={balance > 0 ? p.warn : p.success} />
       </div>
 
-      <Card title={`Ledger · ${filteredInv.length + filteredPay.length} rows`} padded={false}>
+      <Card title={`${copy.title} · ${ledgerRows.length} ${ledgerRows.length === 1 ? "row" : "rows"}`} padded={false}>
         <div className="overflow-x-auto">
           <table className="w-full" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", color: p.textSecondary, backgroundColor: p.bgPanel }}>
             <thead>
               <tr style={{ backgroundColor: p.bgPanelAlt }}>
-                {["Date", "Type", "Reference", "Charged", "Paid"].map((h) => (
+                {["Date", "Type", "Reference", copy.statCharged, copy.statPaid].map((h) => (
                   <th key={h} className="text-start px-4 py-3" style={{ fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", color: p.accent, fontWeight: 700, borderBottom: `1px solid ${p.border}` }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {[...filteredInv.map((i) => ({ kind: "Invoice",  date: i.issued, ref: i.id, charged: i.amount,  paid: 0       })),
-                ...filteredPay.map((pay) => ({ kind: "Payment", date: (pay.ts || "").slice(0, 10), ref: pay.id, charged: 0, paid: pay.amount * (pay.status === "refunded" ? -1 : 1) }))]
+              {ledgerRows
                 .sort((a, b) => (a.date || "").localeCompare(b.date || ""))
                 .map((row, idx) => (
                   <tr key={idx} style={{ borderTop: `1px solid ${p.border}` }}>
@@ -1822,8 +1878,10 @@ function StatementView({ account, kind, invoices, payments }) {
                     </td>
                   </tr>
                 ))}
-              {(filteredInv.length === 0 && filteredPay.length === 0) && (
-                <tr><td colSpan={5} className="px-4 py-8 text-center" style={{ color: p.textMuted }}>No activity in this window.</td></tr>
+              {ledgerRows.length === 0 && (
+                <tr><td colSpan={5} className="px-4 py-8 text-center" style={{ color: p.textMuted }}>
+                  {isCommission ? "No commission activity in this window." : "No activity in this window."}
+                </td></tr>
               )}
             </tbody>
           </table>
@@ -3042,6 +3100,9 @@ function BookStayTab({ session, kind, account, onComplete }) {
           amount: c.comm,
           paid:   c.comm,
           status: "paid",
+          // Commission flow — money the hotel owes the agent. Tagged so it
+          // surfaces in the agent's Commission tab, not the Invoices tab.
+          kind: "commission",
           description: `Commission · auto-deducted at booking ${c.bookingId}`,
         });
       });
@@ -3057,6 +3118,8 @@ function BookStayTab({ session, kind, account, onComplete }) {
         issued: todayISO(),
         due: addDaysISO(todayISO(), parseInt((account.paymentTerms || "Net 30").match(/\d+/)?.[0] || "30", 10)),
         amount: leadTotal, paid: 0, status: "issued",
+        // Booking-AR — corporate owes the hotel under Net-X terms.
+        kind: "booking",
       });
     }
     pushToast({ message: `Booking confirmed · ${created.length} room${created.length === 1 ? "" : "s"} · ${nights} nights · ${fmtBhd(grandTotal)}` });
@@ -4425,32 +4488,44 @@ function NumberStepper({ label, value, onChange, min = 0, max = 99, p }) {
   );
 }
 
-function statementHtml({ account, kind, from, to, invoices, payments }) {
+function statementHtml({ account, kind, from, to, invoices, payments, ledger = "booking" }) {
+  const isCommission = ledger === "commission";
   const charged = invoices.reduce((s, i) => s + (i.amount || 0), 0);
   const paid    = invoices.reduce((s, i) => s + (i.paid || 0), 0);
   const balance = charged - paid;
   const accountName = account.account || account.name || account.id;
-  const rows = [
-    ...invoices.map((i) => ({ kind: "Invoice", date: i.issued, ref: i.id, charged: i.amount, paid: 0 })),
-    ...payments.map((pay) => ({ kind: "Payment", date: (pay.ts || "").slice(0, 10), ref: pay.id, charged: 0, paid: pay.amount * (pay.status === "refunded" ? -1 : 1) })),
-  ].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  // Commission ledger renders one row per invoice with the invoice's own
+  // paid amount; the booking ledger interleaves invoices and discrete
+  // payment records.
+  const rows = isCommission
+    ? invoices
+        .map((i) => ({ kind: "Commission invoice", date: i.issued, ref: i.id, charged: i.amount, paid: i.paid || 0 }))
+        .sort((a, b) => (a.date || "").localeCompare(b.date || ""))
+    : [
+        ...invoices.map((i) => ({ kind: "Invoice", date: i.issued, ref: i.id, charged: i.amount, paid: 0 })),
+        ...payments.map((pay) => ({ kind: "Payment", date: (pay.ts || "").slice(0, 10), ref: pay.id, charged: 0, paid: pay.amount * (pay.status === "refunded" ? -1 : 1) })),
+      ].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+
+  const labels = isCommission
+    ? { eyebrow: "Commission ledger", docTitle: "Commission ledger", charged: "Commission earned", paid: "Commission paid", balance: "Commission owed by hotel", ledger: "Commission ledger", chargedCol: "Earned", paidCol: "Paid" }
+    : { eyebrow: "Statement of account", docTitle: "Statement", charged: "Total charged", paid: "Total paid", balance: "Closing balance", ledger: "Ledger", chargedCol: "Charged", paidCol: "Paid" };
 
   return docShell({
-    title: `Statement · ${accountName}`,
+    title: `${labels.docTitle} · ${accountName}`,
     body: `
-    <div class="eyebrow">Statement of account · ${esc(kind)}</div>
+    <div class="eyebrow">${esc(labels.eyebrow)} · ${esc(kind)}</div>
     <h1>${esc(accountName)}</h1>
     <div class="muted" style="margin-top:6px;">Period · ${esc(fmtDate(from))} → ${esc(fmtDate(to))}</div>
     <table>
-      <tr><th>Total charged</th><td style="text-align:right;">${esc(fmtBhd(charged))}</td></tr>
-      <tr><th>Total paid</th><td style="text-align:right;color:#16A34A;font-weight:700;">${esc(fmtBhd(paid))}</td></tr>
-      <tr><th>Closing balance</th><td style="text-align:right;" class="total">${esc(fmtBhd(balance))}</td></tr>
+      <tr><th>${esc(labels.charged)}</th><td style="text-align:right;">${esc(fmtBhd(charged))}</td></tr>
+      <tr><th>${esc(labels.paid)}</th><td style="text-align:right;color:#16A34A;font-weight:700;">${esc(fmtBhd(paid))}</td></tr>
+      <tr><th>${esc(labels.balance)}</th><td style="text-align:right;" class="total">${esc(fmtBhd(balance))}</td></tr>
     </table>
-    <h2>Ledger</h2>
+    <h2>${esc(labels.ledger)}</h2>
     <table>
-      <tr><th>Date</th><th>Type</th><th>Reference</th><th style="text-align:right;">Charged</th><th style="text-align:right;">Paid</th></tr>
+      <tr><th>Date</th><th>Type</th><th>Reference</th><th style="text-align:right;">${esc(labels.chargedCol)}</th><th style="text-align:right;">${esc(labels.paidCol)}</th></tr>
       ${rows.map((r) => `<tr><td>${esc(fmtDate(r.date))}</td><td>${esc(r.kind)}</td><td>${esc(r.ref)}</td><td style="text-align:right;">${r.charged > 0 ? esc(fmtBhd(r.charged)) : "—"}</td><td style="text-align:right;color:${r.paid > 0 ? "#16A34A" : r.paid < 0 ? "#9A3A30" : "#6B665C"};">${r.paid !== 0 ? esc(fmtBhd(Math.abs(r.paid))) + (r.paid < 0 ? " (refund)" : "") : "—"}</td></tr>`).join("")}
-      ${rows.length === 0 ? `<tr><td colspan="5" style="text-align:center;color:#6B665C;">No activity in this window.</td></tr>` : ""}
+      ${rows.length === 0 ? `<tr><td colspan="5" style="text-align:center;color:#6B665C;">${isCommission ? "No commission activity in this window." : "No activity in this window."}</td></tr>` : ""}
     </table>
     `,
   });

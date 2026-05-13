@@ -223,16 +223,23 @@ export function notifyInvoiceIssued(invoice, deps = {}) {
   if (!invoice) return [];
   const customer = resolveInvoiceRecipient(invoice, deps);
   const summary  = `${invoice.id || ""} · ${fmtBhd(invoice.amount)}${invoice.due ? ` · due ${fmtShortDate(invoice.due)}` : ""}`;
+  // Commission invoices flip the rhetoric — the hotel is the one paying out,
+  // and the agent's portal-side message says funds are on the way rather
+  // than asking them to settle.
+  const isCommission = (invoice.kind || "booking") === "commission";
+  const staffTitle = isCommission ? `Commission invoice issued · ${invoice.id || ""}` : `Invoice issued · ${invoice.id || ""}`;
   const out = [makeNotification("invoice-issued", {
-    title: `Invoice issued · ${invoice.id || ""}`,
+    title: staffTitle,
     body:  `${summary}${customer ? ` · ${customer.label}` : ""}.`,
     recipientType: "staff",
     refType: "invoice", refId: invoice.id || null,
   })];
   if (customer) {
     out.push(makeNotification("invoice-issued", {
-      title: `New invoice · ${invoice.id || ""}`,
-      body:  `${summary}. Your finance team can settle it from the portal.`,
+      title: isCommission ? `Commission invoice · ${invoice.id || ""}` : `New invoice · ${invoice.id || ""}`,
+      body:  isCommission
+        ? `${summary}. Your commission is scheduled for settlement; track it in the Commission tab.`
+        : `${summary}. Your finance team can settle it from the portal.`,
       recipientType: customer.type, recipientId: customer.id,
       refType: "invoice", refId: invoice.id || null,
     }));

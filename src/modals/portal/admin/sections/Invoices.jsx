@@ -47,6 +47,8 @@ export const Invoices = ({ onNavigate }) => {
 
   const [status, setStatus] = useState("all");
   const [type, setType] = useState("all");
+  // "kind" discriminates booking-AR from commission-AP. "all" shows both.
+  const [kind, setKind] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [search, setSearch] = useState("");
@@ -66,6 +68,8 @@ export const Invoices = ({ onNavigate }) => {
     return invoices.filter((iv) => {
       if (status !== "all" && iv.status !== status) return false;
       if (type !== "all" && iv.clientType !== type) return false;
+      // Treat missing `kind` as "booking" (legacy invoices default).
+      if (kind !== "all" && (iv.kind || "booking") !== kind) return false;
       if (dateFrom && iv.issued < dateFrom) return false;
       if (dateTo && iv.issued > dateTo) return false;
       if (!ql) return true;
@@ -73,7 +77,7 @@ export const Invoices = ({ onNavigate }) => {
         || iv.clientName.toLowerCase().includes(ql)
         || (iv.bookingId || "").toLowerCase().includes(ql);
     });
-  }, [invoices, status, type, dateFrom, dateTo, search]);
+  }, [invoices, status, type, kind, dateFrom, dateTo, search]);
 
   const totals = invoices.reduce((acc, iv) => {
     acc.amount += iv.amount;
@@ -113,7 +117,7 @@ export const Invoices = ({ onNavigate }) => {
       <AgingCard aging={aging} />
 
       <Card title="Filters" className="mb-4">
-        <div className="grid md:grid-cols-5 gap-3">
+        <div className="grid md:grid-cols-6 gap-3">
           <div>
             <div className="flex items-center" style={{ border: `1px solid ${p.border}`, backgroundColor: p.inputBg }}>
               <Search size={14} style={{ color: p.textMuted, marginInlineStart: 10 }} />
@@ -132,6 +136,11 @@ export const Invoices = ({ onNavigate }) => {
             { value: "guest", label: "Guests" },
             { value: "corporate", label: "Corporate" },
             { value: "agent", label: "Travel agents" },
+          ]} />
+          <SelectField value={kind} onChange={setKind} options={[
+            { value: "all", label: "All kinds" },
+            { value: "booking", label: "Booking (AR)" },
+            { value: "commission", label: "Commission (AP)" },
           ]} />
           <TextField type="date" value={dateFrom} onChange={setDateFrom} placeholder="From" />
           <TextField type="date" value={dateTo} onChange={setDateTo} placeholder="To" />
@@ -181,7 +190,19 @@ export const Invoices = ({ onNavigate }) => {
                     </button>
                   </Td>
                   <Td>
-                    <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.02rem", color: p.textPrimary }}>{iv.clientName}</div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.02rem", color: p.textPrimary }}>{iv.clientName}</span>
+                      {(iv.kind || "booking") === "commission" && (
+                        <span
+                          title="Hotel pays the agent — commission payable"
+                          style={{
+                            fontSize: "0.56rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                            padding: "1px 6px", color: p.success, border: `1px solid ${p.success}`,
+                            backgroundColor: `${p.success}14`,
+                          }}
+                        >Commission</span>
+                      )}
+                    </div>
                     <div style={{ color: p.textMuted, fontSize: "0.7rem", textTransform: "capitalize" }}>{iv.clientType}</div>
                   </Td>
                   <Td>
@@ -446,6 +467,9 @@ function InvoiceDetailsStep({ booking, onClose, onBack }) {
     due: clientFromBooking.clientType === "guest" ? new Date().toISOString().slice(0, 10) : inDays(30),
     notes: "",
     extras: [],
+    // Default to a booking-AR invoice. Operators can flip this on when the
+    // invoice is the hotel's payable to a travel agent.
+    kind: "booking",
   }));
 
   const subtotal = booking.rate * booking.nights;
@@ -458,6 +482,9 @@ function InvoiceDetailsStep({ booking, onClose, onBack }) {
   const removeExtra = (id) => setDraft((d) => ({ ...d, extras: d.extras.filter(e => e.id !== id) }));
 
   const create = () => {
+    // Only agent invoices can ride the commission ledger. Force booking
+    // otherwise so a stray draft value can't leak across client types.
+    const kind = draft.clientType === "agent" && draft.kind === "commission" ? "commission" : "booking";
     addInvoice({
       bookingId: booking.id,
       clientType: draft.clientType,
@@ -467,8 +494,9 @@ function InvoiceDetailsStep({ booking, onClose, onBack }) {
       amount: total,
       paid: 0,
       status: draft.due < new Date().toISOString().slice(0, 10) ? "overdue" : "issued",
+      kind,
     });
-    pushToast({ message: `Invoice generated for ${draft.clientName}` });
+    pushToast({ message: `${kind === "commission" ? "Commission invoice" : "Invoice"} generated for ${draft.clientName}` });
     onClose();
   };
 
@@ -535,6 +563,27 @@ function InvoiceDetailsStep({ booking, onClose, onBack }) {
             <FormGroup label="Notes (visible to client)" className="mt-4">
               <TextField value={draft.notes} onChange={(v) => setDraft({ ...draft, notes: v })} placeholder="Thank-you note, payment instructions, …" />
             </FormGroup>
+            {draft.clientType === "agent" && (
+              <label
+                className="mt-4 flex items-start gap-2 cursor-pointer"
+                style={{ padding: "0.7rem 0.85rem", border: `1px solid ${draft.kind === "commission" ? p.success : p.border}`, backgroundColor: draft.kind === "commission" ? `${p.success}10` : "transparent" }}
+              >
+                <input
+                  type="checkbox"
+                  checked={draft.kind === "commission"}
+                  onChange={(e) => setDraft({ ...draft, kind: e.target.checked ? "commission" : "booking" })}
+                  style={{ marginTop: 3 }}
+                />
+                <span>
+                  <span style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.85rem", fontWeight: 600 }}>
+                    Commission invoice (hotel pays the agent)
+                  </span>
+                  <span style={{ display: "block", color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 2 }}>
+                    Use for commission payable to the agency. Lands in the agent's Commission ledger, not their Invoices tab.
+                  </span>
+                </span>
+              </label>
+            )}
           </Card>
 
           <Card title="Extras (optional)" padded={false}
@@ -774,6 +823,7 @@ function InvoiceDetail({ invoice, onClose, onMarkPaid, onOpenBooking }) {
             )}
           </div>
           <Row label="Client type" value={invoice.clientType} />
+          <Row label="Kind" value={(invoice.kind || "booking") === "commission" ? "Commission (hotel → agent)" : "Booking (client → hotel)"} />
           <Row label="Issued" value={fmtDate(invoice.issued, lang)} />
           <Row label="Due" value={fmtDate(invoice.due, lang)} />
         </div>
@@ -781,7 +831,7 @@ function InvoiceDetail({ invoice, onClose, onMarkPaid, onOpenBooking }) {
 
       <Card title="Activity" className="mt-6">
         <ul className="space-y-2.5" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.82rem" }}>
-          <Activity color={p.accent}  text={`Issued on ${fmtDate(invoice.issued, lang)}`} />
+          <Activity color={p.accent}  text={`${(invoice.kind || "booking") === "commission" ? "Commission invoice issued" : "Issued"} on ${fmtDate(invoice.issued, lang)}`} />
           {invoice.paid > 0 && <Activity color={p.success} text={`Payment received · ${t("common.bhd")} ${invoice.paid.toLocaleString()}`} />}
           {invoice.status === "overdue" && <Activity color={p.danger}  text={`Marked overdue (due ${fmtDate(invoice.due, lang)})`} />}
         </ul>

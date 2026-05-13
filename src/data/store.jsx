@@ -381,14 +381,25 @@ const SAMPLE_BOOKINGS = [
                   capturedAt: _capturedDaysAgo(20), expiresAt: _expiresInDaysFrom(20) } },
 ];
 
+// Invoices carry an optional `kind` discriminator:
+//   "booking"    — money the client (guest / corporate / agent) owes the hotel
+//                  for a stay. This is the DEFAULT when the field is missing.
+//   "commission" — money the hotel owes a travel agent for commission earned
+//                  on a booking. Only meaningful for clientType "agent".
+// Two separate ledgers ride on the same `invoices` collection; the Guest
+// Portal's Invoices tab shows only `kind: "booking"` while the Commission
+// tab shows only `kind: "commission"`.
 const SAMPLE_INVOICES = [
-  { id: "INV-2026-0341", bookingId: "LS-A8K2N4", clientType: "guest",     clientName: "Sarah Holloway",      issued: "2026-04-28", due: "2026-04-28", amount: 339, paid: 339, status: "paid"      },
-  { id: "INV-2026-0342", bookingId: "LS-B3M1Q7", clientType: "corporate", clientName: "BAPCO",               issued: "2026-04-28", due: "2026-05-28", amount: 142, paid: 0,   status: "issued"    },
-  { id: "INV-2026-0343", bookingId: "LS-C9P5R2", clientType: "agent",     clientName: "Globepass Travel",    issued: "2026-04-29", due: "2026-05-29", amount:  17, paid: 0,   status: "issued"    },
-  { id: "INV-2026-0344", bookingId: "LS-D2T7W8", clientType: "agent",     clientName: "Cleartrip Bahrain",   issued: "2026-04-30", due: "2026-05-30", amount:  26, paid: 0,   status: "issued"    },
-  { id: "INV-2026-0335", bookingId: "LS-G7Z3A5", clientType: "corporate", clientName: "GFH Financial Group", issued: "2026-04-23", due: "2026-04-23", amount: 125, paid: 125, status: "paid"      },
-  { id: "INV-2026-0331", bookingId: "—",         clientType: "corporate", clientName: "BAPCO",               issued: "2026-04-15", due: "2026-04-15", amount: 980, paid: 0,   status: "overdue"   },
-  { id: "INV-2026-0298", bookingId: "—",         clientType: "agent",     clientName: "Almosafer Wholesale", issued: "2026-03-28", due: "2026-04-28", amount: 854, paid: 854, status: "paid"      },
+  { id: "INV-2026-0341", bookingId: "LS-A8K2N4", clientType: "guest",     clientName: "Sarah Holloway",      issued: "2026-04-28", due: "2026-04-28", amount: 339, paid: 339, status: "paid",    kind: "booking"    },
+  { id: "INV-2026-0342", bookingId: "LS-B3M1Q7", clientType: "corporate", clientName: "BAPCO",               issued: "2026-04-28", due: "2026-05-28", amount: 142, paid: 0,   status: "issued",  kind: "booking"    },
+  { id: "INV-2026-0343", bookingId: "LS-C9P5R2", clientType: "agent",     clientName: "Globepass Travel",    issued: "2026-04-29", due: "2026-05-29", amount:  17, paid: 0,   status: "issued",  kind: "booking"    },
+  { id: "INV-2026-0344", bookingId: "LS-D2T7W8", clientType: "agent",     clientName: "Cleartrip Bahrain",   issued: "2026-04-30", due: "2026-05-30", amount:  26, paid: 0,   status: "issued",  kind: "booking"    },
+  { id: "INV-2026-0335", bookingId: "LS-G7Z3A5", clientType: "corporate", clientName: "GFH Financial Group", issued: "2026-04-23", due: "2026-04-23", amount: 125, paid: 125, status: "paid",    kind: "booking"    },
+  { id: "INV-2026-0331", bookingId: "—",         clientType: "corporate", clientName: "BAPCO",               issued: "2026-04-15", due: "2026-04-15", amount: 980, paid: 0,   status: "overdue", kind: "booking"    },
+  { id: "INV-2026-0298", bookingId: "—",         clientType: "agent",     clientName: "Almosafer Wholesale", issued: "2026-03-28", due: "2026-04-28", amount: 854, paid: 854, status: "paid",    kind: "booking"    },
+  // Commission payables — money the hotel owes the agency for commission.
+  { id: "INV-2026-CR01", bookingId: "LS-A8K2N4", clientType: "agent",     clientName: "Globepass Travel",    issued: "2026-04-15", due: "2026-04-30", amount:   8, paid: 8,   status: "paid",    kind: "commission", description: "Commission · LS-A8K2N4 (Sarah Holloway)" },
+  { id: "INV-2026-CR02", bookingId: "LS-F6Y2Z4", clientType: "agent",     clientName: "Cleartrip Bahrain",   issued: "2026-04-20", due: "2026-05-04", amount:  14, paid: 0,   status: "issued",  kind: "commission", description: "Commission · LS-F6Y2Z4 (James Holloway)" },
 ];
 
 const SAMPLE_PAYMENTS = [

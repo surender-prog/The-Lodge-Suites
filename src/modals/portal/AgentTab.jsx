@@ -15,6 +15,7 @@ import { ContractEditor, defaultAgencyDraft } from "./ContractEditor.jsx";
 import { ContractPreviewModal, downloadContract, emailContract } from "./ContractDocument.jsx";
 import { AgencyWorkspaceDrawer } from "./AgencyWorkspace.jsx";
 import { ProspectExplorerDrawer } from "./ProspectExplorer.jsx";
+import { pushToast } from "./admin/ui.jsx";
 
 const SAMPLE_BOOKINGS = [
   // Globepass Travel — top agent, 2 stays pending invoice + 1 invoiced
@@ -62,7 +63,7 @@ export const AgentTab = () => {
   const t = useT();
   const p = usePalette();
   const { lang } = useLang();
-  const { agencies, upsertAgency, removeAgency, prospects, hotelInfo, tax } = useData();
+  const { agencies, upsertAgency, removeAgency, prospects, hotelInfo, tax, addInvoice } = useData();
   const [bookings] = useState(SAMPLE_BOOKINGS);
   const [selected, setSelected] = useState({});
   const [view, setView] = useState("dashboard");
@@ -194,7 +195,47 @@ export const AgentTab = () => {
         </div>
         <div className="mt-5 flex justify-end gap-3">
           <GoldBtn outline onClick={() => setShowInvoice(false)}>{t("portal.agent.editSelection")}</GoldBtn>
-          <GoldBtn>{t("portal.agent.sendToAgent")} <Send size={14} /></GoldBtn>
+          <GoldBtn onClick={() => {
+            // Bundle the picked bookings into a commission invoice per agency
+            // — the hotel owes each agent the sum of their selected commissions.
+            // Tagged `kind: "commission"` so it lands in the agent's
+            // Commission tab, not their Invoices (booking-AR) tab.
+            if (selectedBookings.length === 0) {
+              pushToast({ message: "Nothing selected", kind: "warn" });
+              return;
+            }
+            const byAgency = new Map();
+            selectedBookings.forEach((b) => {
+              const id = b.agencyId || "unknown";
+              if (!byAgency.has(id)) byAgency.set(id, []);
+              byAgency.get(id).push(b);
+            });
+            const today = new Date().toISOString().slice(0, 10);
+            const due   = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+            let issuedCount = 0;
+            byAgency.forEach((rows, agencyId) => {
+              const ag = agencies.find((a) => a.id === agencyId);
+              if (!ag) return;
+              const total = rows.reduce((s, r) => s + (r.comm || 0), 0);
+              const refs  = rows.map((r) => r.ref).join(", ");
+              addInvoice({
+                clientType: "agent",
+                clientName: ag.name,
+                bookingId: rows.length === 1 ? rows[0].ref : null,
+                issued: today,
+                due,
+                amount: total,
+                paid: 0,
+                status: "issued",
+                kind: "commission",
+                description: `Commission · ${rows.length} ${rows.length === 1 ? "booking" : "bookings"} · ${refs}`,
+              });
+              issuedCount += 1;
+            });
+            pushToast({ message: `Commission invoice issued · ${issuedCount} ${issuedCount === 1 ? "agency" : "agencies"}` });
+            setSelected({});
+            setShowInvoice(false);
+          }}>{t("portal.agent.sendToAgent")} <Send size={14} /></GoldBtn>
         </div>
       </div>
     );

@@ -616,6 +616,9 @@ function RowActions({ booking, onEdit }) {
       amount: booking.total,
       paid: 0,
       status: "issued",
+      // Booking-AR — the client owes the hotel for the stay. Commission
+      // payables are issued separately from the AgentTab commission flow.
+      kind: "booking",
     });
     pushToast({ message: `Invoice generated for ${booking.id}` });
   };
@@ -1260,6 +1263,8 @@ function BookingEditor({ booking, onClose }) {
       clientName: booking.guest,
       issued: today, due,
       amount: grandTotal, paid: 0, status: "issued",
+      // Booking-AR — what the client owes the hotel for this stay.
+      kind: "booking",
     });
     pushToast({ message: `Invoice generated for ${booking.id}` });
   };
