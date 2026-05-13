@@ -1536,14 +1536,30 @@ function BookingEditor({ booking, onClose }) {
             )}
 
             {draft.source === "agent" && (
-              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <FormGroup label="Commission %">
-                  <TextField type="number" value={draft.commPct ?? ""} onChange={(v) => update({ commPct: Number(v) || 0 })} suffix="%" />
-                </FormGroup>
-                <FormGroup label="Commission earned (BHD)">
-                  <TextField type="number" value={draft.comm ?? ""} onChange={(v) => update({ comm: Number(v) || 0 })} suffix="BHD" />
-                </FormGroup>
-              </div>
+              <>
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <FormGroup label="Commission %">
+                    <TextField type="number" value={draft.commPct ?? ""} onChange={(v) => update({ commPct: Number(v) || 0 })} suffix="%" />
+                  </FormGroup>
+                  <FormGroup label="Commission earned (BHD)">
+                    <TextField type="number" value={draft.comm ?? ""} onChange={(v) => update({ comm: Number(v) || 0 })} suffix="BHD" />
+                  </FormGroup>
+                </div>
+                {draft.commissionDeducted && (
+                  <div className="mt-3 p-3 flex items-start gap-2" style={{
+                    backgroundColor: `${p.success}10`,
+                    border: `1px solid ${p.success}40`,
+                    borderInlineStart: `3px solid ${p.success}`,
+                  }}>
+                    <div style={{ marginTop: 2, color: p.success, fontWeight: 700, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif" }}>
+                      Paid at booking
+                    </div>
+                    <div style={{ color: p.textSecondary, fontSize: "0.84rem", lineHeight: 1.55, fontFamily: "'Manrope', sans-serif" }}>
+                      Commission · deducted at booking · <strong style={{ color: p.textPrimary }}>{t("common.bhd")} {(Number(draft.commissionDeductedAmount ?? draft.comm ?? 0)).toLocaleString()}</strong>. An auto-paid commission invoice was issued at confirmation; this booking is excluded from commission-invoice bundling.
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </Card>
 

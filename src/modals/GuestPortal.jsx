@@ -1256,7 +1256,20 @@ function BookingsList({ bookings, kindLabel = "guest", showCommission = false, o
                     <td className="px-4 py-3" style={{ color: p.accent, fontWeight: 600 }}>{fmtBhd(b.total)}</td>
                     {showCommission && (
                       <td className="px-4 py-3" style={{ color: p.success, fontWeight: 600 }}>
-                        {b.comm != null ? fmtBhd(b.comm) : "—"}
+                        {b.comm != null ? (
+                          <span className="inline-flex items-center gap-1.5 flex-wrap">
+                            <span>{fmtBhd(b.comm)}</span>
+                            {b.commissionDeducted && (
+                              <span style={{
+                                color: p.success, backgroundColor: `${p.success}1A`, border: `1px solid ${p.success}40`,
+                                padding: "1px 6px", fontSize: "0.54rem", letterSpacing: "0.16em",
+                                textTransform: "uppercase", fontWeight: 700,
+                              }}>
+                                Paid at booking
+                              </span>
+                            )}
+                          </span>
+                        ) : "—"}
                       </td>
                     )}
                     <td className="px-4 py-3">{statusChip(p, b.status)}</td>
@@ -1417,7 +1430,21 @@ function BookingDetail({
           </div>
           {booking.comm != null && (
             <div className="mt-4 pt-3" style={{ borderTop: `1px dashed ${p.border}`, color: p.textMuted, fontSize: "0.78rem", fontFamily: "'Manrope', sans-serif" }}>
-              Commission earned: <span style={{ color: p.success, fontWeight: 700 }}>{fmtBhd(booking.comm)}</span>
+              {booking.commissionDeducted ? (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span>Commission · deducted at booking · paid:</span>
+                  <span style={{ color: p.success, fontWeight: 700 }}>{fmtBhd(booking.commissionDeductedAmount ?? booking.comm)}</span>
+                  <span style={{
+                    color: p.success, backgroundColor: `${p.success}1A`, border: `1px solid ${p.success}40`,
+                    padding: "2px 8px", fontSize: "0.6rem", letterSpacing: "0.18em",
+                    textTransform: "uppercase", fontWeight: 700,
+                  }}>
+                    Paid at booking
+                  </span>
+                </div>
+              ) : (
+                <>Commission earned: <span style={{ color: p.success, fontWeight: 700 }}>{fmtBhd(booking.comm)}</span></>
+              )}
             </div>
           )}
         </Card>
@@ -2640,6 +2667,19 @@ function BookStayTab({ session, kind, account, onComplete }) {
   const [paymentTiming, setPaymentTiming] = useState("later"); // "later" | "now"
   const PAY_NOW_DISCOUNT_PCT = 5;
 
+  // Agent-only — opt-in to settle the booking net of commission upfront.
+  // When ticked, the booking carries a `commissionDeducted` flag and an
+  // auto-paid commission invoice is issued at confirm; the agency owes the
+  // hotel net amount (total − commission) rather than the full net rate.
+  // Only relevant when kind === "agent" AND the agency contract carries a
+  // non-zero commission. Reset to false if the kind/contract changes.
+  const [deductCommission, setDeductCommission] = useState(false);
+  const agentCommissionPct = kind === "agent" ? Number(account?.commissionPct || 0) : 0;
+  const canDeductCommission = kind === "agent" && agentCommissionPct > 0;
+  useEffect(() => {
+    if (!canDeductCommission && deductCommission) setDeductCommission(false);
+  }, [canDeductCommission, deductCommission]);
+
   // Card-on-file capture — only required (and only rendered) when the
   // partner's contract is on pre-payment terms AND they choose Pay-now.
   // Mirrors the public BookingModal's required-card flow.
@@ -2967,13 +3007,45 @@ function BookStayTab({ session, kind, account, onComplete }) {
           rateWeekend:      s.rateWeekend || s.rate || 0,
         };
         if (kind === "corporate") booking.accountId = account.id;
-        if (kind === "agent")     { booking.agencyId = account.id; booking.comm = Math.round((roomTotal * (account.commissionPct || 0) / 100) * 1000) / 1000; }
+        if (kind === "agent") {
+          booking.agencyId = account.id;
+          booking.comm = Math.round((roomTotal * (account.commissionPct || 0) / 100) * 1000) / 1000;
+          // Deduct-at-booking branch — stamp the booking with the flag so
+          // the AR side knows the commission is already settled and won't
+          // bundle it onto a later commission invoice. We keep
+          // `booking.total` as the full net rate (gross billable) and
+          // record the deducted amount separately so the balance owed by
+          // the agency = total − commissionDeductedAmount − paid.
+          if (canDeductCommission && deductCommission && booking.comm > 0) {
+            booking.commissionDeducted = true;
+            booking.commissionDeductedAmount = booking.comm;
+          }
+        }
         if (kind === "member")    booking.memberId = account.id;
-        addBooking(booking);
-        created.push({ roomId: s.roomId, total });
+        const saved = addBooking(booking);
+        created.push({ roomId: s.roomId, total, bookingId: saved?.id, comm: booking.comm || 0, commissionDeducted: !!booking.commissionDeducted });
         if (isLead) extrasAttached = true;
       }
     });
+    // Auto-issue a "paid" commission invoice per line when the agent opted
+    // to deduct commission at booking. Each booking row gets its own
+    // invoice so the agent ledger ties the deduction to a specific stay.
+    if (kind === "agent" && canDeductCommission && deductCommission) {
+      created.forEach((c) => {
+        if (!c.commissionDeducted || !c.comm || c.comm <= 0) return;
+        addInvoice({
+          clientType: "agent",
+          clientName: account.name,
+          bookingId: c.bookingId,
+          issued: todayISO(),
+          due:    todayISO(),
+          amount: c.comm,
+          paid:   c.comm,
+          status: "paid",
+          description: `Commission · auto-deducted at booking ${c.bookingId}`,
+        });
+      });
+    }
     // Skip the auto-issue invoice when the corporate contract is prepay —
     // the funds either landed at booking (pay-now) or will land in cash on
     // arrival (pay-on-arrival); AR doesn't need a Net-X invoice in either
@@ -3102,6 +3174,9 @@ function BookStayTab({ session, kind, account, onComplete }) {
               cardExp={cardExp}   setCardExp={setCardExp}
               cardCvc={cardCvc}   setCardCvc={setCardCvc}
               cardMissing={cardMissing}
+              canDeductCommission={canDeductCommission}
+              deductCommission={deductCommission}
+              setDeductCommission={setDeductCommission}
             />
           )}
         </div>
@@ -3845,6 +3920,7 @@ function ConfirmStep({
   guest, bookFor, totalAdults, totalChildren,
   isPrepay, paymentTiming, setPaymentTiming, payNowDiscount, payNowDiscountPct,
   cardName, setCardName, cardNum, setCardNum, cardExp, setCardExp, cardCvc, setCardCvc, cardMissing,
+  canDeductCommission, deductCommission, setDeductCommission,
 }) {
   const t = useT();
   const p = usePalette();
@@ -3963,6 +4039,16 @@ function ConfirmStep({
           <div className="mt-2" style={{ color: p.textPrimary, fontSize: "0.84rem" }}>
             Booked at your net rates. <strong>{account.commissionPct}%</strong> commission accrued (≈ {fmtBhd(agentCommission)}).
           </div>
+          {canDeductCommission && (
+            <DeductCommissionToggle
+              p={p}
+              checked={!!deductCommission}
+              onChange={(v) => setDeductCommission?.(v)}
+              subtotal={subTotalRoom}
+              commissionPct={account.commissionPct}
+              commissionAmount={agentCommission}
+            />
+          )}
         </div>
       )}
 
@@ -4065,9 +4151,102 @@ function ConfirmStep({
               </div>
             </>
           )}
+          {/* Pre-payment branch · still allow agencies to deduct commission
+              from the amount paid (pay-now → charged net of commission;
+              pay-on-arrival → cash collected net of commission). */}
+          {kind === "agent" && canDeductCommission && (
+            <DeductCommissionToggle
+              p={p}
+              checked={!!deductCommission}
+              onChange={(v) => setDeductCommission?.(v)}
+              subtotal={subTotalRoom}
+              commissionPct={account.commissionPct}
+              commissionAmount={agentCommission}
+              prepay
+              paymentTiming={paymentTiming}
+            />
+          )}
         </div>
       )}
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// DeductCommissionToggle — checkbox banner on the agent confirm step that
+// lets the booker settle this stay net of commission. When ticked:
+//   • renders a small subtotal / − commission / net due breakdown
+//   • the parent flags the booking with commissionDeducted=true and
+//     auto-issues a paid commission invoice on confirm()
+// Reads from the active palette so it adapts to light/dark mode.
+// ---------------------------------------------------------------------------
+function DeductCommissionToggle({ p, checked, onChange, subtotal, commissionPct, commissionAmount, prepay = false, paymentTiming = "later" }) {
+  const netDue = Math.max(0, Math.round((Number(subtotal || 0) - Number(commissionAmount || 0)) * 1000) / 1000);
+  return (
+    <div className="mt-3 p-3" style={{
+      backgroundColor: p.bgPanelAlt,
+      border: `1px solid ${checked ? p.accent : p.border}`,
+      borderInlineStart: `3px solid ${checked ? p.accent : p.border}`,
+    }}>
+      <label className="flex items-start gap-2" style={{ cursor: "pointer" }}>
+        <input
+          type="checkbox"
+          checked={!!checked}
+          onChange={(e) => onChange?.(!!e.target.checked)}
+          style={{ marginTop: 3, accentColor: p.accent, cursor: "pointer" }}
+        />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            color: p.textPrimary, fontFamily: "'Manrope', sans-serif",
+            fontSize: "0.86rem", fontWeight: 600,
+          }}>
+            Deduct commission from this booking
+          </div>
+          <div className="mt-1" style={{
+            color: p.textMuted, fontFamily: "'Manrope', sans-serif",
+            fontSize: "0.76rem", lineHeight: 1.5,
+          }}>
+            {prepay
+              ? paymentTiming === "now"
+                ? "Pay the net of commission upfront. We'll auto-issue a paid commission invoice for your records."
+                : "Net of commission collected at check-in. We'll auto-issue a paid commission invoice for your records."
+              : "Pay the net of commission upfront. We'll auto-issue a paid commission invoice for your records."
+            }
+          </div>
+        </div>
+      </label>
+      {checked && (
+        <div className="mt-3 p-3" style={{
+          backgroundColor: `${p.accent}10`,
+          border: `1px solid ${p.accent}40`,
+          fontFamily: "'Manrope', sans-serif",
+          fontSize: "0.84rem",
+        }}>
+          <div className="flex items-baseline justify-between py-1" style={{ color: p.textSecondary }}>
+            <span>Subtotal</span>
+            <span style={{ color: p.textPrimary, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+              {fmtBhd(subtotal)}
+            </span>
+          </div>
+          <div className="flex items-baseline justify-between py-1" style={{ color: p.textSecondary }}>
+            <span>− {commissionPct}% commission</span>
+            <span style={{ color: p.warn, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+              − {fmtBhd(commissionAmount)}
+            </span>
+          </div>
+          <div className="flex items-baseline justify-between mt-1 pt-2" style={{
+            borderTop: `1px solid ${p.border}`,
+          }}>
+            <span style={{ color: p.textPrimary, fontWeight: 600 }}>
+              {prepay && paymentTiming === "now" ? "Net due now" : "Net due"}
+            </span>
+            <span style={{ color: p.accent, fontWeight: 700, fontSize: "1rem", fontVariantNumeric: "tabular-nums" }}>
+              {fmtBhd(netDue)}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

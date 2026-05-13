@@ -568,10 +568,21 @@ export const AgentTab = () => {
             {bookings.map((b) => {
               const sc = b.invoiced ? p.textDim : b.status === "stayed" ? p.success : p.warn;
               const ag = agencies.find(a => a.id === b.agencyId);
+              // Bookings settled net-of-commission at the time of booking are
+              // never billed via the commission-invoice flow. We grey the
+              // checkbox and swap the commission cell for a "deducted" badge.
+              const commDeducted = !!b.commissionDeducted;
+              const checkboxDisabled = b.invoiced || b.status !== "stayed" || commDeducted;
               return (
-                <tr key={b.ref} style={{ borderTop: `1px solid ${p.border}`, opacity: b.invoiced ? 0.55 : 1 }}>
+                <tr key={b.ref} style={{ borderTop: `1px solid ${p.border}`, opacity: (b.invoiced || commDeducted) ? 0.55 : 1 }}>
                   <td className="px-3 py-2.5">
-                    <input type="checkbox" disabled={b.invoiced || b.status !== "stayed"} checked={!!selected[b.ref]} onChange={() => toggleSelect(b.ref)} />
+                    <input
+                      type="checkbox"
+                      disabled={checkboxDisabled}
+                      checked={!!selected[b.ref]}
+                      onChange={() => toggleSelect(b.ref)}
+                      title={commDeducted ? "Commission deducted at booking" : undefined}
+                    />
                   </td>
                   <td className="px-3 py-2.5">
                     <button
@@ -602,7 +613,20 @@ export const AgentTab = () => {
                   <td className="px-3 py-2.5">{b.nights}</td>
                   <td className="px-3 py-2.5">{b.suite}</td>
                   <td className="px-3 py-2.5">{t("common.bhd")} {b.value}</td>
-                  <td className="px-3 py-2.5" style={{ color: p.accent, fontWeight: 600 }}>{t("common.bhd")} {b.comm}</td>
+                  <td className="px-3 py-2.5" style={{ color: p.accent, fontWeight: 600 }}>
+                    {commDeducted ? (
+                      <span className="inline-flex items-center" style={{
+                        color: p.success, backgroundColor: `${p.success}1A`,
+                        border: `1px solid ${p.success}40`, padding: "2px 8px",
+                        fontSize: "0.58rem", letterSpacing: "0.16em",
+                        textTransform: "uppercase", fontWeight: 700,
+                      }}>
+                        Deducted at booking
+                      </span>
+                    ) : (
+                      <>{t("common.bhd")} {b.comm}</>
+                    )}
+                  </td>
                   <td className="px-3 py-2.5">
                     <span style={{
                       fontSize: "0.62rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, padding: "3px 9px",
@@ -966,7 +990,10 @@ function AgentBookingDrawer({ booking, agencies, selected, onSelectToggle, onOpe
   const statusBase = booking.invoiced ? p.textDim : booking.status === "stayed" ? p.success : booking.status === "confirmed" ? p.warn : p.textMuted;
   const checkOutIso = booking.checkOut;
   const commPct = booking.value > 0 ? Math.round((booking.comm / booking.value) * 100) : 0;
-  const billable = booking.status === "stayed" && !booking.invoiced;
+  const commDeducted = !!booking.commissionDeducted;
+  // Deduct-at-booking bookings have settled the commission already; they
+  // should never appear on a commission invoice.
+  const billable = booking.status === "stayed" && !booking.invoiced && !commDeducted;
 
   const copyRef = async () => {
     try { await navigator.clipboard.writeText(booking.ref); }
@@ -1032,6 +1059,13 @@ function AgentBookingDrawer({ booking, agencies, selected, onSelectToggle, onOpe
                     color: p.accent, border: `1px solid ${p.accent}`, backgroundColor: `${p.accent}1F`,
                   }}>Selected for invoice</span>
                 )}
+                {commDeducted && (
+                  <span style={{
+                    fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.18em",
+                    textTransform: "uppercase", fontWeight: 700, padding: "3px 9px",
+                    color: p.success, border: `1px solid ${p.success}`, backgroundColor: `${p.success}1F`,
+                  }}>Commission · paid at booking</span>
+                )}
               </div>
               <div className="mt-2 flex items-center gap-2" style={{ color: p.accent, fontFamily: "ui-monospace, Menlo, monospace", fontSize: "0.85rem", fontWeight: 700, letterSpacing: "0.04em" }}>
                 {booking.ref}
@@ -1086,11 +1120,13 @@ function AgentBookingDrawer({ booking, agencies, selected, onSelectToggle, onOpe
             }}>
               <Clock size={14} style={{ color: p.warn, marginTop: 2, flexShrink: 0 }} />
               <div style={{ color: p.textSecondary, fontSize: "0.84rem", lineHeight: 1.55 }}>
-                {booking.invoiced
-                  ? <>This booking has already been included on a commission invoice. It can no longer be selected.</>
-                  : booking.status === "confirmed"
-                    ? <>The guest hasn't checked in yet. Commission becomes billable once the stay completes (status moves to <em>stayed</em>).</>
-                    : <>This booking is not currently in a billable state.</>}
+                {commDeducted
+                  ? <>Commission for this booking was <strong>deducted at the time of booking</strong>. The hotel paid {`${t("common.bhd")} ${(booking.commissionDeductedAmount ?? booking.comm ?? 0).toLocaleString()}`} by reducing the agency&apos;s bill. It can no longer be added to a commission invoice.</>
+                  : booking.invoiced
+                    ? <>This booking has already been included on a commission invoice. It can no longer be selected.</>
+                    : booking.status === "confirmed"
+                      ? <>The guest hasn't checked in yet. Commission becomes billable once the stay completes (status moves to <em>stayed</em>).</>
+                      : <>This booking is not currently in a billable state.</>}
               </div>
             </div>
           )}
@@ -1098,9 +1134,23 @@ function AgentBookingDrawer({ booking, agencies, selected, onSelectToggle, onOpe
           {/* KPI strip — stay value, commission, marketing fund (if any), nightly value */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-px mb-6" style={{ backgroundColor: p.border }}>
             <DetailKpi label="Stay value"   value={`${t("common.bhd")} ${(booking.value || 0).toLocaleString()}`} icon={Coins}      color={p.success} hint={`${t("common.bhd")} ${booking.nights > 0 ? Math.round(booking.value / booking.nights).toLocaleString() : "—"}/night`} p={p} />
-            <DetailKpi label="Commission"   value={`${t("common.bhd")} ${(booking.comm  || 0).toLocaleString()}`} icon={Percent}    color={p.accent}  hint={`${commPct}% of stay value`} p={p} />
+            <DetailKpi
+              label="Commission"
+              value={`${t("common.bhd")} ${(booking.comm || 0).toLocaleString()}`}
+              icon={Percent}
+              color={commDeducted ? p.success : p.accent}
+              hint={commDeducted ? "Paid at booking" : `${commPct}% of stay value`}
+              p={p}
+            />
             <DetailKpi label="Nights"       value={booking.nights}                                 icon={CalendarDays}   color={p.textPrimary} hint={booking.suite} p={p} />
-            <DetailKpi label="Status"       value={booking.invoiced ? "Invoiced" : booking.status} icon={booking.invoiced ? Receipt : Clock} color={statusBase} hint={booking.invoiced ? "Settled" : billable ? "Ready to invoice" : "Awaiting stay"} p={p} />
+            <DetailKpi
+              label="Status"
+              value={commDeducted ? "Commission paid" : booking.invoiced ? "Invoiced" : booking.status}
+              icon={(commDeducted || booking.invoiced) ? Receipt : Clock}
+              color={commDeducted ? p.success : statusBase}
+              hint={commDeducted ? "Deducted at booking" : booking.invoiced ? "Settled" : billable ? "Ready to invoice" : "Awaiting stay"}
+              p={p}
+            />
           </div>
 
           {/* Two-column detail grid */}
@@ -1158,8 +1208,17 @@ function AgentBookingDrawer({ booking, agencies, selected, onSelectToggle, onOpe
 
           {/* Commission breakdown */}
           <div style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}` }}>
-            <div className="px-5 py-3 flex items-center gap-2" style={{ borderBottom: `1px solid ${p.border}`, color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
-              <Coins size={12} /> Commission breakdown
+            <div className="px-5 py-3 flex items-center justify-between gap-2" style={{ borderBottom: `1px solid ${p.border}` }}>
+              <div className="flex items-center gap-2" style={{ color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                <Coins size={12} /> Commission breakdown
+              </div>
+              {commDeducted && (
+                <span style={{
+                  fontFamily: "'Manrope', sans-serif", fontSize: "0.58rem", letterSpacing: "0.18em",
+                  textTransform: "uppercase", fontWeight: 700, padding: "3px 9px",
+                  color: p.success, border: `1px solid ${p.success}`, backgroundColor: `${p.success}1F`,
+                }}>Paid at booking</span>
+              )}
             </div>
             <div className="px-5 py-4">
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem" }}>
@@ -1168,6 +1227,14 @@ function AgentBookingDrawer({ booking, agencies, selected, onSelectToggle, onOpe
                 <DetailField label="Commission BHD"      value={`${t("common.bhd")} ${(booking.comm || 0).toLocaleString()}`} accent p={p} />
                 <DetailField label="Net to hotel"        value={`${t("common.bhd")} ${((booking.value || 0) - (booking.comm || 0)).toLocaleString()}`} p={p} />
               </div>
+              {commDeducted && (
+                <div className="mt-4 p-3 flex items-start gap-2" style={{ backgroundColor: `${p.success}10`, border: `1px solid ${p.success}40`, borderInlineStart: `3px solid ${p.success}` }}>
+                  <Receipt size={14} style={{ color: p.success, marginTop: 2, flexShrink: 0 }} />
+                  <div style={{ color: p.textSecondary, fontSize: "0.78rem", lineHeight: 1.5 }}>
+                    The agency settled this booking <strong style={{ color: p.textPrimary }}>net of commission</strong> at the time of booking. A paid commission invoice of <strong style={{ color: p.textPrimary }}>{t("common.bhd")} {(booking.commissionDeductedAmount ?? booking.comm ?? 0).toLocaleString()}</strong> was issued automatically. No further commission is due.
+                  </div>
+                </div>
+              )}
               {agency && agency.commissionPct != null && commPct !== Number(agency.commissionPct) && (
                 <div className="mt-4 p-3 flex items-start gap-2" style={{ backgroundColor: `${p.warn}10`, border: `1px solid ${p.warn}40`, borderInlineStart: `3px solid ${p.warn}` }}>
                   <Sparkles size={14} style={{ color: p.warn, marginTop: 2, flexShrink: 0 }} />
@@ -1294,7 +1361,12 @@ function FilterPill({ children, active, color, onClick, p }) {
 // one-click quick-invoice, and bulk-invoice / CSV-export actions.
 // ---------------------------------------------------------------------------
 function CommissionWorkspace({ bookings, agencies, selected, setSelected, onOpenInvoice, onScrollToBookings, p, t }) {
-  const pending = useMemo(() => bookings.filter(b => b.status === "stayed" && !b.invoiced), [bookings]);
+  // Bookings whose commission was already settled at the time of booking
+  // (paid-at-booking flow) are never billed through this workspace.
+  const pending = useMemo(
+    () => bookings.filter(b => b.status === "stayed" && !b.invoiced && !b.commissionDeducted),
+    [bookings],
+  );
 
   const totalReady = useMemo(() => pending.reduce((s, b) => s + (b.comm || 0), 0), [pending]);
 
