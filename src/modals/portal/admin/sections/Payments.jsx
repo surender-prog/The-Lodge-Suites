@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { ArrowRight, Banknote, CreditCard, Download, ExternalLink, Mail, Printer, RotateCcw, Smartphone, TrendingUp, X } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
@@ -13,7 +13,7 @@ const METHOD_META = {
   cash:        { label: "Cash",         icon: Banknote },
 };
 
-export const Payments = ({ onNavigate }) => {
+export const Payments = ({ onNavigate, params, clearParams }) => {
   const t = useT();
   const p = usePalette();
   const { lang } = useLang();
@@ -22,6 +22,18 @@ export const Payments = ({ onNavigate }) => {
   const [method, setMethod] = useState("all");
   const [status, setStatus] = useState("all");
   const [activeId, setActiveId] = useState(null);
+
+  // Deep-link handoff — a notification or sibling section can hand us
+  // `{ paymentId }` and we'll auto-open the corresponding receipt panel.
+  // Falls back to a toast for stale references so the operator gets a
+  // clear "this no longer exists" cue instead of silent no-op.
+  useEffect(() => {
+    if (!params?.paymentId) return;
+    const target = payments.find((py) => py.id === params.paymentId);
+    if (target) setActiveId(target.id);
+    else pushToast({ message: `Payment ${params.paymentId} not found`, kind: "warn" });
+    clearParams?.();
+  }, [params, payments, clearParams]);
 
   const filtered = useMemo(() => payments.filter((py) => {
     if (method !== "all" && py.method !== method) return false;

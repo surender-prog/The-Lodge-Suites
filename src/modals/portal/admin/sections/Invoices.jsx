@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { ArrowRight, Bell, CheckCircle2, CreditCard, Download, ExternalLink, FileText, Plus, Save, Search, Send, Trash2, X } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
@@ -19,7 +19,7 @@ function ageBucket(invoice, today = new Date()) {
   return "ninety";
 }
 
-export const Invoices = ({ onNavigate }) => {
+export const Invoices = ({ onNavigate, params, clearParams }) => {
   const t = useT();
   const p = usePalette();
   const { lang } = useLang();
@@ -56,6 +56,18 @@ export const Invoices = ({ onNavigate }) => {
   const [viewing, setViewing] = useState(null);
   const [generating, setGenerating] = useState(null); // { booking? } | null
   const [paying, setPaying] = useState(null); // invoice | null
+
+  // Deep-link handoff — when a notification (or any sibling section)
+  // navigates here with `{ invoiceId }`, open that invoice's detail
+  // panel immediately. Falls back to a toast when the invoice can't be
+  // located (e.g. a stale notification referencing a removed record).
+  useEffect(() => {
+    if (!params?.invoiceId) return;
+    const target = invoices.find((iv) => iv.id === params.invoiceId);
+    if (target) setViewing(target);
+    else pushToast({ message: `Invoice ${params.invoiceId} not found`, kind: "warn" });
+    clearParams?.();
+  }, [params, invoices, clearParams]);
 
   // Bookings without an invoice yet — these are ripe for "+ Generate".
   const unbilled = useMemo(() => {

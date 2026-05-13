@@ -136,10 +136,18 @@ function PartnerPortalInner({ onClose }) {
             onSelect={(n) => {
               // Deep-link based on the related record. Bookings live on
               // the top-level Bookings tab; invoices and payments are
-              // operations sub-sections under Hotel Admin.
-              if (n.refType === "booking") navigate("bookings");
-              else if (n.refType === "invoice") navigate("admin", "invoices");
-              else if (n.refType === "payment") navigate("admin", "payments");
+              // operations sub-sections under Hotel Admin. The `refId`
+              // is forwarded as a param so the destination section
+              // opens the *specific* record (booking editor / invoice
+              // detail / payment row) rather than dumping the operator
+              // on the list view and asking them to hunt.
+              if (n.refType === "booking") {
+                navigate("bookings", null, { bookingId: n.refId });
+              } else if (n.refType === "invoice") {
+                navigate("admin", "invoices", { invoiceId: n.refId });
+              } else if (n.refType === "payment") {
+                navigate("admin", "payments", { paymentId: n.refId });
+              }
             }}
           />
           <ThemeToggle />
