@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle, BedDouble, Calendar as CalIcon, Check, CheckCircle2, ChevronDown, ChevronRight, Copy, Crown, Download,
-  Edit2, Eye, FileText, Gift, Layers, Mail, Plus, Printer, Receipt, Save, Search, Send, Trash2, User as UserIcon, UserCheck, X,
+  AlertTriangle, ArrowDown, ArrowUp, BedDouble, Calendar as CalIcon, Check, CheckCircle2, ChevronDown, ChevronRight, Copy, Crown, Download,
+  Edit2, Eye, FileText, Gift, Layers, Mail, Plus, Printer, Receipt, RotateCcw, Save, Search, Send, Settings, Trash2, User as UserIcon, UserCheck, X,
 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import {
-  useData, formatCurrency, GIFT_CARD_TIERS, computeGiftCardPrice,
+  useData, formatCurrency, DEFAULT_GIFT_CARD_TIERS, computeGiftCardPrice,
   generateGiftCardCode,
 } from "../../../../data/store.jsx";
 import {
@@ -52,11 +52,12 @@ const ROOM_LABEL_SHORT = { studio: "Studio", "one-bed": "One-Bed", "two-bed": "T
 // double up any embedded quote. Used by the Export CSV button to dump
 // the currently-filtered list to a spreadsheet-friendly file.
 const csvCell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-function exportGiftCardsCsv(cards) {
+function exportGiftCardsCsv(cards, tiers) {
   if (!cards || cards.length === 0) {
     pushToast({ message: "Nothing to export — current filter is empty.", kind: "warn" });
     return;
   }
+  const tierList = (tiers && tiers.length > 0) ? tiers : DEFAULT_GIFT_CARD_TIERS;
   const header = [
     "Code", "Card ID", "Status", "Tier", "Suite", "Total nights", "Used", "Remaining",
     "Discount %", "Rate / night", "Face value", "Paid amount",
@@ -65,7 +66,7 @@ function exportGiftCardsCsv(cards) {
   ];
   const rows = cards.map((c) => ([
     c.code, c.id, c.status,
-    (GIFT_CARD_TIERS.find((t) => t.id === c.tierId)?.label) || c.tierId || "—",
+    (tierList.find((t) => t.id === c.tierId)?.label) || c.tierId || "—",
     ROOM_LABEL_SHORT[c.roomId] || c.roomId || "—",
     c.totalNights || 0, c.nightsUsed || 0, (c.totalNights || 0) - (c.nightsUsed || 0),
     c.discountPct || 0, c.ratePerNight || 0, c.faceValue || 0, c.paidAmount || 0,
@@ -85,7 +86,14 @@ function exportGiftCardsCsv(cards) {
 
 export const GiftCards = () => {
   const p = usePalette();
-  const { giftCards, issueGiftCard, updateGiftCard, removeGiftCard, rooms, invoices, payments, members } = useData();
+  const { giftCards, issueGiftCard, updateGiftCard, removeGiftCard, rooms, invoices, payments, members, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers } = useData();
+  // Live tier list — falls back to bundled defaults when the admin
+  // has cleared the slice (extremely rare; mostly a safety net).
+  const tiers = useMemo(
+    () => (giftCardTiers && giftCardTiers.length > 0) ? giftCardTiers : DEFAULT_GIFT_CARD_TIERS,
+    [giftCardTiers]
+  );
+  const [editingTiers, setEditingTiers] = useState(false);
   const [filterStatus, setFilterStatus] = useState("all");
   const [search,       setSearch]       = useState("");
   const [creating,     setCreating]     = useState(false);
@@ -114,7 +122,7 @@ export const GiftCards = () => {
       return s + (remaining * (c.ratePerNight || 0));
     }, 0);
     // Tier distribution — by night-tier id. Drives the small chart card.
-    const byTier = GIFT_CARD_TIERS.map((t) => ({
+    const byTier = tiers.map((t) => ({
       ...t,
       count: giftCards.filter((c) => c.tierId === t.id).length,
     }));
@@ -143,7 +151,7 @@ export const GiftCards = () => {
       activeCount, redeemedCount, outstandingValue,
       byTier, bySuite, expiringSoon, redemptionRate,
     };
-  }, [giftCards]);
+  }, [giftCards, tiers]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -177,10 +185,33 @@ export const GiftCards = () => {
 
       {/* Secondary KPI strip — tier distribution + expiring + per-suite revenue */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-5">
-        {/* Tier distribution */}
-        <Card title="Tier mix" padded>
+        {/* Tier distribution — also the entry point to the live Tier
+            master editor. Operators can change nights / discount % /
+            label / hint / active toggle and have the edits flow through
+            the public Gift Vouchers page and the admin Issue card flow. */}
+        <Card title="Tier mix" padded action={
+          <GhostBtn small onClick={() => setEditingTiers(true)}>
+            <Settings size={11} /> Edit tiers
+          </GhostBtn>
+        }>
           {stats.totalIssued === 0 ? (
-            <div style={{ color: p.textMuted, fontSize: "0.82rem" }}>No cards issued yet.</div>
+            // No cards yet — still show the master so the operator can
+            // see the catalogue they're about to start selling.
+            <div className="space-y-2">
+              <div style={{ color: p.textMuted, fontSize: "0.78rem", marginBottom: 6 }}>
+                No cards issued yet. The catalogue below is what's offered on the public Gift Vouchers page.
+              </div>
+              {tiers.map((t) => (
+                <div key={t.id} className="flex items-center justify-between" style={{ fontSize: "0.74rem", fontFamily: "'Manrope', sans-serif" }}>
+                  <span style={{ color: t.active === false ? p.textMuted : p.textSecondary, textDecoration: t.active === false ? "line-through" : "none" }}>
+                    {t.nights}n · {t.discountPct}% — {t.label}
+                  </span>
+                  {t.active === false && (
+                    <span style={{ color: p.textMuted, fontSize: "0.58rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}>Off</span>
+                  )}
+                </div>
+              ))}
+            </div>
           ) : (
             <div className="space-y-2">
               {stats.byTier.map((t) => {
@@ -188,7 +219,10 @@ export const GiftCards = () => {
                 return (
                   <div key={t.id}>
                     <div className="flex items-center justify-between" style={{ fontSize: "0.74rem", fontFamily: "'Manrope', sans-serif" }}>
-                      <span style={{ color: p.textSecondary }}>{t.nights}n · {t.discountPct}% — {t.label}</span>
+                      <span style={{ color: t.active === false ? p.textMuted : p.textSecondary }}>
+                        {t.nights}n · {t.discountPct}% — {t.label}
+                        {t.active === false && <span style={{ color: p.textMuted, marginInlineStart: 6, fontSize: "0.62rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}>· off</span>}
+                      </span>
                       <span style={{ color: p.textPrimary, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{t.count}</span>
                     </div>
                     <div className="mt-1" style={{ height: 4, backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
@@ -291,7 +325,7 @@ export const GiftCards = () => {
               { value: "expired",   label: "Expired" },
             ]}
           />
-          <GhostBtn small onClick={() => exportGiftCardsCsv(filtered)}>
+          <GhostBtn small onClick={() => exportGiftCardsCsv(filtered, tiers)}>
             <Download size={11} /> Export CSV
           </GhostBtn>
         </div>
@@ -334,7 +368,7 @@ export const GiftCards = () => {
                   <Td muted>
                     <div>{ROOM_LABEL_SHORT[c.roomId] || c.roomId}</div>
                     <div style={{ fontSize: "0.7rem", marginTop: 2 }}>
-                      {(GIFT_CARD_TIERS.find((t) => t.id === c.tierId)?.label) || `${c.totalNights}-night`}
+                      {(tiers.find((t) => t.id === c.tierId)?.label) || `${c.totalNights}-night`}
                     </div>
                   </Td>
                   <Td align="end">
@@ -369,6 +403,7 @@ export const GiftCards = () => {
           rooms={rooms}
           existing={giftCards}
           members={members || []}
+          tiers={tiers}
           onClose={() => setCreating(false)}
           onCreate={(payload, opts) => {
             // issueGiftCard creates the card AND posts the matching
@@ -398,6 +433,26 @@ export const GiftCards = () => {
           }}
         />
       )}
+
+      {editingTiers && (
+        <TierMixEditor
+          p={p}
+          tiers={tiers}
+          giftCards={giftCards}
+          onClose={() => setEditingTiers(false)}
+          onSave={(next) => {
+            updateGiftCardTiers(next);
+            setEditingTiers(false);
+            pushToast({ message: "Gift card tier master updated. Public Gift Vouchers + Issue card flows now use the new mix." });
+          }}
+          onReset={() => {
+            if (!confirm("Reset the gift card tier master to its factory defaults? This will restore the six bundled tiers (5n / 10n / 15n / 20n / 25n / 30n).")) return;
+            resetGiftCardTiers();
+            setEditingTiers(false);
+            pushToast({ message: "Tier master reset to defaults." });
+          }}
+        />
+      )}
     </div>
   );
 };
@@ -408,7 +463,8 @@ export const GiftCards = () => {
 // difference is that admin can set the recipient + sender manually and
 // optionally pre-pick a custom paid amount when invoicing offline.
 // ─────────────────────────────────────────────────────────────────────────
-function GiftCardCreator({ p, rooms, existing, members, onClose, onCreate }) {
+function GiftCardCreator({ p, rooms, existing, members, tiers, onClose, onCreate }) {
+  const tierList = (tiers && tiers.length > 0) ? tiers.filter((t) => t.active !== false) : DEFAULT_GIFT_CARD_TIERS;
   const defaultRoomId = rooms?.find((r) => r.id === "one-bed")?.id || rooms?.[0]?.id || "studio";
   // Gift cards are member-only — both the recipient AND the buyer must
   // be LS Privilege members. We carry the picked member ids; the
@@ -433,7 +489,7 @@ function GiftCardCreator({ p, rooms, existing, members, onClose, onCreate }) {
   const senderMember    = useMemo(() => (members || []).find((m) => m.id === draft.senderMemberId), [members, draft.senderMemberId]);
 
   const room = useMemo(() => (rooms || []).find((r) => r.id === draft.roomId) || rooms?.[0], [rooms, draft.roomId]);
-  const tier = useMemo(() => GIFT_CARD_TIERS.find((t) => t.id === draft.tierId) || GIFT_CARD_TIERS[0], [draft.tierId]);
+  const tier = useMemo(() => tierList.find((t) => t.id === draft.tierId) || tierList[0], [draft.tierId, tierList]);
   const price = useMemo(
     () => computeGiftCardPrice({ nights: tier.nights, discountPct: tier.discountPct, ratePerNight: room?.price || 0 }),
     [tier, room]
@@ -559,7 +615,7 @@ function GiftCardCreator({ p, rooms, existing, members, onClose, onCreate }) {
               Six preset tiers. The discount stacks the more nights you buy. Each tier shows the price for the currently picked suite.
             </p>
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
-              {GIFT_CARD_TIERS.map((t) => {
+              {tierList.map((t) => {
                 const sel = draft.tierId === t.id;
                 const tp  = computeGiftCardPrice({ nights: t.nights, discountPct: t.discountPct, ratePerNight: room?.price || 0 });
                 return (
@@ -820,7 +876,7 @@ function RailRow({ p, label, value, bold = false, accent, muted = false }) {
 // cancel/expire if needed, copy the code to share.
 // ─────────────────────────────────────────────────────────────────────────
 function GiftCardDetail({ p, card, onClose, onUpdate, onRemove }) {
-  const { invoices, payments, hotelInfo, members } = useData();
+  const { invoices, payments, hotelInfo, members, giftCardTiers } = useData();
   const [draft, setDraft] = useState(card);
   // Which doc to preview — null hides the modal, "invoice" / "receipt"
   // pops the matching GiftCardDocPreviewModal.
@@ -829,8 +885,12 @@ function GiftCardDetail({ p, card, onClose, onUpdate, onRemove }) {
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
   const dirty = JSON.stringify(draft) !== JSON.stringify(card);
 
+  // Live tier master — admin edits here flow through immediately. Fall
+  // back to the seed if the slice is empty (first-load before hydration).
+  const tiers = (giftCardTiers && giftCardTiers.length > 0) ? giftCardTiers : DEFAULT_GIFT_CARD_TIERS;
+
   const remaining = (card.totalNights || 0) - (card.nightsUsed || 0);
-  const tier = GIFT_CARD_TIERS.find((t) => t.id === card.tierId);
+  const tier = tiers.find((t) => t.id === card.tierId);
   const sc = card.status === "issued" ? p.success : card.status === "redeemed" ? p.textMuted : card.status === "cancelled" ? p.danger : p.warn;
   const history = Array.isArray(card.redemptionHistory) ? card.redemptionHistory : [];
 
@@ -917,7 +977,7 @@ function GiftCardDetail({ p, card, onClose, onUpdate, onRemove }) {
             <SelectField
               value={draft.tierId || card.tierId}
               onChange={(v) => set({ tierId: v })}
-              options={GIFT_CARD_TIERS.map((t) => ({
+              options={tiers.map((t) => ({
                 value: t.id,
                 label: `${t.nights}n · ${t.discountPct}% · ${t.label}`,
               }))}
@@ -1075,8 +1135,8 @@ function GiftCardDetail({ p, card, onClose, onUpdate, onRemove }) {
             issuedDate={invoice?.issued ?? card.purchaseDate}
             status={invoice ? (invoice.status || "issued") : "missing"}
             onPreview={() => setPreviewKind("invoice")}
-            onDownload={() => downloadGiftCardDoc(card, "invoice", { hotel: hotelInfo, invoice, payment })}
-            onPrint={() => printGiftCardDoc(card, "invoice", { hotel: hotelInfo, invoice, payment })}
+            onDownload={() => downloadGiftCardDoc(card, "invoice", { hotel: hotelInfo, invoice, payment, tiers })}
+            onPrint={() => printGiftCardDoc(card, "invoice", { hotel: hotelInfo, invoice, payment, tiers })}
             onEmail={() => emailGiftCardDoc(card, "invoice", hotelInfo)}
           />
           <DocRow
@@ -1089,8 +1149,8 @@ function GiftCardDetail({ p, card, onClose, onUpdate, onRemove }) {
             status={payment ? (payment.status || "captured") : "missing"}
             extra={payment?.method ? `Method: ${(payment.method || "").charAt(0).toUpperCase() + (payment.method || "").slice(1)}` : null}
             onPreview={() => setPreviewKind("receipt")}
-            onDownload={() => downloadGiftCardDoc(card, "receipt", { hotel: hotelInfo, invoice, payment })}
-            onPrint={() => printGiftCardDoc(card, "receipt", { hotel: hotelInfo, invoice, payment })}
+            onDownload={() => downloadGiftCardDoc(card, "receipt", { hotel: hotelInfo, invoice, payment, tiers })}
+            onPrint={() => printGiftCardDoc(card, "receipt", { hotel: hotelInfo, invoice, payment, tiers })}
             onEmail={() => emailGiftCardDoc(card, "receipt", hotelInfo)}
           />
         </div>
@@ -1407,5 +1467,381 @@ function DetailStat({ p, label, value, accent }) {
       <div style={{ color: p.textMuted, fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>{label}</div>
       <div className="mt-1" style={{ color: accent || p.textPrimary, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.6rem", fontWeight: 500, lineHeight: 1.1 }}>{value}</div>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// TierMixEditor — admin master for the gift card tier catalogue.
+//
+// The seed lives in store.DEFAULT_GIFT_CARD_TIERS; the live editable copy
+// is on the giftCardTiers slice. Edits here flow through to:
+//   • The public Gift Vouchers page (tier picker + active filter)
+//   • The admin Issue card workspace (Creator)
+//   • The admin GiftCardDetail drawer (tier select)
+//   • The invoice + receipt docs (tier label on the line item)
+//   • The Tier mix card on this page
+//
+// The editor opens as a full-page Drawer so operators have room to see
+// every tier in one view, with clear add / remove / reorder controls.
+//
+// Validation runs at save-time (the store's updateGiftCardTiers also
+// clamps nights to 1-1000 and discountPct to 0-100, but we mirror those
+// guards here so the user sees errors before submitting).
+//
+// We DO NOT let the operator change a tier's `id` for tiers that have
+// existing issued cards bound to them — that would orphan those cards.
+// Adding new tiers requires picking a unique id (defaults to `${n}n`).
+// ─────────────────────────────────────────────────────────────────────────
+function TierMixEditor({ p, tiers, giftCards, onClose, onSave, onReset }) {
+  const [draft, setDraft] = useState(() => (tiers || []).map((t) => ({ ...t })));
+  // Track which tier ids have at least one card bound — those rows
+  // can't have their id changed or the row removed without forfeiting
+  // the associated cards' tier link.
+  const usedTierIds = useMemo(() => {
+    const set = new Set();
+    (giftCards || []).forEach((c) => { if (c.tierId) set.add(c.tierId); });
+    return set;
+  }, [giftCards]);
+
+  const dirty = JSON.stringify(draft) !== JSON.stringify(tiers || []);
+
+  const validation = useMemo(() => {
+    const errors = [];
+    const ids = new Set();
+    draft.forEach((t, i) => {
+      const idTrim = String(t.id || "").trim();
+      if (!idTrim) errors.push({ idx: i, msg: "Tier id is required." });
+      else if (ids.has(idTrim)) errors.push({ idx: i, msg: `Duplicate id "${idTrim}" — each tier needs a unique id.` });
+      else ids.add(idTrim);
+      const n = Number(t.nights);
+      if (!Number.isFinite(n) || n <= 0) errors.push({ idx: i, msg: "Nights must be a positive number." });
+      else if (n > 1000) errors.push({ idx: i, msg: "Nights cannot exceed 1000." });
+      const d = Number(t.discountPct);
+      if (!Number.isFinite(d) || d < 0) errors.push({ idx: i, msg: "Discount % cannot be negative." });
+      else if (d > 100) errors.push({ idx: i, msg: "Discount % cannot exceed 100." });
+      if (!String(t.label || "").trim()) errors.push({ idx: i, msg: "Label is required (recipients see this on the gift)." });
+    });
+    return errors;
+  }, [draft]);
+
+  const errByIdx = useMemo(() => {
+    const m = new Map();
+    validation.forEach((e) => {
+      if (!m.has(e.idx)) m.set(e.idx, []);
+      m.get(e.idx).push(e.msg);
+    });
+    return m;
+  }, [validation]);
+
+  const updateRow = (i, patch) => setDraft((d) => d.map((t, j) => (j === i ? { ...t, ...patch } : t)));
+  const removeRow = (i) => {
+    const t = draft[i];
+    if (t && usedTierIds.has(t.id)) {
+      pushToast({ message: `Cannot remove tier "${t.id}" — it's bound to existing gift cards. Mark it inactive instead.`, kind: "warn" });
+      return;
+    }
+    setDraft((d) => d.filter((_, j) => j !== i));
+  };
+  const moveRow = (i, dir) => {
+    setDraft((d) => {
+      const j = i + dir;
+      if (j < 0 || j >= d.length) return d;
+      const next = d.slice();
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  };
+  const addRow = () => {
+    // Pick a sensible default: next id "${n}n" where n is one more than
+    // the largest existing nights value (or 5 if empty).
+    const maxNights = draft.reduce((m, t) => Math.max(m, Number(t.nights) || 0), 0);
+    const nextNights = maxNights > 0 ? maxNights + 5 : 5;
+    let baseId = `${nextNights}n`;
+    let id = baseId;
+    let suffix = 1;
+    const used = new Set(draft.map((t) => t.id));
+    while (used.has(id)) { id = `${baseId}-${suffix++}`; }
+    setDraft((d) => d.concat({
+      id,
+      nights: nextNights,
+      discountPct: 10,
+      label: "New tier",
+      hint: `${nextNights} nights · 10% off`,
+      active: true,
+    }));
+  };
+
+  const canSave = dirty && validation.length === 0 && draft.length > 0;
+
+  const handleSave = () => {
+    if (!dirty) {
+      pushToast({ message: "Nothing to save — no changes made to the tier master.", kind: "warn" });
+      return;
+    }
+    if (draft.length === 0) {
+      pushToast({ message: "Add at least one tier before saving.", kind: "warn" });
+      return;
+    }
+    if (validation.length > 0) {
+      pushToast({ message: `Fix the ${validation.length} highlighted issue${validation.length === 1 ? "" : "s"} before saving.`, kind: "warn" });
+      return;
+    }
+    // Normalise + clamp before handing to the store (the store also
+    // clamps, but doing it here keeps the displayed copy clean).
+    const cleaned = draft.map((t) => ({
+      id: String(t.id || "").trim(),
+      nights: Math.max(1, Math.min(1000, Number(t.nights) || 0)),
+      discountPct: Math.max(0, Math.min(100, Number(t.discountPct) || 0)),
+      label: String(t.label || "").trim(),
+      hint: String(t.hint || "").trim(),
+      active: t.active !== false,
+    }));
+    onSave(cleaned);
+  };
+
+  return (
+    <Drawer
+      open
+      onClose={onClose}
+      eyebrow="Master · Tier catalogue"
+      title="Gift card tier mix"
+      fullPage
+      contentMaxWidth="max-w-5xl"
+      footer={
+        <>
+          <GhostBtn onClick={onReset} small>
+            <RotateCcw size={11} /> Reset to defaults
+          </GhostBtn>
+          <GhostBtn onClick={onClose} small>Cancel</GhostBtn>
+          {canSave ? (
+            <PrimaryBtn onClick={handleSave} small>
+              <Save size={11} /> Save catalogue
+            </PrimaryBtn>
+          ) : (
+            <button
+              onClick={handleSave}
+              style={{
+                backgroundColor: p.bgPanelAlt, color: p.textMuted,
+                border: `1px solid ${p.border}`, padding: "0.45rem 0.95rem",
+                fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem",
+                fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase",
+                cursor: dirty ? "pointer" : "not-allowed",
+                display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
+                opacity: 0.7,
+              }}
+              title={!dirty ? "No changes" : `${validation.length} issue${validation.length === 1 ? "" : "s"} to fix`}
+            >
+              <Save size={11} /> Save catalogue
+            </button>
+          )}
+        </>
+      }
+    >
+      <Card padded>
+        <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", lineHeight: 1.55 }}>
+          This is the live tier master. Edits here flow through to the public Gift Vouchers page, the admin Issue card flow, and the invoice + receipt docs.
+          Tiers bound to existing gift cards cannot be removed — mark them <strong>inactive</strong> instead, which hides them from new purchases without orphaning the issued cards.
+        </p>
+      </Card>
+
+      <Card title={`Tiers · ${draft.length}`} padded={false} className="mt-5" action={
+        <GhostBtn small onClick={addRow}>
+          <Plus size={11} /> Add tier
+        </GhostBtn>
+      }>
+        {draft.length === 0 ? (
+          <div className="px-5 py-8 text-center" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}>
+            No tiers configured. <button onClick={addRow} style={{ color: p.accent, fontWeight: 700, textDecoration: "underline" }}>Add the first tier</button> or
+            <button onClick={onReset} style={{ color: p.accent, fontWeight: 700, textDecoration: "underline", marginInlineStart: 6 }}>reset to defaults</button>.
+          </div>
+        ) : (
+          <div style={{ borderTop: `1px solid ${p.border}` }}>
+            {draft.map((t, i) => {
+              const errors = errByIdx.get(i) || [];
+              const used = usedTierIds.has(t.id);
+              return (
+                <div key={`row-${i}`} className="px-5 py-4" style={{ borderBottom: `1px solid ${p.border}` }}>
+                  <div className="grid grid-cols-12 gap-3 items-start">
+                    {/* Reorder controls */}
+                    <div className="col-span-12 md:col-span-1 flex md:flex-col items-center justify-center gap-1">
+                      <button
+                        onClick={() => moveRow(i, -1)}
+                        disabled={i === 0}
+                        title="Move up"
+                        style={{
+                          padding: 4, color: i === 0 ? p.textMuted : p.textSecondary,
+                          border: `1px solid ${p.border}`,
+                          backgroundColor: i === 0 ? "transparent" : p.bgPanelAlt,
+                          cursor: i === 0 ? "not-allowed" : "pointer",
+                          opacity: i === 0 ? 0.4 : 1,
+                        }}
+                        onMouseEnter={(e) => { if (i !== 0) { e.currentTarget.style.color = p.accent; e.currentTarget.style.borderColor = p.accent; } }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = i === 0 ? p.textMuted : p.textSecondary; e.currentTarget.style.borderColor = p.border; }}
+                        aria-label="Move up"
+                      >
+                        <ArrowUp size={11} />
+                      </button>
+                      <button
+                        onClick={() => moveRow(i, 1)}
+                        disabled={i === draft.length - 1}
+                        title="Move down"
+                        style={{
+                          padding: 4, color: i === draft.length - 1 ? p.textMuted : p.textSecondary,
+                          border: `1px solid ${p.border}`,
+                          backgroundColor: i === draft.length - 1 ? "transparent" : p.bgPanelAlt,
+                          cursor: i === draft.length - 1 ? "not-allowed" : "pointer",
+                          opacity: i === draft.length - 1 ? 0.4 : 1,
+                        }}
+                        onMouseEnter={(e) => { if (i !== draft.length - 1) { e.currentTarget.style.color = p.accent; e.currentTarget.style.borderColor = p.accent; } }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = i === draft.length - 1 ? p.textMuted : p.textSecondary; e.currentTarget.style.borderColor = p.border; }}
+                        aria-label="Move down"
+                      >
+                        <ArrowDown size={11} />
+                      </button>
+                    </div>
+
+                    {/* Tier id */}
+                    <div className="col-span-6 md:col-span-2">
+                      <FormGroup label="Tier id">
+                        <TextField
+                          value={t.id}
+                          onChange={(v) => updateRow(i, { id: v })}
+                          placeholder="e.g. 10n"
+                        />
+                      </FormGroup>
+                      {used && (
+                        <div style={{ color: p.textMuted, fontSize: "0.66rem", marginTop: 4, fontFamily: "'Manrope', sans-serif" }}>
+                          In use by issued cards
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Nights */}
+                    <div className="col-span-3 md:col-span-1">
+                      <FormGroup label="Nights">
+                        <TextField
+                          type="number"
+                          value={t.nights}
+                          onChange={(v) => updateRow(i, { nights: v })}
+                        />
+                      </FormGroup>
+                    </div>
+
+                    {/* Discount % */}
+                    <div className="col-span-3 md:col-span-1">
+                      <FormGroup label="Discount">
+                        <TextField
+                          type="number"
+                          value={t.discountPct}
+                          onChange={(v) => updateRow(i, { discountPct: v })}
+                          suffix="%"
+                        />
+                      </FormGroup>
+                    </div>
+
+                    {/* Label */}
+                    <div className="col-span-12 md:col-span-3">
+                      <FormGroup label="Label">
+                        <TextField
+                          value={t.label}
+                          onChange={(v) => updateRow(i, { label: v })}
+                          placeholder="e.g. Gold gift"
+                        />
+                      </FormGroup>
+                    </div>
+
+                    {/* Hint */}
+                    <div className="col-span-12 md:col-span-3">
+                      <FormGroup label="Hint (subtitle)">
+                        <TextField
+                          value={t.hint}
+                          onChange={(v) => updateRow(i, { hint: v })}
+                          placeholder="e.g. Ten nights · 7% off"
+                        />
+                      </FormGroup>
+                    </div>
+
+                    {/* Active toggle + remove */}
+                    <div className="col-span-12 md:col-span-1 flex md:flex-col items-center md:items-stretch justify-between md:justify-start gap-2">
+                      <button
+                        onClick={() => updateRow(i, { active: !(t.active !== false) })}
+                        title={t.active !== false ? "Active" : "Inactive"}
+                        style={{
+                          padding: "0.55rem 0.4rem",
+                          color: t.active !== false ? p.success : p.textMuted,
+                          border: `1px solid ${t.active !== false ? p.success : p.border}`,
+                          backgroundColor: "transparent",
+                          fontFamily: "'Manrope', sans-serif",
+                          fontSize: "0.58rem",
+                          letterSpacing: "0.2em",
+                          textTransform: "uppercase",
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          textAlign: "center",
+                          width: "100%",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 4,
+                        }}
+                      >
+                        {t.active !== false ? <Check size={11} /> : null}
+                        {t.active !== false ? "On" : "Off"}
+                      </button>
+                      <button
+                        onClick={() => removeRow(i)}
+                        title={used ? "Cannot remove — bound to cards" : "Remove tier"}
+                        disabled={used}
+                        style={{
+                          padding: "0.55rem 0.4rem",
+                          color: used ? p.textMuted : p.danger,
+                          border: `1px solid ${p.border}`,
+                          backgroundColor: "transparent",
+                          cursor: used ? "not-allowed" : "pointer",
+                          opacity: used ? 0.4 : 1,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          width: "100%",
+                        }}
+                        onMouseEnter={(e) => { if (!used) e.currentTarget.style.borderColor = p.danger; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = p.border; }}
+                        aria-label="Remove tier"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {errors.length > 0 && (
+                    <div className="mt-2 flex flex-col gap-1">
+                      {errors.map((m, k) => (
+                        <div key={k} className="flex items-start gap-2"
+                          style={{ color: p.danger, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem" }}>
+                          <AlertTriangle size={11} style={{ flexShrink: 0, marginTop: 2 }} />
+                          <span>{m}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+
+      {validation.length > 0 && (
+        <Card padded className="mt-5">
+          <div className="flex items-start gap-2" style={{ color: p.danger, fontFamily: "'Manrope', sans-serif", fontSize: "0.82rem" }}>
+            <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+            <div>
+              <div style={{ fontWeight: 700 }}>{validation.length} issue{validation.length === 1 ? "" : "s"} to fix before saving.</div>
+              <div style={{ color: p.textMuted, marginTop: 2 }}>See the highlighted rows above. Each tier needs a unique id, a positive night count, a discount between 0 and 100, and a label.</div>
+            </div>
+          </div>
+        </Card>
+      )}
+    </Drawer>
   );
 }

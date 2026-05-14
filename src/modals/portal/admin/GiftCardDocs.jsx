@@ -1,7 +1,7 @@
 import React from "react";
 import { Download, Mail, Printer, X } from "lucide-react";
 import { usePalette } from "../theme.jsx";
-import { legalLine, useData, formatCurrency, GIFT_CARD_TIERS, computeGiftCardPrice, getCurrentCurrency } from "../../../data/store.jsx";
+import { legalLine, useData, formatCurrency, DEFAULT_GIFT_CARD_TIERS, computeGiftCardPrice, getCurrentCurrency } from "../../../data/store.jsx";
 
 // ---------------------------------------------------------------------------
 // GiftCardDocs — printable Invoice + Receipt for a gift card purchase.
@@ -66,7 +66,10 @@ export function GiftCardDocView({ card, kind }) {
   const HOTEL = data?.hotelInfo || FALLBACK_HOTEL;
   const invoice = findInvoiceForCard(data?.invoices, card);
   const payment = findPaymentForCard(data?.payments, card);
-  const tier    = GIFT_CARD_TIERS.find((t) => t.id === card.tierId);
+  // Read the live admin-editable tier master via useData; fall back to
+  // the seed when the slice is empty (first-paint pre-hydration).
+  const tiers = (data?.giftCardTiers && data.giftCardTiers.length > 0) ? data.giftCardTiers : DEFAULT_GIFT_CARD_TIERS;
+  const tier    = tiers.find((t) => t.id === card.tierId);
   const breakdown = computeGiftCardPrice({
     nights: card.totalNights,
     discountPct: card.discountPct,
@@ -269,9 +272,12 @@ const tdNumStyle = { ...tdStyle, fontVariantNumeric: "tabular-nums", fontWeight:
 // HTML string builder — mirrors the React view 1:1. Used by the download
 // and print helpers below.
 // ---------------------------------------------------------------------------
-export function buildGiftCardDocHtml(card, kind, { hotel, invoice, payment } = {}) {
+export function buildGiftCardDocHtml(card, kind, { hotel, invoice, payment, tiers } = {}) {
   const HOTEL = hotel || FALLBACK_HOTEL;
-  const tier = GIFT_CARD_TIERS.find((t) => t.id === card.tierId);
+  // Caller passes the live tier master via opts.tiers. Fall back to the
+  // seed when not provided (e.g. legacy callers / direct script use).
+  const tierList = (tiers && tiers.length > 0) ? tiers : DEFAULT_GIFT_CARD_TIERS;
+  const tier = tierList.find((t) => t.id === card.tierId);
   const breakdown = computeGiftCardPrice({
     nights: card.totalNights,
     discountPct: card.discountPct,
@@ -479,6 +485,9 @@ export function GiftCardDocPreviewModal({ card, kind, onClose }) {
   const hotel = data?.hotelInfo;
   const invoice = findInvoiceForCard(data?.invoices, card);
   const payment = findPaymentForCard(data?.payments, card);
+  // Pass the live tier master through to the doc-builder helpers so the
+  // exported PDF/print/email all reflect the admin's edits to tier labels.
+  const tiers = data?.giftCardTiers;
   if (!card) return null;
   return (
     <div className="fixed inset-0 z-50 flex flex-col" style={{ backgroundColor: "rgba(15,16,20,0.85)" }}>
@@ -491,11 +500,11 @@ export function GiftCardDocPreviewModal({ card, kind, onClose }) {
             style={btn(p)} onMouseEnter={btnHover(p)} onMouseLeave={btnLeave(p)}>
             <Mail size={12} /> Email
           </button>
-          <button onClick={() => downloadGiftCardDoc(card, kind, { hotel, invoice, payment })} title="Download HTML"
+          <button onClick={() => downloadGiftCardDoc(card, kind, { hotel, invoice, payment, tiers })} title="Download HTML"
             style={btn(p)} onMouseEnter={btnHover(p)} onMouseLeave={btnLeave(p)}>
             <Download size={12} /> Download
           </button>
-          <button onClick={() => printGiftCardDoc(card, kind, { hotel, invoice, payment })} title="Print"
+          <button onClick={() => printGiftCardDoc(card, kind, { hotel, invoice, payment, tiers })} title="Print"
             style={btn(p)} onMouseEnter={btnHover(p)} onMouseLeave={btnLeave(p)}>
             <Printer size={12} /> Print
           </button>

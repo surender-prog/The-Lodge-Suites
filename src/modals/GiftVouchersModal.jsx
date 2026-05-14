@@ -9,7 +9,7 @@ import { EditorialPage, PageSection } from "./EditorialPage.jsx";
 import { pushToast } from "./portal/admin/ui.jsx";
 import {
   formatCurrency,
-  GIFT_CARD_TIERS,
+  DEFAULT_GIFT_CARD_TIERS,
   computeGiftCardPrice,
   useData,
 } from "../data/store.jsx";
@@ -64,12 +64,19 @@ const FAQS = [
 ];
 
 export const GiftVouchersModal = ({ open, onClose, onBook }) => {
-  const { rooms, hotelInfo, issueGiftCard, members } = useData();
+  const { rooms, hotelInfo, issueGiftCard, members, giftCardTiers } = useData();
+  // Tiers come straight off the live admin-editable slice. Empty array
+  // fallback uses the bundled defaults so the modal still renders when
+  // an over-zealous admin deletes all the tiers.
+  const activeTiers = useMemo(() => {
+    const list = (giftCardTiers && giftCardTiers.length > 0) ? giftCardTiers : DEFAULT_GIFT_CARD_TIERS;
+    return list.filter((t) => t.active !== false);
+  }, [giftCardTiers]);
   // Default to the second-cheapest suite (One-Bed) so the price chip
   // doesn't anchor too low on first view.
   const defaultRoomId = rooms?.find((r) => r.id === "one-bed")?.id || rooms?.[0]?.id || "studio";
   const [roomId, setRoomId]   = useState(defaultRoomId);
-  const [tierId, setTierId]   = useState(GIFT_CARD_TIERS[1]?.id || "10n"); // default to 10-night
+  const [tierId, setTierId]   = useState(activeTiers[1]?.id || activeTiers[0]?.id || "10n");
   const [delivery, setDelivery] = useState("email");
   // Email-only model: gift cards are member-only, so both sender and
   // recipient resolve to LS Privilege members by email. The buyer
@@ -86,7 +93,7 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
   const [issued, setIssued] = useState(null);
 
   const room  = useMemo(() => (rooms || []).find((r) => r.id === roomId) || rooms?.[0], [rooms, roomId]);
-  const tier  = useMemo(() => GIFT_CARD_TIERS.find((t) => t.id === tierId) || GIFT_CARD_TIERS[0], [tierId]);
+  const tier  = useMemo(() => activeTiers.find((t) => t.id === tierId) || activeTiers[0], [tierId, activeTiers]);
   const ratePerNight = Number(room?.price || 0);
   const price = useMemo(
     () => computeGiftCardPrice({ nights: tier.nights, discountPct: tier.discountPct, ratePerNight }),
@@ -280,7 +287,7 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
         intro="Six preset tiers. The discount stacks the more nights you buy, so a 30-night gift card costs 30% less than buying those nights one at a time."
       >
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px" style={{ backgroundColor: "rgba(0,0,0,0.08)" }}>
-          {GIFT_CARD_TIERS.map((t) => {
+          {activeTiers.map((t) => {
             const tp  = computeGiftCardPrice({ nights: t.nights, discountPct: t.discountPct, ratePerNight });
             const sel = tierId === t.id;
             return (

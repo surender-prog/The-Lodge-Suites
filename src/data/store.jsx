@@ -3296,14 +3296,22 @@ export function buildCardOnFile({ name, number, exp }) {
 // Higher tiers carry steeper discounts to reward bulk-buying behaviour
 // and to drive the loyalty-tier-aligned narrative (5n ≈ Silver, 25n ≈
 // Platinum). See the public Gift Vouchers page and Admin → Gift Cards.
-export const GIFT_CARD_TIERS = [
-  { id: "5n",  nights:  5, discountPct:  5, label: "Silver gift",      hint: "Five nights · 5% off" },
-  { id: "10n", nights: 10, discountPct:  7, label: "Gold gift",        hint: "Ten nights · 7% off" },
-  { id: "15n", nights: 15, discountPct: 10, label: "Long-weekend × 3", hint: "Fifteen nights · 10% off" },
-  { id: "20n", nights: 20, discountPct: 15, label: "Extended stay",    hint: "Twenty nights · 15% off" },
-  { id: "25n", nights: 25, discountPct: 20, label: "Platinum gift",    hint: "Twenty-five nights · 20% off" },
-  { id: "30n", nights: 30, discountPct: 30, label: "A residency",      hint: "Thirty nights · 30% off" },
+//
+// DEFAULT_GIFT_CARD_TIERS is the seed; the live admin-editable copy
+// lives on `giftCardTiers` inside DataProvider. Components should
+// always read tiers from `useData().giftCardTiers` so the admin's
+// edits flow through immediately. The exported `GIFT_CARD_TIERS` alias
+// is kept for module-level / legacy fallback callers — it's just the
+// frozen default, never the live state.
+export const DEFAULT_GIFT_CARD_TIERS = [
+  { id: "5n",  nights:  5, discountPct:  5, label: "Silver gift",      hint: "Five nights · 5% off",      active: true },
+  { id: "10n", nights: 10, discountPct:  7, label: "Gold gift",        hint: "Ten nights · 7% off",       active: true },
+  { id: "15n", nights: 15, discountPct: 10, label: "Long-weekend × 3", hint: "Fifteen nights · 10% off",  active: true },
+  { id: "20n", nights: 20, discountPct: 15, label: "Extended stay",    hint: "Twenty nights · 15% off",   active: true },
+  { id: "25n", nights: 25, discountPct: 20, label: "Platinum gift",    hint: "Twenty-five nights · 20% off", active: true },
+  { id: "30n", nights: 30, discountPct: 30, label: "A residency",      hint: "Thirty nights · 30% off",   active: true },
 ];
+export const GIFT_CARD_TIERS = DEFAULT_GIFT_CARD_TIERS;
 
 // 12-month default validity from purchase. The recipient can use the
 // balance across any number of bookings during this window. Helpers
@@ -3824,6 +3832,29 @@ export function DataProvider({ children }) {
   const [agencies,  setAgencies]  = useState(SAMPLE_AGENCIES);
   const [members,   setMembers]   = useState(SAMPLE_MEMBERS);
   const [giftCards, setGiftCards] = useState(SAMPLE_GIFT_CARDS);
+  // Tier master — six preset bundles (5/10/15/20/25/30 nights). Admin-
+  // editable; the public Gift Vouchers page + admin Issue card flow
+  // both read tier list straight off this slice, so changes here flow
+  // through the whole system. Defaults to DEFAULT_GIFT_CARD_TIERS.
+  const [giftCardTiers, setGiftCardTiers] = useState(DEFAULT_GIFT_CARD_TIERS);
+  const updateGiftCardTiers = useCallback((next) => {
+    // Normalise — ensure each tier has the required fields + sane
+    // numeric bounds before persisting. Bad inputs from the editor
+    // (negative numbers, blank ids) are silently clamped/dropped so
+    // the public modal never crashes on malformed data.
+    const cleaned = (Array.isArray(next) ? next : [])
+      .filter((t) => t && t.id && t.id.trim())
+      .map((t) => ({
+        id:          String(t.id).trim(),
+        nights:      Math.max(1, Math.min(1000, Math.round(Number(t.nights) || 0))),
+        discountPct: Math.max(0, Math.min(100,  Number(t.discountPct) || 0)),
+        label:       String(t.label || "").trim() || "Gift card",
+        hint:        String(t.hint  || "").trim(),
+        active:      t.active !== false,
+      }));
+    setGiftCardTiers(cleaned);
+  }, []);
+  const resetGiftCardTiers = useCallback(() => setGiftCardTiers(DEFAULT_GIFT_CARD_TIERS), []);
   const [extras,    setExtras]    = useState(SAMPLE_EXTRAS);
   const [calendar,  setCalendar]  = useState(INITIAL_CALENDAR_OVERRIDES);
   const [loyalty,   setLoyalty]   = useState(INITIAL_LOYALTY);
@@ -4107,6 +4138,7 @@ export function DataProvider({ children }) {
       fetchAll("extras")             .then(d => { if (!cancelled && d && d.length > 0) setExtras(d); }),
       fetchAll("members")            .then(d => { if (!cancelled && d && d.length > 0) setMembers(d); }),
       fetchAll("gift_cards")         .then(d => { if (!cancelled && d && d.length > 0) setGiftCards(d); }),
+      fetchAll("gift_card_tiers")    .then(d => { if (!cancelled && d && d.length > 0) setGiftCardTiers(d); }),
       fetchAll("bookings")           .then(d => { if (!cancelled && d && d.length > 0) setBookings(d); }),
       fetchAll("payments")           .then(d => { if (!cancelled && d && d.length > 0) setPayments(d); }),
       fetchAll("invoices")           .then(d => { if (!cancelled && d && d.length > 0) setInvoices(d); }),
@@ -4184,6 +4216,7 @@ export function DataProvider({ children }) {
   useSlicePersistence("extras",              extras,             hydrated);
   useSlicePersistence("members",             members,            hydrated);
   useSlicePersistence("gift_cards",          giftCards,          hydrated);
+  useSlicePersistence("gift_card_tiers",     giftCardTiers,      hydrated);
   useSlicePersistence("bookings",            bookings,           hydrated);
   useSlicePersistence("payments",            payments,           hydrated);
   useSlicePersistence("invoices",            invoices,           hydrated);
@@ -5131,11 +5164,13 @@ export function DataProvider({ children }) {
     setMembers, addMember, updateMember, removeMember,
     // Gift cards — advance-purchase night packs
     giftCards, setGiftCards, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard,
+    // Gift card tier master — admin-editable list of the preset bundles
+    giftCardTiers, setGiftCardTiers, updateGiftCardTiers, resetGiftCardTiers,
     extras, activeExtras: extras.filter(e => e.active !== false), setExtras, upsertExtra, removeExtra, toggleExtra,
     setCalendar, setCalendarCell,
     setLoyalty,
     addBooking, updateBooking, removeBooking,
-  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
+  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
 
   return <DataStoreContext.Provider value={value}>{children}</DataStoreContext.Provider>;
 }
