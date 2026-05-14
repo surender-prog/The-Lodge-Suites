@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle, BedDouble, Calendar as CalIcon, Check, CheckCircle2, ChevronRight, Copy, Download,
-  Edit2, Eye, FileText, Gift, Layers, Mail, Plus, Printer, Receipt, Save, Search, Send, Trash2, X,
+  AlertTriangle, BedDouble, Calendar as CalIcon, Check, CheckCircle2, ChevronDown, ChevronRight, Copy, Crown, Download,
+  Edit2, Eye, FileText, Gift, Layers, Mail, Plus, Printer, Receipt, Save, Search, Send, Trash2, User as UserIcon, UserCheck, X,
 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import {
@@ -85,7 +85,7 @@ function exportGiftCardsCsv(cards) {
 
 export const GiftCards = () => {
   const p = usePalette();
-  const { giftCards, issueGiftCard, updateGiftCard, removeGiftCard, rooms, invoices, payments } = useData();
+  const { giftCards, issueGiftCard, updateGiftCard, removeGiftCard, rooms, invoices, payments, members } = useData();
   const [filterStatus, setFilterStatus] = useState("all");
   const [search,       setSearch]       = useState("");
   const [creating,     setCreating]     = useState(false);
@@ -368,6 +368,7 @@ export const GiftCards = () => {
           p={p}
           rooms={rooms}
           existing={giftCards}
+          members={members || []}
           onClose={() => setCreating(false)}
           onCreate={(payload, opts) => {
             // issueGiftCard creates the card AND posts the matching
@@ -407,13 +408,17 @@ export const GiftCards = () => {
 // difference is that admin can set the recipient + sender manually and
 // optionally pre-pick a custom paid amount when invoicing offline.
 // ─────────────────────────────────────────────────────────────────────────
-function GiftCardCreator({ p, rooms, existing, onClose, onCreate }) {
+function GiftCardCreator({ p, rooms, existing, members, onClose, onCreate }) {
   const defaultRoomId = rooms?.find((r) => r.id === "one-bed")?.id || rooms?.[0]?.id || "studio";
+  // Gift cards are member-only — both the recipient AND the buyer must
+  // be LS Privilege members. We carry the picked member ids; the
+  // denormalised name + email used on the printable docs are derived at
+  // save time from the chosen member records.
   const [draft, setDraft] = useState({
     tierId: "10n",
     roomId: defaultRoomId,
-    recipientName: "", recipientEmail: "",
-    senderName:    "", senderEmail:    "",
+    recipientMemberId: "",
+    senderMemberId:    "",
     message: "",
     notes: "",                       // operator-only notes
     delivery: "email",
@@ -424,6 +429,8 @@ function GiftCardCreator({ p, rooms, existing, onClose, onCreate }) {
     validityDays:  "",               // optional override of default 365
   });
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
+  const recipientMember = useMemo(() => (members || []).find((m) => m.id === draft.recipientMemberId), [members, draft.recipientMemberId]);
+  const senderMember    = useMemo(() => (members || []).find((m) => m.id === draft.senderMemberId), [members, draft.senderMemberId]);
 
   const room = useMemo(() => (rooms || []).find((r) => r.id === draft.roomId) || rooms?.[0], [rooms, draft.roomId]);
   const tier = useMemo(() => GIFT_CARD_TIERS.find((t) => t.id === draft.tierId) || GIFT_CARD_TIERS[0], [draft.tierId]);
@@ -447,10 +454,15 @@ function GiftCardCreator({ p, rooms, existing, onClose, onCreate }) {
   // operators don't collide.
   const previewCode = useMemo(() => generateGiftCardCode(existing), []);
 
-  const valid = !!draft.recipientName.trim() && !!draft.senderName.trim();
+  // Validation — both sides must be picked members. Gift cards are
+  // member-only, so a free-text name doesn't count.
+  const sameMember = !!draft.recipientMemberId && draft.recipientMemberId === draft.senderMemberId;
+  const valid = !!recipientMember && !!senderMember && !sameMember;
 
   const save = () => {
-    if (!valid) { pushToast({ message: "Recipient + sender name are required.", kind: "warn" }); return; }
+    if (!recipientMember) { pushToast({ message: "Pick a recipient member.", kind: "warn" }); return; }
+    if (!senderMember)    { pushToast({ message: "Pick a sender (buyer) member.", kind: "warn" }); return; }
+    if (sameMember)       { pushToast({ message: "Recipient and sender must be different members.", kind: "warn" }); return; }
     const purchaseISO = draft.purchaseDate || new Date().toISOString().slice(0, 10);
     const validity = Math.max(1, Math.min(3650, Number(draft.validityDays) || 365));
     const validUntil = (() => {
@@ -466,10 +478,16 @@ function GiftCardCreator({ p, rooms, existing, onClose, onCreate }) {
       ratePerNight: room?.price || 0,
       faceValue: price.gross,
       paidAmount: draft.overridePaid ? Number(draft.overridePaid) : price.net,
-      recipientName:  draft.recipientName.trim(),
-      recipientEmail: draft.recipientEmail.trim(),
-      senderName:     draft.senderName.trim(),
-      senderEmail:    draft.senderEmail.trim(),
+      // Canonical pointers to the loyalty records — drives downstream
+      // member-history rollups, redemption gating, and tier-aware
+      // statement views. Name/email fields below stay denormalised so
+      // printable docs render without an additional join.
+      recipientMemberId: recipientMember.id,
+      recipientName:     recipientMember.name,
+      recipientEmail:    recipientMember.email,
+      senderMemberId:    senderMember.id,
+      senderName:        senderMember.name,
+      senderEmail:       senderMember.email,
       message:        draft.message.trim(),
       notes:          draft.notes.trim(),
       delivery:       draft.delivery,
@@ -579,28 +597,41 @@ function GiftCardCreator({ p, rooms, existing, onClose, onCreate }) {
             </div>
           </Card>
 
-          {/* Recipient */}
+          {/* Recipient — LS Privilege member only */}
           <Card title="Recipient">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <FormGroup label="Name *">
-                <TextField value={draft.recipientName} onChange={(v) => set({ recipientName: v })} placeholder="Layla Al-Khalifa" />
-              </FormGroup>
-              <FormGroup label="Email">
-                <TextField type="email" value={draft.recipientEmail} onChange={(v) => set({ recipientEmail: v })} placeholder="recipient@example.com" />
-              </FormGroup>
-            </div>
+            <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", lineHeight: 1.55, marginBottom: 12 }}>
+              Gift cards are issued to <strong style={{ color: p.textPrimary }}>LS Privilege members</strong> only. Pick the recipient from the member directory. If they're not a member yet, enrol them in <em>Loyalty</em> first.
+            </p>
+            <MemberPicker
+              p={p}
+              label="Recipient"
+              members={members}
+              value={draft.recipientMemberId}
+              excludeId={draft.senderMemberId}
+              onChange={(id) => set({ recipientMemberId: id })}
+              placeholder="Pick the member who'll receive the prepaid nights"
+            />
           </Card>
 
-          {/* Sender */}
+          {/* Sender (buyer) — also member-only */}
           <Card title="Sender (buyer)">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <FormGroup label="Name *">
-                <TextField value={draft.senderName} onChange={(v) => set({ senderName: v })} placeholder="Yusuf Al-Khalifa" />
-              </FormGroup>
-              <FormGroup label="Email">
-                <TextField type="email" value={draft.senderEmail} onChange={(v) => set({ senderEmail: v })} placeholder="you@example.com" />
-              </FormGroup>
-            </div>
+            <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", lineHeight: 1.55, marginBottom: 12 }}>
+              Admin can issue on behalf of any member buying the gift. The buyer must be a different member from the recipient.
+            </p>
+            <MemberPicker
+              p={p}
+              label="Sender"
+              members={members}
+              value={draft.senderMemberId}
+              excludeId={draft.recipientMemberId}
+              onChange={(id) => set({ senderMemberId: id })}
+              placeholder="Pick the member paying for the card"
+            />
+            {sameMember && (
+              <div className="mt-2 px-3 py-2" style={{ backgroundColor: `${p.warn}10`, border: `1px solid ${p.warn}40`, color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem" }}>
+                Sender and recipient can't be the same member.
+              </div>
+            )}
           </Card>
 
           {/* Pricing + accounting */}
@@ -789,7 +820,7 @@ function RailRow({ p, label, value, bold = false, accent, muted = false }) {
 // cancel/expire if needed, copy the code to share.
 // ─────────────────────────────────────────────────────────────────────────
 function GiftCardDetail({ p, card, onClose, onUpdate, onRemove }) {
-  const { invoices, payments, hotelInfo } = useData();
+  const { invoices, payments, hotelInfo, members } = useData();
   const [draft, setDraft] = useState(card);
   // Which doc to preview — null hides the modal, "invoice" / "receipt"
   // pops the matching GiftCardDocPreviewModal.
@@ -911,20 +942,86 @@ function GiftCardDetail({ p, card, onClose, onUpdate, onRemove }) {
       </Card>
 
       <Card title="Recipient & sender" className="mt-5">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <FormGroup label="Recipient name">
-            <TextField value={draft.recipientName || ""} onChange={(v) => set({ recipientName: v })} />
-          </FormGroup>
-          <FormGroup label="Recipient email">
-            <TextField type="email" value={draft.recipientEmail || ""} onChange={(v) => set({ recipientEmail: v })} />
-          </FormGroup>
-          <FormGroup label="Sender name">
-            <TextField value={draft.senderName || ""} onChange={(v) => set({ senderName: v })} />
-          </FormGroup>
-          <FormGroup label="Sender email">
-            <TextField type="email" value={draft.senderEmail || ""} onChange={(v) => set({ senderEmail: v })} />
-          </FormGroup>
-          <div className="sm:col-span-2">
+        <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.82rem", lineHeight: 1.55, marginBottom: 12 }}>
+          Both sides are LS Privilege members. Pick a different member to reassign the card; the printable invoice + receipt will refresh on the next render.
+        </p>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div>
+            <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700, marginBottom: 6 }}>
+              Recipient
+            </div>
+            <MemberPicker
+              p={p}
+              label="Recipient"
+              members={members}
+              value={draft.recipientMemberId || ""}
+              excludeId={draft.senderMemberId}
+              onChange={(id) => {
+                const m = (members || []).find((x) => x.id === id);
+                set({
+                  recipientMemberId: id,
+                  recipientName:     m?.name  || draft.recipientName,
+                  recipientEmail:    m?.email || draft.recipientEmail,
+                });
+              }}
+              placeholder="Pick a recipient member"
+            />
+          </div>
+          <div>
+            <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700, marginBottom: 6 }}>
+              Sender (buyer)
+            </div>
+            <MemberPicker
+              p={p}
+              label="Sender"
+              members={members}
+              value={draft.senderMemberId || ""}
+              excludeId={draft.recipientMemberId}
+              onChange={(id) => {
+                const m = (members || []).find((x) => x.id === id);
+                set({
+                  senderMemberId: id,
+                  senderName:     m?.name  || draft.senderName,
+                  senderEmail:    m?.email || draft.senderEmail,
+                });
+              }}
+              placeholder="Pick a sender member"
+            />
+          </div>
+          {/* Fallback editable fields for legacy cards that don't have a
+              member id stamped yet. Helpful when the operator migrates
+              an old free-text card into the new model. */}
+          {(!draft.recipientMemberId || !draft.senderMemberId) && (
+            <div className="lg:col-span-2 px-3 py-2" style={{ backgroundColor: `${p.warn}10`, border: `1px solid ${p.warn}40` }}>
+              <div style={{ color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>Legacy free-text fields</div>
+              <div style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 4, lineHeight: 1.55 }}>
+                This card was created before the member-only model and still carries free-text recipient/sender. Pick a member above to upgrade it. The current text values are below for reference and can be edited until a member is picked.
+              </div>
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {!draft.recipientMemberId && (
+                  <>
+                    <FormGroup label="Recipient name (legacy)">
+                      <TextField value={draft.recipientName || ""} onChange={(v) => set({ recipientName: v })} />
+                    </FormGroup>
+                    <FormGroup label="Recipient email (legacy)">
+                      <TextField type="email" value={draft.recipientEmail || ""} onChange={(v) => set({ recipientEmail: v })} />
+                    </FormGroup>
+                  </>
+                )}
+                {!draft.senderMemberId && (
+                  <>
+                    <FormGroup label="Sender name (legacy)">
+                      <TextField value={draft.senderName || ""} onChange={(v) => set({ senderName: v })} />
+                    </FormGroup>
+                    <FormGroup label="Sender email (legacy)">
+                      <TextField type="email" value={draft.senderEmail || ""} onChange={(v) => set({ senderEmail: v })} />
+                    </FormGroup>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+          <div className="lg:col-span-2">
             <FormGroup label="Personal message">
               <textarea
                 value={draft.message || ""}
@@ -940,7 +1037,7 @@ function GiftCardDetail({ p, card, onClose, onUpdate, onRemove }) {
               />
             </FormGroup>
           </div>
-          <div className="sm:col-span-2">
+          <div className="lg:col-span-2">
             <FormGroup label="Internal notes">
               <textarea
                 value={draft.notes || ""}
@@ -1084,6 +1181,194 @@ function DocRow({ p, kind, label, refId, amount, issuedDate, status, extra, onPr
         <DocActionBtn p={p} onClick={onPrint}    icon={Printer}  label="Print" />
         <DocActionBtn p={p} onClick={onEmail}    icon={Mail}     label="Email" />
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// MemberPicker — searchable picker scoped to LS Privilege members.
+// Used by the Gift Card issuance flow to enforce the member-only rule
+// for both recipient + sender. Renders a closed-state chip showing the
+// picked member (name, email, tier, points, lifetime nights) and pops
+// a search dropdown on click. `excludeId` is the OTHER member already
+// picked on the form (sender when this is the recipient picker, and
+// vice versa) — used to filter that row out of the list so the
+// operator can't pick the same person for both sides.
+// ─────────────────────────────────────────────────────────────────────────
+const TIER_PILL = {
+  silver:   { bg: "rgba(148,163,184,0.18)", ink: "#94A3B8", label: "Silver" },
+  gold:     { bg: "rgba(201,169,97,0.18)",   ink: "#C9A961", label: "Gold" },
+  platinum: { bg: "rgba(196,181,253,0.20)", ink: "#C4B5FD", label: "Platinum" },
+};
+function MemberRowChip({ p, member, compact = false }) {
+  if (!member) return null;
+  const tier = TIER_PILL[member.tier] || TIER_PILL.silver;
+  return (
+    <div className="flex items-start gap-3 min-w-0">
+      <span style={{
+        width: compact ? 30 : 34, height: compact ? 30 : 34, flexShrink: 0,
+        borderRadius: "50%", backgroundColor: `${tier.ink}25`,
+        border: `1px solid ${tier.ink}`,
+        color: tier.ink, fontFamily: "'Cormorant Garamond', serif", fontWeight: 600,
+        fontSize: compact ? "0.86rem" : "0.94rem",
+        display: "inline-flex", alignItems: "center", justifyContent: "center",
+      }}>
+        {(member.name || "?").split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase()}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: compact ? "0.82rem" : "0.9rem", fontWeight: 600 }}>
+            {member.name}
+          </span>
+          <span style={{
+            color: tier.ink, backgroundColor: tier.bg, border: `1px solid ${tier.ink}55`,
+            padding: "1px 6px", fontSize: "0.56rem",
+            letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+          }}>{tier.label}</span>
+          {member.verified && (
+            <span title="ID verified" style={{ color: p.success, display: "inline-flex" }}>
+              <UserCheck size={11} />
+            </span>
+          )}
+        </div>
+        <div style={{ color: p.textMuted, fontSize: "0.72rem", marginTop: 2 }}>
+          {member.email}
+        </div>
+        {!compact && (
+          <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>
+            <code style={{ fontFamily: "ui-monospace, Menlo, monospace", color: p.accent, fontSize: "0.66rem" }}>{member.id}</code>
+            <span> · {Number(member.points || 0).toLocaleString()} pts · {member.lifetimeNights || 0} nights</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MemberPicker({ p, label, members, value, onChange, placeholder, excludeId }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const ref = useRef(null);
+  const picked = (members || []).find((m) => m.id === value);
+
+  // Outside-click + Esc to close. Stays mounted so the picked state
+  // survives close-reopen cycles inside the same form session.
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    const ql = q.trim().toLowerCase();
+    return (members || []).filter((m) => {
+      if (excludeId && m.id === excludeId) return false;
+      if (!ql) return true;
+      return [m.name, m.email, m.id, m.phone].filter(Boolean).some((v) => String(v).toLowerCase().includes(ql));
+    }).slice(0, 50);
+  }, [members, q, excludeId]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full text-start"
+        style={{
+          backgroundColor: p.inputBg, color: p.textPrimary,
+          border: `1px solid ${picked ? p.accent : p.border}`,
+          padding: picked ? "0.7rem 0.85rem" : "0.85rem 0.9rem",
+          cursor: "pointer", display: "flex", alignItems: "center", gap: 10,
+        }}
+      >
+        {picked ? (
+          <>
+            <div className="flex-1 min-w-0">
+              <MemberRowChip p={p} member={picked} />
+            </div>
+            <ChevronDown size={14} style={{ color: p.textMuted, flexShrink: 0 }} />
+          </>
+        ) : (
+          <>
+            <span style={{
+              width: 30, height: 30, flexShrink: 0,
+              borderRadius: "50%", backgroundColor: p.bgPanelAlt,
+              border: `1px dashed ${p.border}`, color: p.textMuted,
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <UserIcon size={13} />
+            </span>
+            <span style={{ flex: 1, color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}>
+              {placeholder || `Pick a ${label || "member"}`}
+            </span>
+            <ChevronDown size={14} style={{ color: p.textMuted, flexShrink: 0 }} />
+          </>
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 z-[100] mt-1" style={{
+          backgroundColor: p.bgPanel, border: `1px solid ${p.accent}`,
+          boxShadow: "0 18px 42px rgba(0,0,0,0.28)",
+          maxHeight: 360, display: "flex", flexDirection: "column",
+        }}>
+          <div className="px-3 py-2 flex items-center gap-2" style={{ borderBottom: `1px solid ${p.border}`, backgroundColor: p.bgPanelAlt }}>
+            <Search size={13} style={{ color: p.textMuted }} />
+            <input
+              autoFocus
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search by name, email, phone, or LS-…-…"
+              className="flex-1 outline-none"
+              style={{ backgroundColor: "transparent", color: p.textPrimary, fontSize: "0.84rem", fontFamily: "'Manrope', sans-serif" }}
+            />
+            {picked && (
+              <button onClick={() => { onChange(""); setOpen(false); }} title="Clear"
+                style={{ color: p.textMuted, padding: "2px 6px", border: `1px solid ${p.border}`, fontSize: "0.58rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, cursor: "pointer", backgroundColor: "transparent" }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = p.warn; e.currentTarget.style.borderColor = p.warn; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = p.textMuted; e.currentTarget.style.borderColor = p.border; }}
+              >Clear</button>
+            )}
+          </div>
+          <div className="overflow-y-auto" style={{ flex: 1 }}>
+            {filtered.length === 0 ? (
+              <div className="px-4 py-6 text-center" style={{ color: p.textMuted, fontSize: "0.84rem", fontFamily: "'Manrope', sans-serif" }}>
+                <div>No members match this search.</div>
+                <div style={{ fontSize: "0.74rem", marginTop: 6, lineHeight: 1.5 }}>
+                  Need to enrol someone new? Open <strong style={{ color: p.textPrimary }}>Admin → Loyalty</strong> and add a member first.
+                </div>
+              </div>
+            ) : (
+              filtered.map((m) => {
+                const sel = m.id === value;
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => { onChange(m.id); setOpen(false); setQ(""); }}
+                    className="w-full text-start p-3 transition-colors"
+                    style={{
+                      backgroundColor: sel ? p.bgHover : "transparent",
+                      borderBottom: `1px solid ${p.border}`,
+                      borderLeft: sel ? `3px solid ${p.accent}` : "3px solid transparent",
+                      cursor: "pointer",
+                    }}
+                    onMouseEnter={(e) => { if (!sel) e.currentTarget.style.backgroundColor = p.bgHover; }}
+                    onMouseLeave={(e) => { if (!sel) e.currentTarget.style.backgroundColor = "transparent"; }}
+                  >
+                    <MemberRowChip p={p} member={m} />
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

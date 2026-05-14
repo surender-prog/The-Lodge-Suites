@@ -402,9 +402,10 @@ const SAMPLE_INVOICES = [
   { id: "INV-2026-CR02", bookingId: "LS-F6Y2Z4", clientType: "agent",     clientName: "Cleartrip Bahrain",   issued: "2026-04-20", due: "2026-05-04", amount:  14, paid: 0,   status: "issued",  kind: "commission", description: "Commission · LS-F6Y2Z4 (James Holloway)" },
   // Gift card invoices — buyer pays at purchase. Linked to the card via
   // giftCardId / giftCardCode so admin folio can tie the transaction
-  // back to the original card record.
-  { id: "INV-2026-GC01", bookingId: null, giftCardId: "GC-2026-001", giftCardCode: "LS-GC-DEMO-AAAA", clientType: "guest", clientName: "Yusuf Al-Khalifa", clientEmail: "yusuf@example.com", issued: "2026-04-12", due: "2026-04-12", amount: 209, paid: 209, status: "paid", kind: "gift_card", description: "Gift card · 5 nights at the Lodge Studio · 5% buyer discount" },
-  { id: "INV-2025-GC02", bookingId: null, giftCardId: "GC-2026-002", giftCardCode: "LS-GC-DEMO-BBBB", clientType: "guest", clientName: "Khalid Mansoor",   clientEmail: "khalid@example.com", issued: "2025-11-03", due: "2025-11-03", amount: 484, paid: 484, status: "paid", kind: "gift_card", description: "Gift card · 10 nights at the One-Bedroom Suite · 7% buyer discount" },
+  // back to the original card record. Buyer is an LS Privilege member
+  // (clientType: "member") since gift cards are now member-only.
+  { id: "INV-2026-GC01", bookingId: null, giftCardId: "GC-2026-001", giftCardCode: "LS-GC-DEMO-AAAA", clientType: "member", clientName: "Mohammed Al-Ansari", clientEmail: "m.ansari@example.com",   issued: "2026-04-12", due: "2026-04-12", amount: 209, paid: 209, status: "paid", kind: "gift_card", description: "Gift card · 5 nights at the Lodge Studio · 5% buyer discount" },
+  { id: "INV-2025-GC02", bookingId: null, giftCardId: "GC-2026-002", giftCardCode: "LS-GC-DEMO-BBBB", clientType: "member", clientName: "Sarah Holloway",     clientEmail: "s.holloway@example.com", issued: "2025-11-03", due: "2025-11-03", amount: 484, paid: 484, status: "paid", kind: "gift_card", description: "Gift card · 10 nights at the One-Bedroom Suite · 7% buyer discount" },
 ];
 
 const SAMPLE_PAYMENTS = [
@@ -3416,10 +3417,15 @@ const SAMPLE_GIFT_CARDS = [
     ratePerNight: 44, faceValue: 220, paidAmount: 209,
     purchaseDate: "2026-04-12",
     validUntil: "2027-04-12",
-    recipientName: "Layla Al-Khalifa",
-    recipientEmail: "layla@example.com",
-    senderName: "Yusuf Al-Khalifa",
-    senderEmail: "yusuf@example.com",
+    // Recipient + sender are LS Privilege members. memberId is the
+    // canonical reference; name + email are denormalised for display so
+    // the admin tables don't have to join members on every render.
+    recipientMemberId: "LS-G-A1B2C3",          // Layla Al-Khalifa, gold
+    recipientName:    "Layla Al-Khalifa",
+    recipientEmail:   "l.alkhalifa@example.com",
+    senderMemberId:    "LS-P-M4N5O6",          // Mohammed Al-Ansari, platinum
+    senderName:        "Mohammed Al-Ansari",
+    senderEmail:       "m.ansari@example.com",
     message: "Happy anniversary — looking forward to our stays.",
     delivery: "email",
     deliverOn: "2026-04-15",
@@ -3436,10 +3442,12 @@ const SAMPLE_GIFT_CARDS = [
     ratePerNight: 52, faceValue: 520, paidAmount: 484,
     purchaseDate: "2025-11-03",
     validUntil: "2026-11-03",
-    recipientName: "Aisha Rahimi",
-    recipientEmail: "aisha@example.com",
-    senderName: "Khalid Mansoor",
-    senderEmail: "khalid@example.com",
+    recipientMemberId: "LS-G-J1K2L3",          // Aisha Rahimi, gold
+    recipientName:    "Aisha Rahimi",
+    recipientEmail:   "a.rahimi@example.com",
+    senderMemberId:    "LS-P-D4E5F6",          // Sarah Holloway, platinum
+    senderName:        "Sarah Holloway",
+    senderEmail:       "s.holloway@example.com",
     message: "From the team — congratulations on the promotion.",
     delivery: "print",
     deliverOn: "2025-11-05",

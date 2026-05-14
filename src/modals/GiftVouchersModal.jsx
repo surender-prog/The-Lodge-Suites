@@ -64,16 +64,23 @@ const FAQS = [
 ];
 
 export const GiftVouchersModal = ({ open, onClose, onBook }) => {
-  const { rooms, hotelInfo, issueGiftCard } = useData();
+  const { rooms, hotelInfo, issueGiftCard, members } = useData();
   // Default to the second-cheapest suite (One-Bed) so the price chip
   // doesn't anchor too low on first view.
   const defaultRoomId = rooms?.find((r) => r.id === "one-bed")?.id || rooms?.[0]?.id || "studio";
   const [roomId, setRoomId]   = useState(defaultRoomId);
   const [tierId, setTierId]   = useState(GIFT_CARD_TIERS[1]?.id || "10n"); // default to 10-night
   const [delivery, setDelivery] = useState("email");
-  const [recipient, setRecipient] = useState({ name: "", email: "", date: "" });
-  const [sender, setSender]   = useState({ name: "", email: "" });
-  const [message, setMessage] = useState("");
+  // Email-only model: gift cards are member-only, so both sender and
+  // recipient resolve to LS Privilege members by email. The buyer
+  // (sender) supplies their own email so we can identify their member
+  // record; the recipient's email is checked against the directory and
+  // a friendly "not a member yet — invite them" hint shows when no
+  // match exists.
+  const [buyerEmail,     setBuyerEmail]     = useState("");
+  const [recipientEmail, setRecipientEmail] = useState("");
+  const [deliverOn,      setDeliverOn]      = useState("");
+  const [message,        setMessage]        = useState("");
   // Show-issued-code panel after a successful purchase so the buyer
   // (or the operator standing behind them) can copy the code to share.
   const [issued, setIssued] = useState(null);
@@ -86,16 +93,29 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
     [tier, ratePerNight]
   );
 
-  const canSubmit = !!recipient.name.trim()
-    && (delivery === "print" || /.+@.+\..+/.test(recipient.email))
-    && !!sender.name.trim()
-    && /.+@.+\..+/.test(sender.email);
+  // Resolve emails → member records. Case + whitespace tolerant; empty
+  // string → null. Drives the "you are …" and "recipient is …" chips
+  // and the submit gate below.
+  const buyerMember = useMemo(() => {
+    const e = (buyerEmail || "").trim().toLowerCase();
+    if (!e) return null;
+    return (members || []).find((m) => (m.email || "").toLowerCase() === e) || null;
+  }, [buyerEmail, members]);
+  const recipientMember = useMemo(() => {
+    const e = (recipientEmail || "").trim().toLowerCase();
+    if (!e) return null;
+    return (members || []).find((m) => (m.email || "").toLowerCase() === e) || null;
+  }, [recipientEmail, members]);
+  const sameMember = buyerMember && recipientMember && buyerMember.id === recipientMember.id;
+
+  const canSubmit = !!buyerMember
+    && !!recipientMember
+    && !sameMember;
 
   const handleSubmit = () => {
-    if (!canSubmit) {
-      pushToast({ message: "Fill in recipient and your details to continue.", kind: "warn" });
-      return;
-    }
+    if (!buyerMember) { pushToast({ message: "Enter your LS Privilege email to continue.", kind: "warn" }); return; }
+    if (!recipientMember) { pushToast({ message: "Recipient must be a LS Privilege member.", kind: "warn" }); return; }
+    if (sameMember) { pushToast({ message: "Pick a different recipient — you can't gift to yourself.", kind: "warn" }); return; }
     // Persist a real gift card via the unified issueGiftCard flow —
     // creates the card AND posts the matching invoice + payment
     // receipt so the buyer's transaction is properly accounted for
@@ -108,23 +128,26 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
       ratePerNight,
       faceValue: price.gross,
       paidAmount: price.net,
-      recipientName:  recipient.name.trim(),
-      recipientEmail: recipient.email.trim(),
-      senderName:     sender.name.trim(),
-      senderEmail:    sender.email.trim(),
+      recipientMemberId: recipientMember.id,
+      recipientName:     recipientMember.name,
+      recipientEmail:    recipientMember.email,
+      senderMemberId:    buyerMember.id,
+      senderName:        buyerMember.name,
+      senderEmail:       buyerMember.email,
       message:        message.trim(),
       delivery,
-      deliverOn: recipient.date || null,
+      deliverOn: deliverOn || null,
     });
     setIssued(saved);
-    pushToast({ message: `Gift card issued · ${saved?.code} for ${recipient.name.trim()}.` });
+    pushToast({ message: `Gift card issued · ${saved?.code} for ${recipientMember.name}.` });
   };
 
   // Reset + close — used by the "Done" button in the issued panel.
   const closeAfterIssue = () => {
     setIssued(null);
-    setRecipient({ name: "", email: "", date: "" });
-    setSender({ name: "", email: "" });
+    setBuyerEmail("");
+    setRecipientEmail("");
+    setDeliverOn("");
     setMessage("");
     onClose?.();
   };
@@ -344,44 +367,51 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
           eyebrow="Step 3 · Compose"
           title="Send your"
           italic="gift."
-          intro="Tell us who it's for. Submit the form and we issue the code immediately — share it however you like."
+          intro="Gift cards are member-to-member. Enter your LS Privilege email and the recipient's — we'll match them against the directory and issue the code instantly."
         >
+          {/* Member-only callout — sets the expectation up front so the
+              buyer doesn't fill out the form before realising the
+              recipient needs an LS Privilege account. */}
+          <div className="p-5 mb-px" style={{ backgroundColor: C.bgDeep, color: C.cream, borderLeft: `3px solid ${C.gold}` }}>
+            <div className="flex items-start gap-3">
+              <div style={{ color: C.gold, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, flexShrink: 0, marginTop: 2 }}>
+                LS Privilege only
+              </div>
+              <div style={{ color: C.textDim, fontSize: "0.84rem", lineHeight: 1.55 }}>
+                Both buyer and recipient must be LS Privilege members. The code applies prepaid nights against the recipient's member account on redemption — they need an account to receive it. <button onClick={onClose} style={{ background: "transparent", border: "none", color: C.gold, fontWeight: 700, cursor: "pointer", padding: 0, textDecoration: "underline" }}>Not a member yet? Join LS Privilege.</button>
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-px" style={{ backgroundColor: "rgba(0,0,0,0.08)" }}>
-            {/* Recipient / sender */}
+            {/* Buyer + recipient */}
             <div className="p-8" style={{ backgroundColor: C.cream }}>
               <h3 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: C.bgDeep, fontWeight: 500 }}>
-                Recipient
+                You (buyer)
               </h3>
-              <PaperField label="Their full name">
-                <input value={recipient.name}
-                  onChange={(e) => setRecipient((r) => ({ ...r, name: e.target.value }))}
-                  placeholder="Layla Al-Khalifa" style={inputStyle}
-                />
-              </PaperField>
-              {delivery === "email" && (
-                <PaperField label="Their email">
-                  <input type="email" value={recipient.email}
-                    onChange={(e) => setRecipient((r) => ({ ...r, email: e.target.value }))}
-                    placeholder="recipient@example.com" style={inputStyle}
-                  />
-                </PaperField>
-              )}
-
-              <h3 className="mt-6" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: C.bgDeep, fontWeight: 500 }}>
-                From
-              </h3>
-              <PaperField label="Your name">
-                <input value={sender.name}
-                  onChange={(e) => setSender((s) => ({ ...s, name: e.target.value }))}
-                  placeholder="Yusuf Al-Khalifa" style={inputStyle}
-                />
-              </PaperField>
-              <PaperField label="Your email">
-                <input type="email" value={sender.email}
-                  onChange={(e) => setSender((s) => ({ ...s, email: e.target.value }))}
+              <PaperField label="Your LS Privilege email">
+                <input type="email" value={buyerEmail}
+                  onChange={(e) => setBuyerEmail(e.target.value)}
                   placeholder="you@example.com" style={inputStyle}
                 />
               </PaperField>
+              <MemberLookupChip member={buyerMember} email={buyerEmail} role="buyer" onJoin={onClose} />
+
+              <h3 className="mt-6" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: C.bgDeep, fontWeight: 500 }}>
+                Recipient
+              </h3>
+              <PaperField label="Their LS Privilege email">
+                <input type="email" value={recipientEmail}
+                  onChange={(e) => setRecipientEmail(e.target.value)}
+                  placeholder="recipient@example.com" style={inputStyle}
+                />
+              </PaperField>
+              <MemberLookupChip member={recipientMember} email={recipientEmail} role="recipient" onJoin={onClose} />
+              {sameMember && (
+                <div className="mt-2 p-2" style={{ backgroundColor: "rgba(184,133,46,0.10)", border: "1px solid rgba(184,133,46,0.45)", color: "#9A6B1E", fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", lineHeight: 1.5 }}>
+                  You can't gift to yourself — pick a different recipient.
+                </div>
+              )}
             </div>
 
             {/* Delivery + message */}
@@ -414,8 +444,8 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
                 </div>
               </PaperField>
               <PaperField label="Deliver on (optional)">
-                <input type="date" value={recipient.date}
-                  onChange={(e) => setRecipient((r) => ({ ...r, date: e.target.value }))}
+                <input type="date" value={deliverOn}
+                  onChange={(e) => setDeliverOn(e.target.value)}
                   style={inputStyle}
                 />
               </PaperField>
@@ -577,6 +607,69 @@ const inputStyle = {
   fontFamily: "'Manrope', sans-serif", fontSize: "0.92rem",
   outline: "none",
 };
+
+// MemberLookupChip — shows the resolved member when the entered email
+// matches the LS Privilege directory, or a friendly "not a member yet"
+// state with a join CTA when the email doesn't match (and is otherwise
+// well-formed). Empty / mid-typing emails render nothing so the form
+// doesn't nag before the user has finished entering the address.
+function MemberLookupChip({ member, email, role, onJoin }) {
+  const trimmed = (email || "").trim();
+  const looksLikeEmail = /.+@.+\..+/.test(trimmed);
+  if (!trimmed) return null;
+  if (!looksLikeEmail) {
+    return (
+      <div className="mt-2 p-2" style={{ backgroundColor: "rgba(154,58,48,0.08)", border: "1px solid rgba(154,58,48,0.3)", color: "#7A2F26", fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", lineHeight: 1.5 }}>
+        Enter a valid email to look up the LS Privilege member.
+      </div>
+    );
+  }
+  if (member) {
+    const tierLabel = (member.tier || "silver").charAt(0).toUpperCase() + (member.tier || "silver").slice(1);
+    return (
+      <div className="mt-2 p-3 flex items-start gap-3" style={{ backgroundColor: "rgba(127,169,112,0.10)", border: "1px solid rgba(127,169,112,0.45)" }}>
+        <span style={{
+          width: 32, height: 32, flexShrink: 0,
+          borderRadius: "50%", backgroundColor: "rgba(127,169,112,0.18)",
+          border: "1px solid rgba(127,169,112,0.55)",
+          color: "#2E6B3E", display: "inline-flex", alignItems: "center", justifyContent: "center",
+          fontFamily: "'Cormorant Garamond', serif", fontWeight: 600, fontSize: "0.86rem",
+        }}>
+          {(member.name || "?").split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase()}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span style={{ color: C.bgDeep, fontFamily: "'Manrope', sans-serif", fontSize: "0.88rem", fontWeight: 600 }}>
+              {role === "buyer" ? "You are " : "Recipient: "}{member.name}
+            </span>
+            <span style={{
+              color: C.goldDeep, backgroundColor: "rgba(201,169,97,0.15)", border: "1px solid rgba(201,169,97,0.45)",
+              padding: "1px 6px", fontSize: "0.56rem",
+              letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+            }}>{tierLabel}</span>
+          </div>
+          <div style={{ color: C.textDim, fontSize: "0.72rem", marginTop: 2, fontFamily: "'Manrope', sans-serif" }}>
+            {Number(member.points || 0).toLocaleString()} pts · {member.lifetimeNights || 0} lifetime nights
+          </div>
+        </div>
+      </div>
+    );
+  }
+  // Email is well-formed but no match in the directory.
+  return (
+    <div className="mt-2 p-3" style={{ backgroundColor: "rgba(184,133,46,0.10)", border: "1px solid rgba(184,133,46,0.45)" }}>
+      <div style={{ color: "#9A6B1E", fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+        Not a member yet
+      </div>
+      <div style={{ color: C.bgDeep, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", marginTop: 4, lineHeight: 1.55 }}>
+        {role === "buyer"
+          ? <>This email isn't on our LS Privilege register. <button onClick={onJoin} style={{ background: "transparent", border: "none", color: C.goldDeep, fontWeight: 700, cursor: "pointer", padding: 0, textDecoration: "underline" }}>Join LS Privilege</button> (it's free) to issue your first gift card.</>
+          : <>The recipient isn't on our LS Privilege register yet. Ask them to <button onClick={onJoin} style={{ background: "transparent", border: "none", color: C.goldDeep, fontWeight: 700, cursor: "pointer", padding: 0, textDecoration: "underline" }}>join LS Privilege</button> first — it takes 30 seconds — and then re-enter their email here.</>
+        }
+      </div>
+    </div>
+  );
+}
 
 function PaperField({ label, children }) {
   return (
