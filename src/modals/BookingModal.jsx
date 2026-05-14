@@ -8,12 +8,12 @@ import { CountrySelect } from "../components/CountrySelect.jsx";
 import { findCountryByCode, parsePhone, DEFAULT_COUNTRY_CODE } from "../data/countryCodes.js";
 import { useT, useLang } from "../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween, todayISO } from "../utils/date.js";
-import { priceExtra, priceLabelFor, useData, evalPackageEligibility, describePackageConditions, roomFitsParty, computePackageCharge, computePackageSaving, packagePriceSuffix, getPackageRoomPrice, getPackageMinPrice, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, applyTaxes, nightlyBreakdown, formatCurrency } from "../data/store.jsx";
+import { priceExtra, priceLabelFor, useData, evalPackageEligibility, describePackageConditions, roomFitsParty, computePackageCharge, computePackageSaving, packagePriceSuffix, getPackageRoomPrice, getPackageMinPrice, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, applyTaxes, nightlyBreakdown, formatCurrency, findRedeemableGiftCard, evaluateGiftCardForBooking, normaliseGiftCardCode } from "../data/store.jsx";
 
 export const BookingModal = ({ open, onClose, initial }) => {
   const t = useT();
   const { lang } = useLang();
-  const { rooms: ROOMS, activeExtras, activePackages, addBooking, members, addMember, tiers, loyalty, tax, taxPatterns, activePatternId, hotelInfo } = useData();
+  const { rooms: ROOMS, activeExtras, activePackages, addBooking, members, addMember, tiers, loyalty, tax, taxPatterns, activePatternId, hotelInfo, giftCards, redeemGiftCard } = useData();
   // Tier discount table — single source of truth for both the booking-
   // modal's "register me as Silver" flow and the existing-member welcome-
   // back path. Mirrors what the customer portal uses.
@@ -115,6 +115,14 @@ export const BookingModal = ({ open, onClose, initial }) => {
   // closed and open renders and unmounts the whole modal (blank screen).
   const [confirmError, setConfirmError] = useState("");
   const [fieldErr, setFieldErr] = useState({});
+  // Gift card redemption — the guest types a code, hits Apply, we look
+  // it up against the live giftCards slice and stash the eval result
+  // here. The eval drives the discount line in the summary rail and the
+  // redemption call on confirm. Cleared by the X button next to the
+  // applied card so the guest can swap to a different one.
+  const [giftCardCode, setGiftCardCode] = useState("");
+  const [giftCardId,   setGiftCardId]   = useState(null);
+  const [giftCardErr,  setGiftCardErr]  = useState("");
   // Clear validation noise as the operator types.
   useEffect(() => {
     if (!confirmError && Object.keys(fieldErr).length === 0) return;
@@ -127,6 +135,40 @@ export const BookingModal = ({ open, onClose, initial }) => {
     setFieldErr(errs);
     if (Object.keys(errs).length === 0) setConfirmError("");
   }, [data.name, data.country, data.email, data.phone]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ─ Gift card handlers ──────────────────────────────────────────────
+  // applyGiftCard runs when the guest clicks "Apply". We look up the
+  // card by code (case + whitespace tolerant), surface a friendly
+  // error when it can't be redeemed, and stash the id when it can be.
+  // The display + discount math read from giftCardId in the render
+  // path below.
+  const applyGiftCard = () => {
+    const trimmed = (giftCardCode || "").trim();
+    if (!trimmed) { setGiftCardErr("Enter a code to apply."); return; }
+    const found = findRedeemableGiftCard(giftCards || [], trimmed);
+    if (!found) {
+      setGiftCardErr("Code not recognised, expired, or fully redeemed.");
+      setGiftCardId(null);
+      return;
+    }
+    // Pre-validate against the current booking so the guest doesn't get
+    // a silent "no savings" outcome — show the helpful reason instead.
+    const lead = (data.rooms || []).find((r) => r.qty > 0) || (data.rooms || [])[0];
+    const ev = evaluateGiftCardForBooking({
+      card: found,
+      roomId: lead?.id,
+      nights: (Number(lead?.qty || 1)) * nightsBetween(data.checkIn, data.checkOut),
+      ratePerNight: found.ratePerNight || 0,
+    });
+    if (!ev.ok) { setGiftCardErr(ev.reason); setGiftCardId(null); return; }
+    setGiftCardErr("");
+    setGiftCardId(found.id);
+  };
+  const clearGiftCard = () => {
+    setGiftCardId(null);
+    setGiftCardCode("");
+    setGiftCardErr("");
+  };
 
   if (!open) return null;
 
@@ -327,7 +369,37 @@ export const BookingModal = ({ open, onClose, initial }) => {
   const payNowDiscount = data.paymentTiming === "now"
     ? Math.round(stayCharge * (PAY_NOW_DISCOUNT_PCT / 100))
     : 0;
-  const subtotal = Math.max(0, stayCharge + addOnTotal - memberDiscount - payNowDiscount);
+
+  // ─ Gift card discount ──────────────────────────────────────────────
+  // Lookup the redeemable card (if a code has been applied) and
+  // evaluate how many of THIS booking's nights it can cover. The
+  // discount = covered nights × matching room rack rate × matching qty.
+  // For multi-room bookings, we only redeem against the lead suite —
+  // operators handle cross-suite redemption manually via the partner
+  // portal. `giftCard` and `giftEval` are recomputed on every render so
+  // a check-in date change immediately reflows the savings figure.
+  const giftCard = giftCardId
+    ? (giftCards || []).find((c) => c.id === giftCardId) || null
+    : null;
+  const leadLine = roomLines[0] || null;
+  const leadQty  = leadLine?.qty || 1;
+  const leadRoomNights = leadLine ? leadQty * nights : 0;
+  const giftEval = giftCard
+    ? evaluateGiftCardForBooking({
+        card: giftCard,
+        roomId: leadLine?.room?.id,
+        nights: leadRoomNights,
+        ratePerNight: giftCard.ratePerNight || leadLine?.room?.price || 0,
+      })
+    : null;
+  // Only apply the discount when redemption is currently valid. Cap at
+  // the lead-line revenue so we never overshoot the room subtotal
+  // (offer bookings price the whole stay separately — gift cards still
+  // discount only the room component, never an offer's bundle).
+  const giftCardDiscount = giftEval && giftEval.ok
+    ? Math.min(Math.round(giftEval.savings), leadLine?.lineRevenue || 0)
+    : 0;
+  const subtotal = Math.max(0, stayCharge + addOnTotal - memberDiscount - payNowDiscount - giftCardDiscount);
   // Run the configured tax pattern (Settings → Tax Setup) instead of a
   // hardcoded 10%. `tax` here is the tax-config object from useData() —
   // shadowed by the previous local `tax` variable, now renamed to
@@ -575,8 +647,30 @@ export const BookingModal = ({ open, onClose, initial }) => {
         payNowDiscountPct: data.paymentTiming === "now" ? PAY_NOW_DISCOUNT_PCT : 0,
         payNowDiscount,
         nonRefundable: data.paymentTiming === "now",
+        // Gift card redemption stamp — when a valid card was applied
+        // we record the code + saving on the booking so the admin
+        // folio + reports can tie the discount back to the original
+        // purchase. The card's nightsUsed is incremented below via
+        // redeemGiftCard().
+        giftCardCode:    giftCard ? giftCard.code : null,
+        giftCardId:      giftCard ? giftCard.id   : null,
+        giftCardNights:  giftCardDiscount > 0 ? (giftEval?.redeemNights || 0) : 0,
+        giftCardSavings: giftCardDiscount,
         extras: addOnLines.map((l) => ({ id: l.id, title: l.title, price: l.total })),
       });
+      // Decrement the card's balance + push a redemption history entry
+      // referencing this booking. Run AFTER addBooking so the booking
+      // record exists before the card's history points to it.
+      if (giftCard && giftCardDiscount > 0 && giftEval?.ok) {
+        try {
+          redeemGiftCard({
+            id: giftCard.id,
+            nights: giftEval.redeemNights,
+            bookingId: code,
+            savings: giftCardDiscount,
+          });
+        } catch (_) {}
+      }
     } catch (_) {
       // Fail silently — the modal still confirms locally for the guest.
     }
@@ -1137,6 +1231,89 @@ export const BookingModal = ({ open, onClose, initial }) => {
                     </div>
                   </Field>
 
+                  {/* Gift card redemption — guest enters a code (e.g.
+                      LS-GC-XXXX-XXXX) and we look it up against the
+                      live giftCards slice. Valid card → green panel
+                      with the redemption details; invalid → red error.
+                      The discount line shows in the summary rail on
+                      the right as soon as it's applied. */}
+                  <div className="pt-4 mt-4" style={{ borderTop: "1px solid rgba(0,0,0,0.1)" }}>
+                    <div className="flex items-center gap-2 mb-3" style={{ color: C.bgDeep, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.1rem" }}>
+                      <Tag size={14} style={{ color: C.goldDeep }} /> Gift card
+                    </div>
+                    {giftCard ? (
+                      <div className="p-4" style={{ backgroundColor: `${C.success || "#7FA970"}10`, border: `1px solid ${C.success || "#7FA970"}55` }}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <code style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: "0.86rem", color: C.bgDeep, fontWeight: 600, letterSpacing: "0.04em" }}>
+                                {giftCard.code}
+                              </code>
+                              <span style={{
+                                color: C.success || "#16A34A", fontSize: "0.58rem",
+                                letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+                                padding: "2px 7px", border: `1px solid ${C.success || "#16A34A"}`,
+                              }}>Applied</span>
+                            </div>
+                            <div style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 4, lineHeight: 1.55 }}>
+                              {giftEval?.reason} Card has <strong style={{ color: C.bgDeep }}>{giftEval?.remainingBefore} nights</strong> available; <strong style={{ color: C.bgDeep }}>{giftEval?.redeemNights} nights</strong> redeem on this booking.
+                            </div>
+                            <div className="mt-2" style={{ color: C.success || "#16A34A", fontFamily: "'Cormorant Garamond', serif", fontSize: "1.25rem", fontWeight: 500 }}>
+                              You save {formatCurrency(giftCardDiscount)}
+                            </div>
+                          </div>
+                          <button
+                            onClick={clearGiftCard}
+                            aria-label="Remove gift card"
+                            style={{
+                              color: C.textDim, padding: 6,
+                              border: `1px solid rgba(21,22,26,0.18)`, backgroundColor: "transparent", cursor: "pointer",
+                              flexShrink: 0,
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.color = C.danger; e.currentTarget.style.borderColor = C.danger; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.color = C.textDim; e.currentTarget.style.borderColor = "rgba(21,22,26,0.18)"; }}
+                          ><X size={12} /></button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <Field label="Gift card code (optional)" dark={false}>
+                          <div className="flex gap-2 flex-wrap">
+                            <div className="flex-1 min-w-[200px]">
+                              <Input
+                                dark={false}
+                                value={giftCardCode}
+                                onChange={(v) => { setGiftCardCode(v); if (giftCardErr) setGiftCardErr(""); }}
+                                placeholder="LS-GC-XXXX-XXXX"
+                              />
+                            </div>
+                            <button
+                              onClick={applyGiftCard}
+                              disabled={!giftCardCode.trim()}
+                              style={{
+                                padding: "0.65rem 1rem",
+                                backgroundColor: giftCardCode.trim() ? C.bgDeep : "rgba(21,22,26,0.15)",
+                                color: giftCardCode.trim() ? C.gold : C.textMuted,
+                                fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem",
+                                letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+                                border: `1px solid ${giftCardCode.trim() ? C.gold : "rgba(21,22,26,0.15)"}`,
+                                cursor: giftCardCode.trim() ? "pointer" : "not-allowed", whiteSpace: "nowrap",
+                              }}
+                            >Apply</button>
+                          </div>
+                        </Field>
+                        {giftCardErr && (
+                          <div style={{ color: C.danger, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", marginTop: 4 }}>
+                            {giftCardErr}
+                          </div>
+                        )}
+                        <div style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", marginTop: 6, lineHeight: 1.55 }}>
+                          Have a gift card from a friend or family member? Enter the code to redeem prepaid nights against this booking. Cards apply to their issued suite type only.
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   {/* Payment timing — three flavours:
                         • Pay on arrival without a card (default) — booking
                           is non-guaranteed and released at 3pm on arrival
@@ -1446,6 +1623,12 @@ export const BookingModal = ({ open, onClose, initial }) => {
                   <div className="flex justify-between" style={{ color: C.success || "#16A34A" }}>
                     <span>Pay-now · {PAY_NOW_DISCOUNT_PCT}% off (non-refundable)</span>
                     <span>− {formatCurrency(payNowDiscount)}</span>
+                  </div>
+                )}
+                {giftCardDiscount > 0 && (
+                  <div className="flex justify-between" style={{ color: C.success || "#16A34A" }}>
+                    <span>Gift card · {giftEval?.redeemNights} {giftEval?.redeemNights === 1 ? "night" : "nights"} prepaid</span>
+                    <span>− {formatCurrency(giftCardDiscount)}</span>
                   </div>
                 )}
                 {/* Per-component tax breakdown — renders one indented row

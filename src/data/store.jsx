@@ -3270,6 +3270,178 @@ export function buildCardOnFile({ name, number, exp }) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Gift Cards (advance-purchase night packs)
+// ---------------------------------------------------------------------------
+// A "gift card" is a bulk pre-purchase of room nights at a tiered discount.
+// The BUYER pays upfront at the discounted rate; the RECIPIENT gets to
+// redeem the bundled nights at the contracted room type when they book.
+// On redemption: the booking's room charge is offset by the prepaid nights
+// (up to the card's remaining balance), the card's `nightsUsed` increments,
+// and the booking record gets a giftCardCode stamp so accounting can tie
+// the transaction back to the original purchase.
+//
+// Six preset tiers + a "custom" pathway (handled offline by sales).
+// Higher tiers carry steeper discounts to reward bulk-buying behaviour
+// and to drive the loyalty-tier-aligned narrative (5n ≈ Silver, 25n ≈
+// Platinum). See the public Gift Vouchers page and Admin → Gift Cards.
+export const GIFT_CARD_TIERS = [
+  { id: "5n",  nights:  5, discountPct:  5, label: "Silver gift",      hint: "Five nights · 5% off" },
+  { id: "10n", nights: 10, discountPct:  7, label: "Gold gift",        hint: "Ten nights · 7% off" },
+  { id: "15n", nights: 15, discountPct: 10, label: "Long-weekend × 3", hint: "Fifteen nights · 10% off" },
+  { id: "20n", nights: 20, discountPct: 15, label: "Extended stay",    hint: "Twenty nights · 15% off" },
+  { id: "25n", nights: 25, discountPct: 20, label: "Platinum gift",    hint: "Twenty-five nights · 20% off" },
+  { id: "30n", nights: 30, discountPct: 30, label: "A residency",      hint: "Thirty nights · 30% off" },
+];
+
+// 12-month default validity from purchase. The recipient can use the
+// balance across any number of bookings during this window. Helpers
+// below compute the expiry deterministically off the purchase date so
+// edits to the constant flow through to new cards without backfilling.
+export const GIFT_CARD_VALIDITY_DAYS = 365;
+
+// Normalise a code to its canonical form. Strip whitespace, upper-case,
+// and remove the LS-GC- prefix if the operator typed it in. Used by
+// validation and by the booking-flow code field so a guest who pastes
+// "ls-gc-ABCD" gets the same match as "ABCD".
+export function normaliseGiftCardCode(raw) {
+  if (!raw) return "";
+  return String(raw).trim().toUpperCase().replace(/^LS-GC-/, "");
+}
+
+// Generate a friendly 8-char alphanumeric code (no ambiguous chars).
+// Format: LS-GC-XXXX-XXXX. The XXXX-XXXX body is the actual identifier;
+// the prefix is decorative for readability. `existing` is the live
+// cards list — used to avoid collisions on the (very rare) clash.
+export function generateGiftCardCode(existing = []) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // skip 0/O/1/I to avoid confusion
+  const have = new Set((existing || []).map((c) => c.code));
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    let body = "";
+    for (let i = 0; i < 8; i += 1) {
+      body += alphabet[Math.floor(Math.random() * alphabet.length)];
+      if (i === 3) body += "-";
+    }
+    const code = `LS-GC-${body}`;
+    if (!have.has(code)) return code;
+  }
+  // 50 collisions is essentially impossible in a 32^8 space — fall back
+  // to a Date-based suffix so we never throw.
+  return `LS-GC-${Date.now().toString(36).toUpperCase()}`;
+}
+
+// Resolve the issue-price of a gift card from its tier + the room's
+// nightly rack rate. price = nights × rate × (1 - discount/100).
+// Used by the public Gift Vouchers page so the buyer sees what they'll
+// pay before submitting, and by the admin section when previewing
+// manual issuance.
+export function computeGiftCardPrice({ nights, discountPct, ratePerNight }) {
+  const n = Number(nights) || 0;
+  const d = Number(discountPct) || 0;
+  const r = Number(ratePerNight) || 0;
+  const gross = n * r;
+  const discount = gross * (d / 100);
+  return {
+    gross: Math.round(gross * 1000) / 1000,
+    discount: Math.round(discount * 1000) / 1000,
+    net: Math.round((gross - discount) * 1000) / 1000,
+  };
+}
+
+// Find an active card for redemption. Returns null on miss / wrong
+// status. Card is "active" when status is "issued" and there's at
+// least one night left.
+export function findRedeemableGiftCard(cards, code) {
+  if (!code) return null;
+  const want = normaliseGiftCardCode(code);
+  if (!want) return null;
+  return (cards || []).find((c) => {
+    const carryCode = normaliseGiftCardCode(c.code);
+    if (carryCode !== want) return false;
+    if (c.status === "cancelled" || c.status === "expired") return false;
+    const remaining = (c.totalNights || 0) - (c.nightsUsed || 0);
+    return remaining > 0;
+  }) || null;
+}
+
+// Computes how a gift card applies to a particular booking. Returns
+// the redeemable night count, the savings, and a reason string when
+// the card can't be applied. Pure — takes the card + the booking
+// context and yields a decision object.
+export function evaluateGiftCardForBooking({ card, roomId, nights, ratePerNight }) {
+  if (!card) return { ok: false, reason: "No gift card" };
+  if (card.roomId && card.roomId !== roomId) {
+    return { ok: false, reason: `Card is for ${card.roomId} only — not the selected suite.` };
+  }
+  const remaining = (card.totalNights || 0) - (card.nightsUsed || 0);
+  if (remaining <= 0) return { ok: false, reason: "Card has no nights remaining." };
+  const redeemNights = Math.min(remaining, Number(nights) || 0);
+  if (redeemNights <= 0) return { ok: false, reason: "Booking has no nights to redeem against." };
+  const savings = Math.round(redeemNights * (Number(ratePerNight) || 0) * 1000) / 1000;
+  const remainingAfter = remaining - redeemNights;
+  return {
+    ok: true,
+    redeemNights,
+    remainingBefore: remaining,
+    remainingAfter,
+    savings,
+    reason: redeemNights < nights
+      ? `Card covers ${redeemNights} of ${nights} nights. The remaining ${nights - redeemNights} bills at the normal rate.`
+      : `Card covers all ${redeemNights} nights of this stay.`,
+  };
+}
+
+// Seed cards — one issued (so admin lists aren't empty), one fully
+// redeemed (so the lifecycle is visible without a fresh purchase).
+// Codes are deterministic for the demo so the testing plan walkthrough
+// can find them by name.
+const SAMPLE_GIFT_CARDS = [
+  {
+    id: "GC-2026-001",
+    code: "LS-GC-DEMO-AAAA",
+    tierId: "5n",
+    roomId: "studio",
+    totalNights: 5, nightsUsed: 0,
+    discountPct: 5,
+    ratePerNight: 44, faceValue: 220, paidAmount: 209,
+    purchaseDate: "2026-04-12",
+    validUntil: "2027-04-12",
+    recipientName: "Layla Al-Khalifa",
+    recipientEmail: "layla@example.com",
+    senderName: "Yusuf Al-Khalifa",
+    senderEmail: "yusuf@example.com",
+    message: "Happy anniversary — looking forward to our stays.",
+    delivery: "email",
+    deliverOn: "2026-04-15",
+    status: "issued",
+    notes: "",
+  },
+  {
+    id: "GC-2026-002",
+    code: "LS-GC-DEMO-BBBB",
+    tierId: "10n",
+    roomId: "one-bed",
+    totalNights: 10, nightsUsed: 10,
+    discountPct: 7,
+    ratePerNight: 52, faceValue: 520, paidAmount: 484,
+    purchaseDate: "2025-11-03",
+    validUntil: "2026-11-03",
+    recipientName: "Aisha Rahimi",
+    recipientEmail: "aisha@example.com",
+    senderName: "Khalid Mansoor",
+    senderEmail: "khalid@example.com",
+    message: "From the team — congratulations on the promotion.",
+    delivery: "print",
+    deliverOn: "2025-11-05",
+    status: "redeemed",
+    notes: "Fully redeemed across two stays in Feb–Mar 2026.",
+    redemptionHistory: [
+      { bookingId: "LS-GIFT-A1", redeemedAt: "2026-02-14T10:00:00", nights: 4, savings: 208 },
+      { bookingId: "LS-GIFT-B2", redeemedAt: "2026-03-08T14:30:00", nights: 6, savings: 312 },
+    ],
+  },
+];
+
 // Composes the legal-line suffix used on every printable header — e.g.
 // "CR No. 12345 · VAT No. 67890". Skips either side when the field is
 // blank so a partially-completed property still renders cleanly.
@@ -3633,6 +3805,7 @@ export function DataProvider({ children }) {
   const [agreements,setAgreements]= useState(SAMPLE_AGREEMENTS);
   const [agencies,  setAgencies]  = useState(SAMPLE_AGENCIES);
   const [members,   setMembers]   = useState(SAMPLE_MEMBERS);
+  const [giftCards, setGiftCards] = useState(SAMPLE_GIFT_CARDS);
   const [extras,    setExtras]    = useState(SAMPLE_EXTRAS);
   const [calendar,  setCalendar]  = useState(INITIAL_CALENDAR_OVERRIDES);
   const [loyalty,   setLoyalty]   = useState(INITIAL_LOYALTY);
@@ -3915,6 +4088,7 @@ export function DataProvider({ children }) {
       fetchAll("packages")           .then(d => { if (!cancelled && d && d.length > 0) setPackages(d); }),
       fetchAll("extras")             .then(d => { if (!cancelled && d && d.length > 0) setExtras(d); }),
       fetchAll("members")            .then(d => { if (!cancelled && d && d.length > 0) setMembers(d); }),
+      fetchAll("gift_cards")         .then(d => { if (!cancelled && d && d.length > 0) setGiftCards(d); }),
       fetchAll("bookings")           .then(d => { if (!cancelled && d && d.length > 0) setBookings(d); }),
       fetchAll("payments")           .then(d => { if (!cancelled && d && d.length > 0) setPayments(d); }),
       fetchAll("invoices")           .then(d => { if (!cancelled && d && d.length > 0) setInvoices(d); }),
@@ -3991,6 +4165,7 @@ export function DataProvider({ children }) {
   useSlicePersistence("packages",            packages,           hydrated);
   useSlicePersistence("extras",              extras,             hydrated);
   useSlicePersistence("members",             members,            hydrated);
+  useSlicePersistence("gift_cards",          giftCards,          hydrated);
   useSlicePersistence("bookings",            bookings,           hydrated);
   useSlicePersistence("payments",            payments,           hydrated);
   useSlicePersistence("invoices",            invoices,           hydrated);
@@ -4624,6 +4799,66 @@ export function DataProvider({ children }) {
   const updateMember = useCallback((id, patch) => setMembers(ms => ms.map(m => m.id === id ? { ...m, ...patch } : m)), []);
   const removeMember = useCallback((id) => setMembers(ms => ms.filter(m => m.id !== id)), []);
 
+  // ── Gift cards — actions ─────────────────────────────────────────────
+  // addGiftCard: stamps id, code, purchaseDate, validUntil + status.
+  // Returns the saved record so callers can show the code in a toast.
+  const addGiftCard = useCallback((card) => {
+    let saved = null;
+    setGiftCards((prev) => {
+      const purchaseISO = (card.purchaseDate || new Date().toISOString().slice(0, 10));
+      const valid = new Date(purchaseISO);
+      valid.setDate(valid.getDate() + GIFT_CARD_VALIDITY_DAYS);
+      const id = card.id || `GC-${new Date().getFullYear()}-${String(prev.length + 1).padStart(3, "0")}`;
+      const code = card.code || generateGiftCardCode(prev);
+      const next = {
+        nightsUsed: 0,
+        status: "issued",
+        redemptionHistory: [],
+        purchaseDate: purchaseISO,
+        validUntil: valid.toISOString().slice(0, 10),
+        ...card,
+        id, code,
+      };
+      saved = next;
+      return [next, ...prev];
+    });
+    return saved;
+  }, []);
+
+  // Patch a single card — used by the admin edit drawer for status
+  // flips, recipient corrections, message edits, etc.
+  const updateGiftCard = useCallback((id, patch) => {
+    setGiftCards((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  }, []);
+
+  const removeGiftCard = useCallback((id) => {
+    setGiftCards((prev) => prev.filter((c) => c.id !== id));
+  }, []);
+
+  // Redeem `nights` against a card by id. Increments nightsUsed,
+  // appends a redemptionHistory entry, flips status to "redeemed"
+  // when fully consumed. Idempotent — caller should compute nights
+  // via evaluateGiftCardForBooking() and pass the redeem count.
+  const redeemGiftCard = useCallback(({ id, nights, bookingId, savings }) => {
+    setGiftCards((prev) => prev.map((c) => {
+      if (c.id !== id) return c;
+      const used = (c.nightsUsed || 0) + (Number(nights) || 0);
+      const isDone = used >= (c.totalNights || 0);
+      const entry = {
+        bookingId: bookingId || null,
+        redeemedAt: new Date().toISOString(),
+        nights: Number(nights) || 0,
+        savings: Number(savings) || 0,
+      };
+      return {
+        ...c,
+        nightsUsed: used,
+        status: isDone ? "redeemed" : c.status,
+        redemptionHistory: [...(c.redemptionHistory || []), entry],
+      };
+    }));
+  }, []);
+
   // Tax patterns — apply, save current, remove (custom only).
   const applyTaxPattern = useCallback((id) => setTaxPatterns(ps => {
     const pattern = ps.find(p => p.id === id);
@@ -4811,11 +5046,13 @@ export function DataProvider({ children }) {
     setMaintenanceJobs, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob,
     setRoomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus,
     setMembers, addMember, updateMember, removeMember,
+    // Gift cards — advance-purchase night packs
+    giftCards, setGiftCards, addGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard,
     extras, activeExtras: extras.filter(e => e.active !== false), setExtras, upsertExtra, removeExtra, toggleExtra,
     setCalendar, setCalendarCell,
     setLoyalty,
     addBooking, updateBooking, removeBooking,
-  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
+  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
 
   return <DataStoreContext.Provider value={value}>{children}</DataStoreContext.Provider>;
 }

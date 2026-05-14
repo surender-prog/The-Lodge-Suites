@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   Activity, AlertCircle, BadgeCheck, BookOpen, Briefcase, Calendar as CalendarIcon, CalendarClock, ChevronDown, Clock,
-  CreditCard, FileText, Globe, Hotel, LineChart, Mail, MessageCircle, Plus, Receipt, Server, Settings as SettingsIcon, ShieldCheck, Tag, Wifi, Wrench,
+  CreditCard, FileText, Gift, Globe, Hotel, LineChart, Mail, MessageCircle, Plus, Receipt, Server, Settings as SettingsIcon, ShieldCheck, Tag, Wifi, Wrench,
 } from "lucide-react";
 import { usePalette } from "../theme.jsx";
 import { CalendarView }      from "./sections/CalendarView.jsx";
@@ -24,6 +24,7 @@ import { PropertyInfo }      from "./sections/PropertyInfo.jsx";
 import { Ota }               from "./sections/Ota.jsx";
 import { EmailSmtp }         from "./sections/EmailSmtp.jsx";
 import { SystemDocs }        from "./sections/SystemDocs.jsx";
+import { GiftCards }         from "./sections/GiftCards.jsx";
 
 // Hotel Admin sub-nav. Dashboard and Bookings are now top-level tabs in
 // PartnerPortal, so they're no longer listed here. The Operations dropdown
@@ -37,6 +38,7 @@ const NAV = [
     type: "group", id: "ops", label: "Operations", icon: Briefcase,
     items: [
       { id: "extras",      label: "Extras",            icon: Plus,         hint: "Booking-modal add-ons catalogue" },
+      { id: "giftCards",   label: "Gift Cards",        icon: Gift,         hint: "Advance-purchase night packs · issue, track, redeem" },
       { id: "reports",     label: "Reports",           icon: LineChart,    hint: "Activities, revenue & forward-looking availability" },
       { id: "invoices",    label: "Invoices",          icon: FileText,     hint: "Folio and partner invoices" },
       { id: "payments",    label: "Payments",          icon: CreditCard,   hint: "Receipts, refunds, settlements" },
@@ -66,6 +68,7 @@ const SECTIONS = {
   rooms:       RoomsRates,
   offers:      Offers,
   extras:      Extras,
+  giftCards:   GiftCards,
   maintenance: Maintenance,
   reports:     Reports,
   schedules:   ScheduledReports,
