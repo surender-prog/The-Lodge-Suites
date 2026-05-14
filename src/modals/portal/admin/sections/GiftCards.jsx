@@ -415,10 +415,13 @@ function GiftCardCreator({ p, rooms, existing, onClose, onCreate }) {
     recipientName: "", recipientEmail: "",
     senderName:    "", senderEmail:    "",
     message: "",
+    notes: "",                       // operator-only notes
     delivery: "email",
     deliverOn: "",
-    overridePaid: "", // optional manual override of the computed net price
+    overridePaid: "",                // optional manual override of the computed net price
     paymentMethod: "card",
+    purchaseDate: new Date().toISOString().slice(0, 10),
+    validityDays:  "",               // optional override of default 365
   });
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
 
@@ -428,15 +431,33 @@ function GiftCardCreator({ p, rooms, existing, onClose, onCreate }) {
     () => computeGiftCardPrice({ nights: tier.nights, discountPct: tier.discountPct, ratePerNight: room?.price || 0 }),
     [tier, room]
   );
-
+  // Compute the matching validity end-date for the price-rail preview.
+  // 365-day default unless the operator overrode it.
+  const validUntilPreview = useMemo(() => {
+    const days = Math.max(1, Math.min(3650, Number(draft.validityDays) || 365));
+    const d = new Date(draft.purchaseDate || new Date().toISOString().slice(0, 10));
+    d.setDate(d.getDate() + days);
+    return d.toISOString().slice(0, 10);
+  }, [draft.purchaseDate, draft.validityDays]);
+  // Average price per night after discount — surfaced in the rail so
+  // the operator can quote a "from BHD X / night" headline to the buyer.
+  const perNight = tier.nights > 0 ? price.net / tier.nights : 0;
   // Preview the code so the operator knows what will land on the card
-  // before they hit Save.
+  // before they hit Save. Regenerated on each save so concurrent
+  // operators don't collide.
   const previewCode = useMemo(() => generateGiftCardCode(existing), []);
 
   const valid = !!draft.recipientName.trim() && !!draft.senderName.trim();
 
   const save = () => {
     if (!valid) { pushToast({ message: "Recipient + sender name are required.", kind: "warn" }); return; }
+    const purchaseISO = draft.purchaseDate || new Date().toISOString().slice(0, 10);
+    const validity = Math.max(1, Math.min(3650, Number(draft.validityDays) || 365));
+    const validUntil = (() => {
+      const d = new Date(purchaseISO);
+      d.setDate(d.getDate() + validity);
+      return d.toISOString().slice(0, 10);
+    })();
     onCreate({
       tierId: tier.id,
       roomId: room.id,
@@ -450,8 +471,11 @@ function GiftCardCreator({ p, rooms, existing, onClose, onCreate }) {
       senderName:     draft.senderName.trim(),
       senderEmail:    draft.senderEmail.trim(),
       message:        draft.message.trim(),
+      notes:          draft.notes.trim(),
       delivery:       draft.delivery,
       deliverOn:      draft.deliverOn || null,
+      purchaseDate:   purchaseISO,
+      validUntil,
     }, { paymentMethod: draft.paymentMethod || "card" });
   };
 
@@ -461,139 +485,302 @@ function GiftCardCreator({ p, rooms, existing, onClose, onCreate }) {
       onClose={onClose}
       eyebrow="Gift card"
       title="Issue a card"
-      contentMaxWidth="max-w-3xl"
+      fullPage
+      contentMaxWidth="max-w-6xl"
       footer={
         <>
           <GhostBtn onClick={onClose} small>Cancel</GhostBtn>
-          <PrimaryBtn onClick={save} small><Save size={11} /> Issue card</PrimaryBtn>
+          <PrimaryBtn onClick={save} small><Save size={11} /> Issue card · {formatCurrency(draft.overridePaid ? Number(draft.overridePaid) : price.net)}</PrimaryBtn>
         </>
       }
     >
-      <Card title="Suite + tier">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <FormGroup label="Suite type">
-            <SelectField
-              value={draft.roomId}
-              onChange={(v) => set({ roomId: v })}
-              options={(rooms || []).map((r) => ({
-                value: r.id,
-                label: `${ROOM_LABEL_SHORT[r.id] || r.id} · ${formatCurrency(r.price)}/night`,
-              }))}
-            />
-          </FormGroup>
-          <FormGroup label="Night tier">
-            <SelectField
-              value={draft.tierId}
-              onChange={(v) => set({ tierId: v })}
-              options={GIFT_CARD_TIERS.map((t) => ({
-                value: t.id,
-                label: `${t.nights} nights · ${t.discountPct}% off · ${t.label}`,
-              }))}
-            />
-          </FormGroup>
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr,360px] gap-6">
+        {/* ─── Form column ──────────────────────────────────────────── */}
+        <div className="space-y-5">
+          {/* Suite picker — visual cards. Operator sees rack rate +
+              the per-night cost dropping as the discount tier deepens. */}
+          <Card title="Suite type">
+            <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", lineHeight: 1.55, marginBottom: 12 }}>
+              The card is issued for one suite type — the recipient redeems against the same type. Studios let you gift more nights for less; the Three-Bedroom is a premium gift.
+            </p>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+              {(rooms || []).map((r) => {
+                const sel = draft.roomId === r.id;
+                return (
+                  <button key={r.id}
+                    onClick={() => set({ roomId: r.id })}
+                    className="text-start p-3 transition-colors"
+                    style={{
+                      backgroundColor: sel ? p.bgHover : p.bgPanel,
+                      border: `1px solid ${sel ? p.accent : p.border}`,
+                      cursor: "pointer",
+                    }}
+                    onMouseEnter={(e) => { if (!sel) e.currentTarget.style.borderColor = p.accent; }}
+                    onMouseLeave={(e) => { if (!sel) e.currentTarget.style.borderColor = p.border; }}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <BedDouble size={14} style={{ color: p.accent, flexShrink: 0 }} />
+                      {sel && <Check size={13} style={{ color: p.accent }} />}
+                    </div>
+                    <div className="mt-2" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.15rem", color: p.textPrimary, fontWeight: 500, lineHeight: 1.15 }}>
+                      {ROOM_LABEL_SHORT[r.id] || r.id}
+                    </div>
+                    <div className="mt-1" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem" }}>
+                      Rack {formatCurrency(r.price)}/n
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </Card>
+
+          {/* Tier picker — visual cards with per-tier net price computed
+              against the selected suite's rack rate. */}
+          <Card title="Night tier">
+            <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", lineHeight: 1.55, marginBottom: 12 }}>
+              Six preset tiers. The discount stacks the more nights you buy. Each tier shows the price for the currently picked suite.
+            </p>
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+              {GIFT_CARD_TIERS.map((t) => {
+                const sel = draft.tierId === t.id;
+                const tp  = computeGiftCardPrice({ nights: t.nights, discountPct: t.discountPct, ratePerNight: room?.price || 0 });
+                return (
+                  <button key={t.id}
+                    onClick={() => set({ tierId: t.id })}
+                    className="text-start p-3 transition-colors"
+                    style={{
+                      backgroundColor: sel ? p.bgHover : p.bgPanel,
+                      border: `1px solid ${sel ? p.accent : p.border}`,
+                      cursor: "pointer",
+                    }}
+                    onMouseEnter={(e) => { if (!sel) e.currentTarget.style.borderColor = p.accent; }}
+                    onMouseLeave={(e) => { if (!sel) e.currentTarget.style.borderColor = p.border; }}
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.6rem", color: p.textPrimary, fontWeight: 500, lineHeight: 1 }}>
+                        {t.nights}<span style={{ fontSize: "0.74rem", color: p.textMuted, fontStyle: "italic", marginInlineStart: 4 }}>nights</span>
+                      </span>
+                      <span style={{ color: p.accent, fontSize: "0.62rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, padding: "2px 6px", border: `1px solid ${p.accent}` }}>
+                        − {t.discountPct}%
+                      </span>
+                    </div>
+                    <div className="mt-1" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}>
+                      {t.label}
+                    </div>
+                    <div className="mt-2 pt-2 flex items-baseline justify-between" style={{ borderTop: `1px solid ${p.border}` }}>
+                      <span style={{ color: p.textMuted, fontSize: "0.7rem", textDecoration: "line-through" }}>{formatCurrency(tp.gross)}</span>
+                      <span style={{ color: p.textPrimary, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.1rem", fontWeight: 500 }}>
+                        {formatCurrency(tp.net)}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </Card>
+
+          {/* Recipient */}
+          <Card title="Recipient">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <FormGroup label="Name *">
+                <TextField value={draft.recipientName} onChange={(v) => set({ recipientName: v })} placeholder="Layla Al-Khalifa" />
+              </FormGroup>
+              <FormGroup label="Email">
+                <TextField type="email" value={draft.recipientEmail} onChange={(v) => set({ recipientEmail: v })} placeholder="recipient@example.com" />
+              </FormGroup>
+            </div>
+          </Card>
+
+          {/* Sender */}
+          <Card title="Sender (buyer)">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <FormGroup label="Name *">
+                <TextField value={draft.senderName} onChange={(v) => set({ senderName: v })} placeholder="Yusuf Al-Khalifa" />
+              </FormGroup>
+              <FormGroup label="Email">
+                <TextField type="email" value={draft.senderEmail} onChange={(v) => set({ senderEmail: v })} placeholder="you@example.com" />
+              </FormGroup>
+            </div>
+          </Card>
+
+          {/* Pricing + accounting */}
+          <Card title="Pricing & payment">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <FormGroup label="Override paid amount (optional)">
+                <TextField
+                  type="number"
+                  value={draft.overridePaid}
+                  onChange={(v) => set({ overridePaid: v })}
+                  placeholder={`Defaults to ${formatCurrency(price.net)}`}
+                />
+              </FormGroup>
+              <FormGroup label="Payment method">
+                <SelectField
+                  value={draft.paymentMethod}
+                  onChange={(v) => set({ paymentMethod: v })}
+                  options={[
+                    { value: "card",        label: "Card" },
+                    { value: "benefit-pay", label: "Benefit Pay" },
+                    { value: "transfer",    label: "Bank transfer" },
+                    { value: "cash",        label: "Cash" },
+                  ]}
+                />
+              </FormGroup>
+            </div>
+            <div className="mt-4 px-3 py-2" style={{ backgroundColor: `${p.success}10`, border: `1px solid ${p.success}40` }}>
+              <div style={{ color: p.success, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>Accounting</div>
+              <div style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 4, lineHeight: 1.55 }}>
+                Issuing creates the card AND posts a matching invoice (kind: gift_card) + payment receipt for the buyer. Both records reference the card via giftCardId so the folio links across modules.
+              </div>
+            </div>
+          </Card>
+
+          {/* Delivery / message / notes */}
+          <Card title="Delivery, message & validity">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <FormGroup label="Format">
+                <SelectField
+                  value={draft.delivery}
+                  onChange={(v) => set({ delivery: v })}
+                  options={[
+                    { value: "email", label: "Email PDF" },
+                    { value: "print", label: "Printed certificate" },
+                  ]}
+                />
+              </FormGroup>
+              <FormGroup label="Deliver on (optional)">
+                <TextField type="date" value={draft.deliverOn} onChange={(v) => set({ deliverOn: v })} />
+              </FormGroup>
+              <FormGroup label="Purchase date">
+                <TextField type="date" value={draft.purchaseDate} onChange={(v) => set({ purchaseDate: v })} />
+              </FormGroup>
+              <FormGroup label="Validity (days, default 365)">
+                <TextField
+                  type="number"
+                  value={draft.validityDays}
+                  onChange={(v) => set({ validityDays: v })}
+                  placeholder="365"
+                />
+              </FormGroup>
+              <div className="sm:col-span-2">
+                <FormGroup label="Personal message (printed on certificate)">
+                  <textarea
+                    value={draft.message}
+                    onChange={(e) => set({ message: e.target.value })}
+                    rows={3}
+                    placeholder="A line or two — included on the printed certificate or above the PDF."
+                    className="w-full"
+                    style={{
+                      backgroundColor: p.inputBg, color: p.textPrimary,
+                      border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem",
+                      fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem",
+                      lineHeight: 1.5, resize: "vertical",
+                    }}
+                  />
+                </FormGroup>
+              </div>
+              <div className="sm:col-span-2">
+                <FormGroup label="Internal notes (operator-only · never shown to buyer/recipient)">
+                  <textarea
+                    value={draft.notes}
+                    onChange={(e) => set({ notes: e.target.value })}
+                    rows={2}
+                    placeholder="Channel, special handling, refund authorisations, etc."
+                    className="w-full"
+                    style={{
+                      backgroundColor: p.inputBg, color: p.textPrimary,
+                      border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem",
+                      fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem",
+                      lineHeight: 1.5, resize: "vertical",
+                    }}
+                  />
+                </FormGroup>
+              </div>
+            </div>
+          </Card>
         </div>
 
-        {/* Computed price preview */}
-        <div className="mt-4 grid grid-cols-3 gap-3">
-          <PreviewStat p={p} label="Gross"        value={formatCurrency(price.gross)} />
-          <PreviewStat p={p} label="Discount"     value={`− ${formatCurrency(price.discount)}`} accent={p.success} />
-          <PreviewStat p={p} label="Net to buyer" value={formatCurrency(price.net)}   accent={p.accent} />
-        </div>
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <FormGroup label="Override paid amount (optional)">
-            <TextField
-              type="number"
-              value={draft.overridePaid}
-              onChange={(v) => set({ overridePaid: v })}
-              placeholder={`Defaults to ${formatCurrency(price.net)}`}
-            />
-          </FormGroup>
-          <FormGroup label="Payment method">
-            <SelectField
-              value={draft.paymentMethod}
-              onChange={(v) => set({ paymentMethod: v })}
-              options={[
-                { value: "card",        label: "Card" },
-                { value: "benefit-pay", label: "Benefit Pay" },
-                { value: "transfer",    label: "Bank transfer" },
-                { value: "cash",        label: "Cash" },
-              ]}
-            />
-          </FormGroup>
-        </div>
-        <div className="mt-2 px-3 py-2" style={{ backgroundColor: `${p.success}10`, border: `1px solid ${p.success}40` }}>
-          <div style={{ color: p.success, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>Accounting</div>
-          <div style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 4, lineHeight: 1.55 }}>
-            Issuing creates the card AND posts a matching invoice (kind: gift_card) + payment receipt for the buyer. Both records reference the card via giftCardId so the folio links across modules.
+        {/* ─── Sticky pricing rail ─────────────────────────────────── */}
+        <div>
+          <div className="lg:sticky lg:top-4 space-y-4">
+            <Card padded={false}>
+              <div className="px-5 py-4" style={{ borderBottom: `1px solid ${p.border}` }}>
+                <div style={{ color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.28em", textTransform: "uppercase", fontWeight: 700 }}>
+                  Card preview
+                </div>
+                <div className="mt-2" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.textPrimary, fontWeight: 500, lineHeight: 1.1 }}>
+                  {tier.nights} nights · {ROOM_LABEL_SHORT[room?.id] || room?.id}
+                </div>
+                <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 4 }}>
+                  {tier.label} · {tier.discountPct}% buyer discount
+                </div>
+              </div>
+              <div className="px-5 py-4 space-y-2" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}>
+                <RailRow p={p} label={`Rack · ${tier.nights} × ${formatCurrency(room?.price || 0)}`} value={formatCurrency(price.gross)} muted />
+                <RailRow p={p} label={`Discount · ${tier.discountPct}%`} value={`− ${formatCurrency(price.discount)}`} accent={p.success} />
+                <div style={{ height: 1, backgroundColor: p.border, margin: "6px 0" }} />
+                <RailRow p={p} label="Net to buyer" value={formatCurrency(price.net)} bold accent={p.accent} />
+                {draft.overridePaid && Number(draft.overridePaid) !== price.net && (
+                  <RailRow p={p} label="Override paid" value={formatCurrency(Number(draft.overridePaid))} accent={p.warn} />
+                )}
+                <div style={{ color: p.textMuted, fontSize: "0.72rem", textAlign: "right", marginTop: 4 }}>
+                  ≈ {formatCurrency(perNight)} / night
+                </div>
+              </div>
+            </Card>
+
+            {/* Card metadata preview */}
+            <Card padded>
+              <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                Card metadata
+              </div>
+              <div className="mt-3 space-y-2" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem" }}>
+                <div>
+                  <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}>Code preview</div>
+                  <code style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: "0.92rem", color: p.accent, letterSpacing: "0.04em", fontWeight: 600 }}>{previewCode}</code>
+                  <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2, lineHeight: 1.5 }}>
+                    Collision-checked; regenerated on Save to avoid concurrent clashes.
+                  </div>
+                </div>
+                <div style={{ height: 1, backgroundColor: p.border, margin: "6px 0" }} />
+                <RailRow p={p} label="Purchase date" value={fmtDate(draft.purchaseDate)} />
+                <RailRow p={p} label="Valid until"   value={fmtDate(validUntilPreview)} />
+                <RailRow p={p} label="Delivery"      value={draft.delivery === "email" ? "Email PDF" : "Printed certificate"} />
+                {draft.deliverOn && <RailRow p={p} label="Deliver on" value={fmtDate(draft.deliverOn)} />}
+              </div>
+            </Card>
+
+            {/* Validation summary */}
+            {!valid && (
+              <Card padded>
+                <div className="flex items-start gap-2" style={{ color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.82rem", lineHeight: 1.55 }}>
+                  <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+                  <span>Recipient and sender names are required before you can issue the card. Email is optional but recommended for delivery.</span>
+                </div>
+              </Card>
+            )}
           </div>
-        </div>
-      </Card>
-
-      <Card title="Recipient" className="mt-5">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <FormGroup label="Name *">
-            <TextField value={draft.recipientName} onChange={(v) => set({ recipientName: v })} placeholder="Layla Al-Khalifa" />
-          </FormGroup>
-          <FormGroup label="Email">
-            <TextField type="email" value={draft.recipientEmail} onChange={(v) => set({ recipientEmail: v })} placeholder="recipient@example.com" />
-          </FormGroup>
-        </div>
-      </Card>
-
-      <Card title="Sender" className="mt-5">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <FormGroup label="Name *">
-            <TextField value={draft.senderName} onChange={(v) => set({ senderName: v })} placeholder="Yusuf Al-Khalifa" />
-          </FormGroup>
-          <FormGroup label="Email">
-            <TextField type="email" value={draft.senderEmail} onChange={(v) => set({ senderEmail: v })} placeholder="you@example.com" />
-          </FormGroup>
-        </div>
-      </Card>
-
-      <Card title="Delivery & message" className="mt-5">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <FormGroup label="Format">
-            <SelectField
-              value={draft.delivery}
-              onChange={(v) => set({ delivery: v })}
-              options={[
-                { value: "email", label: "Email PDF" },
-                { value: "print", label: "Printed certificate" },
-              ]}
-            />
-          </FormGroup>
-          <FormGroup label="Deliver on (optional)">
-            <TextField type="date" value={draft.deliverOn} onChange={(v) => set({ deliverOn: v })} />
-          </FormGroup>
-          <div className="sm:col-span-2">
-            <FormGroup label="Personal message">
-              <textarea
-                value={draft.message}
-                onChange={(e) => set({ message: e.target.value })}
-                rows={3}
-                placeholder="A line or two — included on the printed certificate or above the PDF."
-                className="w-full"
-                style={{
-                  backgroundColor: p.inputBg, color: p.textPrimary,
-                  border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem",
-                  fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem",
-                  lineHeight: 1.5, resize: "vertical",
-                }}
-              />
-            </FormGroup>
-          </div>
-        </div>
-      </Card>
-
-      <div className="mt-4 px-4 py-3" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
-        <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>Code preview</div>
-        <code style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: "0.92rem", color: p.accent, letterSpacing: "0.04em", fontWeight: 600 }}>{previewCode}</code>
-        <div style={{ color: p.textMuted, fontSize: "0.72rem", marginTop: 4 }}>
-          Codes are collision-checked. The exact value is regenerated on Save so two operators creating at once never end up with the same code.
         </div>
       </div>
     </Drawer>
+  );
+}
+
+// Right-rail single line — label on the left, value on the right.
+// `bold` toggles the headline total weight; `accent` overrides the value
+// colour for discount + override-paid lines so the eye lands on changes.
+function RailRow({ p, label, value, bold = false, accent, muted = false }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span style={{ color: muted ? p.textMuted : p.textSecondary }}>{label}</span>
+      <span style={{
+        color: accent || (bold ? p.textPrimary : p.textPrimary),
+        fontWeight: bold ? 700 : 600,
+        fontVariantNumeric: "tabular-nums",
+        fontFamily: bold ? "'Cormorant Garamond', serif" : "'Manrope', sans-serif",
+        fontSize: bold ? "1.4rem" : "0.86rem",
+      }}>{value}</span>
+    </div>
   );
 }
 
