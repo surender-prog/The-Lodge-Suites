@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { ArrowLeft, X } from "lucide-react";
 import { C } from "../data/tokens.js";
 import { Crosshatch } from "../components/Crosshatch.jsx";
@@ -34,12 +34,83 @@ export const EditorialPage = ({
     };
   }, [open, onClose]);
 
+  // Track whether the user has scrolled past the hero so the sticky
+  // mini-toolbar (Back to home + close) only appears after the hero has
+  // scrolled out of view. While the hero is still visible the in-hero
+  // buttons handle the same actions, so we don't double up.
+  const scrollRef = useRef(null);
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      // 280 px = about the point where the hero title block exits the
+      // viewport on common laptop heights. Small enough that the toolbar
+      // doesn't pop in immediately but big enough that the in-hero
+      // buttons remain the obvious affordance up top.
+      setScrolled(el.scrollTop > 280);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [open]);
+
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col" style={{ backgroundColor: C.paper }}>
-      {/* Hero — cinematic dark band with the page title */}
-      <header className="relative flex-shrink-0" style={{ backgroundColor: C.bgDeep, minHeight: 360 }}>
+    <div ref={scrollRef} className="fixed inset-0 z-50 overflow-y-auto" style={{ backgroundColor: C.paper }}>
+      {/* Floating mini-toolbar — fades in once the hero scrolls off so
+          the guest still has a one-tap exit deep into the page. Fixed
+          (not sticky) so it doesn't reserve any layout space while
+          hidden, and so it always pins to the viewport top regardless
+          of which scroll container we're nested inside. */}
+      <div
+        className="fixed inset-x-0 top-0 z-[60] transition-opacity"
+        style={{
+          opacity: scrolled ? 1 : 0,
+          pointerEvents: scrolled ? "auto" : "none",
+          backgroundColor: "rgba(21,22,26,0.92)",
+          backdropFilter: "blur(8px)",
+          WebkitBackdropFilter: "blur(8px)",
+          borderBottom: `1px solid ${C.border}`,
+        }}
+      >
+        <div className="px-6 md:px-10 py-3 flex items-center justify-between gap-3">
+          <button onClick={onClose}
+            className="inline-flex items-center gap-2"
+            style={{
+              fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+              letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+              color: C.gold, padding: "0.4rem 0.8rem",
+              border: `1px solid ${C.gold}`, backgroundColor: "transparent", cursor: "pointer",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = `${C.gold}1F`; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+          >
+            <ArrowLeft size={11} /> Back to home
+          </button>
+          <button onClick={onClose}
+            aria-label="Close"
+            style={{
+              color: C.cream, padding: 7,
+              border: `1px solid ${C.border}`, backgroundColor: "transparent",
+              cursor: "pointer",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = C.gold; e.currentTarget.style.borderColor = C.gold; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = C.cream; e.currentTarget.style.borderColor = C.border; }}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      </div>
+
+      {/* Hero — cinematic dark band with the page title. No longer
+          `flex-shrink-0` because the outer container is a single
+          natural scroll context; the hero scrolls away with everything
+          else and the floating toolbar above takes over for
+          navigation once it's out of view. */}
+      <header className="relative" style={{ backgroundColor: C.bgDeep, minHeight: 360 }}>
         {heroImage && (
           <div className="absolute inset-0">
             <img src={heroImage} alt="" className="w-full h-full object-cover" />
@@ -121,8 +192,10 @@ export const EditorialPage = ({
         </div>
       </header>
 
-      {/* Body */}
-      <main className="flex-1 overflow-y-auto" style={{ backgroundColor: C.paper }}>
+      {/* Body — no longer a separate scroll context. Lives inside the
+          page's natural document flow under the hero so the wheel /
+          touchpad scrolls everything together. */}
+      <main style={{ backgroundColor: C.paper }}>
         <div className="max-w-7xl mx-auto px-6 md:px-10 py-14 md:py-20">
           {children}
         </div>
