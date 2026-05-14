@@ -13,6 +13,10 @@ import {
   computeGiftCardPrice,
   useData,
 } from "../data/store.jsx";
+// Note: this modal uses the unified `issueGiftCard` flow which creates
+// the gift card AND posts the matching invoice + payment receipt in one
+// shot, so the buyer's transaction is properly accounted for from the
+// moment the code is generated.
 
 // ---------------------------------------------------------------------------
 // Gift Vouchers — full editorial page that the Footer "Gift Vouchers" link
@@ -60,7 +64,7 @@ const FAQS = [
 ];
 
 export const GiftVouchersModal = ({ open, onClose, onBook }) => {
-  const { rooms, hotelInfo, addGiftCard } = useData();
+  const { rooms, hotelInfo, issueGiftCard } = useData();
   // Default to the second-cheapest suite (One-Bed) so the price chip
   // doesn't anchor too low on first view.
   const defaultRoomId = rooms?.find((r) => r.id === "one-bed")?.id || rooms?.[0]?.id || "studio";
@@ -92,10 +96,11 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
       pushToast({ message: "Fill in recipient and your details to continue.", kind: "warn" });
       return;
     }
-    // Persist a real gift card via the store action — the code is
-    // generated server-side-style (collision-checked) so we can hand
-    // it to the buyer immediately for the recipient.
-    const saved = addGiftCard({
+    // Persist a real gift card via the unified issueGiftCard flow —
+    // creates the card AND posts the matching invoice + payment
+    // receipt so the buyer's transaction is properly accounted for
+    // before they walk away with the code.
+    const saved = issueGiftCard({
       tierId: tier.id,
       roomId: room.id,
       totalNights: tier.nights,

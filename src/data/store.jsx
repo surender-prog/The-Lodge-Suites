@@ -400,6 +400,11 @@ const SAMPLE_INVOICES = [
   // Commission payables — money the hotel owes the agency for commission.
   { id: "INV-2026-CR01", bookingId: "LS-A8K2N4", clientType: "agent",     clientName: "Globepass Travel",    issued: "2026-04-15", due: "2026-04-30", amount:   8, paid: 8,   status: "paid",    kind: "commission", description: "Commission · LS-A8K2N4 (Sarah Holloway)" },
   { id: "INV-2026-CR02", bookingId: "LS-F6Y2Z4", clientType: "agent",     clientName: "Cleartrip Bahrain",   issued: "2026-04-20", due: "2026-05-04", amount:  14, paid: 0,   status: "issued",  kind: "commission", description: "Commission · LS-F6Y2Z4 (James Holloway)" },
+  // Gift card invoices — buyer pays at purchase. Linked to the card via
+  // giftCardId / giftCardCode so admin folio can tie the transaction
+  // back to the original card record.
+  { id: "INV-2026-GC01", bookingId: null, giftCardId: "GC-2026-001", giftCardCode: "LS-GC-DEMO-AAAA", clientType: "guest", clientName: "Yusuf Al-Khalifa", clientEmail: "yusuf@example.com", issued: "2026-04-12", due: "2026-04-12", amount: 209, paid: 209, status: "paid", kind: "gift_card", description: "Gift card · 5 nights at the Lodge Studio · 5% buyer discount" },
+  { id: "INV-2025-GC02", bookingId: null, giftCardId: "GC-2026-002", giftCardCode: "LS-GC-DEMO-BBBB", clientType: "guest", clientName: "Khalid Mansoor",   clientEmail: "khalid@example.com", issued: "2025-11-03", due: "2025-11-03", amount: 484, paid: 484, status: "paid", kind: "gift_card", description: "Gift card · 10 nights at the One-Bedroom Suite · 7% buyer discount" },
 ];
 
 const SAMPLE_PAYMENTS = [
@@ -410,6 +415,11 @@ const SAMPLE_PAYMENTS = [
   { id: "PAY-9802", bookingId: "LS-F6Y2Z4", method: "card",       amount: 167, fee:   5, net: 162, ts: "2026-04-19T10:22:00", status: "captured" },
   { id: "PAY-9799", bookingId: "—",         method: "transfer",   amount: 854, fee:   0, net: 854, ts: "2026-04-18T09:00:00", status: "captured" },
   { id: "PAY-9795", bookingId: "—",         method: "card",       amount:  60, fee:   2, net:  58, ts: "2026-04-15T16:08:00", status: "refunded" },
+  // Gift card buyer-side payments — money in from the gift card sale.
+  // bookingId is null because gift cards aren't bookings; the gift
+  // card linkage rides on giftCardId / giftCardCode.
+  { id: "PAY-9912", bookingId: null, giftCardId: "GC-2026-001", giftCardCode: "LS-GC-DEMO-AAAA", method: "card",     amount: 209, fee: 6, net: 203, ts: "2026-04-12T11:08:00", status: "captured", note: "Gift card purchase · LS-GC-DEMO-AAAA for Layla Al-Khalifa" },
+  { id: "PAY-9745", bookingId: null, giftCardId: "GC-2026-002", giftCardCode: "LS-GC-DEMO-BBBB", method: "transfer", amount: 484, fee: 0, net: 484, ts: "2025-11-03T15:42:00", status: "captured", note: "Gift card purchase · LS-GC-DEMO-BBBB for Aisha Rahimi" },
 ];
 
 // Default monthly net = 22.5× daily (≈25% discount on a 30-day month). Operators
@@ -4979,6 +4989,71 @@ export function DataProvider({ children }) {
     setPayments(ps => ps.map(p => p.id === id ? { ...p, ...patch } : p));
   }, []);
 
+  // ── Gift card issuance — wraps addGiftCard with accounting glue ──────
+  // Issues the card AND posts the matching invoice + payment so the
+  // operator sees the full transaction in one shot. Both public Gift
+  // Vouchers checkout and admin manual issuance route through this
+  // action so accounting stays consistent.
+  //
+  //   issueGiftCard(payload, { paymentMethod }) → savedCard
+  //
+  // Invoice (kind: "gift_card")  — money owed by buyer for the prepaid
+  //                                nights. Marked `paid` because the
+  //                                buyer settles at purchase time.
+  // Payment (status: "captured") — receipt for the buyer's payment.
+  //                                Both records reference the card via
+  //                                giftCardId + giftCardCode so the
+  //                                admin folio can tie them together.
+  const issueGiftCard = useCallback((card, opts = {}) => {
+    const saved = addGiftCard(card);
+    if (!saved) return null;
+    const method = opts.paymentMethod || "card";
+    const amount = Number(saved.paidAmount) || 0;
+    if (amount > 0) {
+      // Pre-format the description so both the invoice line and the
+      // notification body read sensibly to a non-technical operator.
+      const desc = `Gift card · ${saved.totalNights} nights at the ${
+        saved.roomId === "studio"    ? "Lodge Studio"
+        : saved.roomId === "one-bed" ? "One-Bedroom Suite"
+        : saved.roomId === "two-bed" ? "Two-Bedroom Suite"
+        : saved.roomId === "three-bed" ? "Three-Bedroom Suite"
+        : saved.roomId
+      } · ${saved.discountPct}% buyer discount`;
+      try {
+        addInvoice({
+          clientType: "guest",
+          clientName: saved.senderName || saved.recipientName || "Gift card buyer",
+          clientEmail: saved.senderEmail || saved.recipientEmail || "",
+          bookingId: null,
+          giftCardId: saved.id,
+          giftCardCode: saved.code,
+          issued: saved.purchaseDate,
+          due:    saved.purchaseDate,
+          amount,
+          paid:   amount,
+          status: "paid",
+          kind:   "gift_card",
+          description: desc,
+        });
+      } catch (_) {}
+      try {
+        addPayment({
+          bookingId: null,
+          giftCardId: saved.id,
+          giftCardCode: saved.code,
+          amount,
+          fee: 0,
+          net: amount,
+          method,
+          status: "captured",
+          ts: new Date().toISOString(),
+          note: `Gift card purchase · ${saved.code} for ${saved.recipientName || "recipient"}`,
+        });
+      } catch (_) {}
+    }
+    return saved;
+  }, [addGiftCard, addInvoice, addPayment]);
+
   // Reactive list of contracts (corporate + agency) that expire within the
   // next 15 days and are still active. Consumed by the Hotel Admin Dashboard
   // to surface a renewal-warning banner. Sorted by `daysLeft` ascending so
@@ -5047,12 +5122,12 @@ export function DataProvider({ children }) {
     setRoomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus,
     setMembers, addMember, updateMember, removeMember,
     // Gift cards — advance-purchase night packs
-    giftCards, setGiftCards, addGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard,
+    giftCards, setGiftCards, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard,
     extras, activeExtras: extras.filter(e => e.active !== false), setExtras, upsertExtra, removeExtra, toggleExtra,
     setCalendar, setCalendarCell,
     setLoyalty,
     addBooking, updateBooking, removeBooking,
-  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
+  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
 
   return <DataStoreContext.Provider value={value}>{children}</DataStoreContext.Provider>;
 }
