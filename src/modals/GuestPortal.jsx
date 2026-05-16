@@ -2,8 +2,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle, ArrowRight, BedDouble, Briefcase, Building2, Calendar,
   CalendarDays, CheckCircle2, ChevronLeft, ClipboardList, Coins, Copy, CreditCard,
-  Crown, Download, Edit2, Eye, EyeOff, FileText, Image as ImageIcon, KeyRound, Link as LinkIcon,
-  Lock, LogIn, LogOut, Mail, MessageCircle, Minus, Phone, Plus, Printer,
+  Crown, Download, Edit2, ExternalLink, Eye, EyeOff, FileBadge, FileText,
+  Image as ImageIcon, KeyRound, Link as LinkIcon, Lock, LogIn, LogOut, Mail,
+  MessageCircle, Minus, Paperclip, Phone, Plus, Printer,
   Receipt as ReceiptIcon, Save, Send, Share2, Shield, Sparkles, Star, Trash2,
   User, UserCircle2, Users, Wallet, X, Zap,
 } from "lucide-react";
@@ -1914,6 +1915,241 @@ function StatementView({ account, kind, invoices, payments, ledger = "booking" }
 // ===========================================================================
 // Profile tabs
 // ===========================================================================
+// ─────────────────────────────────────────────────────────────────────────
+// GuestAccountProfileCard — read-only summary of the partner account's
+// identity + statutory record + uploaded certificates + signed contract.
+// Surfaced inside the guest portal's Profile tab so a corporate booker
+// (or travel-agent admin) can confirm what's on file without bouncing
+// to email or chasing the hotel's admin team.
+//
+// All values come from the agreement / agency record. Edits are
+// admin-only by design — the hotel needs to verify changes to CR /
+// VAT before mirroring them on the contract.
+// ─────────────────────────────────────────────────────────────────────────
+function GuestAccountProfileCard({ account, kind }) {
+  const p = usePalette();
+  const isCorp = kind === "corporate";
+  const partyName = isCorp ? (account.account || "—") : (account.name || "—");
+
+  // Compact red / amber / green expiry chip — matches the admin Profile
+  // tab so a partner sees the same renewal cue the hotel sees.
+  const expiryChip = (iso) => {
+    if (!iso) return null;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const d = new Date(iso); d.setHours(0, 0, 0, 0);
+    const left = Math.ceil((d - today) / 86400000);
+    if (left < 0)   return { color: p.danger,  label: `Expired ${Math.abs(left)}d ago` };
+    if (left <= 30) return { color: p.warn,    label: `Expires in ${left}d` };
+    return { color: p.success, label: `Valid · ${left}d left` };
+  };
+  const crChip  = expiryChip(account.crExpiry);
+  const vatChip = expiryChip(account.vatExpiry);
+
+  const fmtIsoDate = (iso) => {
+    if (!iso) return "—";
+    try { return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }); }
+    catch { return iso; }
+  };
+
+  // Tiny reusable read-only row for the labelled value pairs below.
+  // Inline instead of a separate component because the file already
+  // has a `Field` (used for editable inputs in the profile cards).
+  const Row = ({ label, value, mono }) => (
+    <div>
+      <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+        {label}
+      </div>
+      <div style={{
+        color: value && value !== "—" ? p.textPrimary : p.textMuted,
+        fontFamily: mono ? "ui-monospace, Menlo, monospace" : "'Manrope', sans-serif",
+        fontSize: mono ? "0.82rem" : "0.86rem",
+        fontWeight: mono || (value && value !== "—") ? 600 : 500,
+        marginTop: 3, wordBreak: "break-word",
+      }}>{value || "—"}</div>
+    </div>
+  );
+
+  return (
+    <>
+      {/* Account identity */}
+      <Card title={isCorp ? "Account profile" : "Agency profile"} className="lg:col-span-2">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <Row label={isCorp ? "Account name" : "Agency name"} value={partyName} />
+          {isCorp && <Row label="Industry"        value={account.industry  || "—"} />}
+          {!isCorp && <Row label="Trading contact" value={account.contact   || "—"} />}
+          <Row label="Contract id"   value={account.id} mono />
+          <Row label="Status"        value={(account.status || "draft").replace(/\b\w/g, (c) => c.toUpperCase())} />
+          <Row label="Signed on"     value={fmtIsoDate(account.signedOn)} />
+          <Row label="Valid from"    value={fmtIsoDate(account.startsOn)} />
+          <Row label="Valid to"      value={fmtIsoDate(account.endsOn)}   />
+          <Row label="Payment terms" value={account.paymentTerms || "—"} />
+          {(account.creditLimit > 0) && (
+            <Row label="Credit limit" value={`BHD ${Number(account.creditLimit).toLocaleString()}`} />
+          )}
+        </div>
+        <div className="mt-4 p-3 flex items-start gap-2" style={{
+          backgroundColor: `${p.accent}10`, border: `1px solid ${p.accent}45`,
+          fontFamily: "'Manrope', sans-serif", fontSize: "0.76rem", lineHeight: 1.55,
+          color: p.textSecondary,
+        }}>
+          <AlertCircle size={13} style={{ color: p.accent, flexShrink: 0, marginTop: 2 }} />
+          <div>
+            These details are managed by the hotel's accounts team. To request a change — CR renewal, VAT number update, address correction, new credit limit — please contact <strong style={{ color: p.textPrimary }}>accounts@thelodgesuites.bh</strong>.
+          </div>
+        </div>
+      </Card>
+
+      {/* Statutory registration */}
+      <Card title={<><FileBadge size={12} style={{ display: "inline", marginInlineEnd: 6 }} /> Statutory registration</>} className="lg:col-span-2">
+        <div className="grid sm:grid-cols-2 gap-5">
+          {/* CR */}
+          <div>
+            <div className="flex items-baseline justify-between gap-2 flex-wrap mb-1">
+              <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                Commercial Registration (CR)
+              </span>
+              {crChip && (
+                <span style={{
+                  color: crChip.color, backgroundColor: `${crChip.color}10`,
+                  border: `1px solid ${crChip.color}`,
+                  padding: "1px 7px", fontFamily: "'Manrope', sans-serif",
+                  fontSize: "0.56rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                }}>{crChip.label}</span>
+              )}
+            </div>
+            <div style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}>
+              <span style={{ fontWeight: 700 }}>{account.crNumber || "—"}</span>
+              {account.crExpiry && (
+                <span style={{ color: p.textMuted, marginInlineStart: 8, fontSize: "0.76rem" }}>· valid to {fmtIsoDate(account.crExpiry)}</span>
+              )}
+            </div>
+            {account.crCertificateUrl ? (
+              <a href={account.crCertificateUrl} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 mt-2"
+                style={{
+                  color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem",
+                  letterSpacing: "0.04em", fontWeight: 600,
+                  textDecoration: "underline", textUnderlineOffset: 3,
+                }}
+              >
+                <FileText size={11} /> {account.crCertificateFilename || "Open CR certificate"}
+                <ExternalLink size={10} style={{ opacity: 0.7 }} />
+              </a>
+            ) : (
+              <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", marginTop: 4, fontStyle: "italic" }}>
+                No CR certificate on file.
+              </div>
+            )}
+          </div>
+
+          {/* VAT */}
+          <div>
+            <div className="flex items-baseline justify-between gap-2 flex-wrap mb-1">
+              <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                VAT Registration
+              </span>
+              {vatChip && (
+                <span style={{
+                  color: vatChip.color, backgroundColor: `${vatChip.color}10`,
+                  border: `1px solid ${vatChip.color}`,
+                  padding: "1px 7px", fontFamily: "'Manrope', sans-serif",
+                  fontSize: "0.56rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                }}>{vatChip.label}</span>
+              )}
+            </div>
+            <div style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}>
+              <span style={{ fontWeight: 700 }}>{account.vatNumber || "—"}</span>
+              {account.vatExpiry && (
+                <span style={{ color: p.textMuted, marginInlineStart: 8, fontSize: "0.76rem" }}>· valid to {fmtIsoDate(account.vatExpiry)}</span>
+              )}
+            </div>
+            {account.vatCertificateUrl ? (
+              <a href={account.vatCertificateUrl} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 mt-2"
+                style={{
+                  color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem",
+                  letterSpacing: "0.04em", fontWeight: 600,
+                  textDecoration: "underline", textUnderlineOffset: 3,
+                }}
+              >
+                <FileText size={11} /> {account.vatCertificateFilename || "Open VAT certificate"}
+                <ExternalLink size={10} style={{ opacity: 0.7 }} />
+              </a>
+            ) : (
+              <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", marginTop: 4, fontStyle: "italic" }}>
+                No VAT certificate on file.
+              </div>
+            )}
+          </div>
+
+          {/* Address — spans both columns */}
+          <div className="sm:col-span-2">
+            <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>
+              Registered company address
+            </div>
+            {account.companyAddress ? (
+              <div style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", whiteSpace: "pre-line", lineHeight: 1.55 }}>
+                {account.companyAddress}
+              </div>
+            ) : (
+              <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", fontStyle: "italic" }}>
+                Not on file.
+              </div>
+            )}
+          </div>
+        </div>
+      </Card>
+
+      {/* Signed contract — only when an admin has uploaded the
+          countersigned PDF. Otherwise hidden so a partner doesn't
+          see an empty / accusatory state for something they don't
+          control directly. */}
+      {account.signedContractUrl && (
+        <Card title={<><Paperclip size={12} style={{ display: "inline", marginInlineEnd: 6 }} /> Signed contract</>} className="lg:col-span-2">
+          <div className="flex items-start gap-3 flex-wrap">
+            <FileText size={22} style={{ color: p.accent, flexShrink: 0, marginTop: 2 }} />
+            <div className="min-w-0 flex-1">
+              <a
+                href={account.signedContractUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.92rem",
+                  fontWeight: 700, wordBreak: "break-word", textDecoration: "underline", textUnderlineOffset: 3,
+                }}
+              >
+                {account.signedContractFilename || "Signed contract"}
+              </a>
+              <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.76rem", marginTop: 4 }}>
+                {account.signedContractUploadedAt
+                  ? <>Uploaded · {fmtIsoDate(account.signedContractUploadedAt.slice(0, 10))}</>
+                  : "Uploaded"}
+              </div>
+            </div>
+            <a
+              href={account.signedContractUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              download={account.signedContractFilename || undefined}
+              className="inline-flex items-center gap-1.5"
+              style={{
+                padding: "0.45rem 0.85rem", border: `1px solid ${p.accent}`, color: p.accent, backgroundColor: "transparent",
+                fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+                letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                textDecoration: "none",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = `${p.accent}10`; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+            >
+              <Download size={11} /> Download
+            </a>
+          </div>
+        </Card>
+      )}
+    </>
+  );
+}
+
 function CorporateProfileTab({ session, agreement, upsertAgreement, setSession }) {
   const p = usePalette();
   const me = (agreement.users || []).find((u) => u.id === session.userId);
@@ -1960,6 +2196,12 @@ function CorporateProfileTab({ session, agreement, upsertAgreement, setSession }
           pushToast({ message: "Password updated" });
         }}
       />
+
+      {/* Account profile + statutory + signed contract — read-only
+          mirror of the admin Profile tab so the corporate booker sees
+          exactly what the hotel has on file. Edits go through the
+          accounts team (see the hint inside the card). */}
+      <GuestAccountProfileCard account={agreement} kind="corporate" />
 
       <Card title="Account team" className="lg:col-span-2">
         {(agreement.users || []).length === 0 ? (
@@ -2026,6 +2268,29 @@ function AgentProfileTab({ session, agency, upsertAgency, setSession }) {
           pushToast({ message: "Password updated" });
         }}
       />
+
+      {/* Agency profile + statutory + signed contract — read-only
+          mirror of the admin Profile tab so the travel-agent booker
+          sees exactly what the hotel has on file. */}
+      <GuestAccountProfileCard account={agency} kind="agent" />
+
+      <Card title="Agency team" className="lg:col-span-2">
+        {(agency.users || []).length === 0 ? (
+          <div style={{ color: p.textMuted, fontSize: "0.84rem" }}>No additional users registered for this agency.</div>
+        ) : (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {agency.users.map((u) => (
+              <div key={u.id} className="p-3" style={{ border: `1px solid ${p.border}`, backgroundColor: p.bgPanel }}>
+                <div style={{ color: p.textPrimary, fontWeight: 600 }}>{u.name}</div>
+                <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 2 }}>{u.email}</div>
+                <div style={{ color: p.accent, fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginTop: 6 }}>
+                  {u.role}{u.id === me?.id ? " · you" : ""}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
