@@ -36,11 +36,30 @@ function cellState(room, override) {
   return { rate, stopSale, blocked, reason: override?.reason || "" };
 }
 
+// Day-of-week codes the operator can mix and match in the bulk editor.
+// 0 = Sunday, … 6 = Saturday.
+const DOW = [
+  { id: 0, short: "Sun" }, { id: 1, short: "Mon" }, { id: 2, short: "Tue" },
+  { id: 3, short: "Wed" }, { id: 4, short: "Thu" }, { id: 5, short: "Fri" }, { id: 6, short: "Sat" },
+];
+
+// Default Bahrain weekend used as a fallback when hotelInfo.weekendDays
+// hasn't been hydrated yet. Kept narrow so we don't accidentally treat
+// weekdays as weekends mid-render.
+const DEFAULT_WEEKEND_DAYS = [5, 6];
+
 export const CalendarView = ({ onNavigate }) => {
   const t = useT();
   const p = usePalette();
   const { lang } = useLang();
-  const { rooms, calendar, setCalendarCell, bookings } = useData();
+  const { rooms, calendar, setCalendarCell, bookings, hotelInfo } = useData();
+
+  // Weekend-day set sourced from Property Info → Weekend days. Falls back
+  // to Bahrain's Fri/Sat default while the singleton is hydrating.
+  const weekendDays = (hotelInfo?.weekendDays && hotelInfo.weekendDays.length > 0)
+    ? hotelInfo.weekendDays
+    : DEFAULT_WEEKEND_DAYS;
+  const isWeekendDate = (d) => weekendDays.includes(d.getDay());
 
   // Date range: default = today + next N days. User can pan by day, week,
   // or month and jump back to today instantly.
@@ -55,14 +74,12 @@ export const CalendarView = ({ onNavigate }) => {
 
   const [selected, setSelected] = useState(null); // { roomId, dateISO }
 
-  // For bulk editing — let user select a date range + room.
+  // Bulk editor state — supports MULTIPLE simultaneous date ranges and
+  // multi-suite scope. Each range is { id, from, to, label } so an
+  // operator can build, e.g. "F1 weekend + National Day weekend + New
+  // Year's eve" in one shot and apply one consistent patch across all
+  // of them. See `applyBulk` for how the cells are unioned.
   const [bulkOpen, setBulkOpen] = useState(false);
-  const [bulkRoom, setBulkRoom] = useState(rooms[0]?.id);
-  const [bulkFrom, setBulkFrom] = useState(isoDay(anchor));
-  const [bulkTo, setBulkTo] = useState(isoDay(dates[dates.length - 1] || anchor));
-  const [bulkRate, setBulkRate] = useState("");
-  const [bulkStop, setBulkStop] = useState(false);
-  const [bulkReason, setBulkReason] = useState("");
 
   // Headcount of bookings per room per day → drives occupancy hue.
   const occMap = useMemo(() => {
@@ -78,16 +95,22 @@ export const CalendarView = ({ onNavigate }) => {
     return m;
   }, [bookings]);
 
-  // Generic anchor mutator — keeps the bulk-edit defaults synced with the
-  // calendar window so the bulk drawer always opens with the current range.
+  // Anchor mutator — bulk-editor defaults derive from the live window
+  // anyway, so this just normalises the date and updates the anchor.
   const setAnchorAndBulk = (next) => {
     next.setHours(0, 0, 0, 0);
     setAnchor(next);
-    setBulkFrom(isoDay(next));
-    const lastDay = new Date(next);
-    lastDay.setDate(lastDay.getDate() + dayCount - 1);
-    setBulkTo(isoDay(lastDay));
   };
+
+  // Derived seed values for the bulk editor — opens pre-filled with the
+  // currently-visible range so the operator's first action is usually a
+  // tweak, not a from-scratch input.
+  const bulkFrom = isoDay(anchor);
+  const bulkTo   = useMemo(() => {
+    const last = new Date(anchor);
+    last.setDate(anchor.getDate() + dayCount - 1);
+    return isoDay(last);
+  }, [anchor, dayCount]);
 
   const panDays = (delta) => {
     const next = new Date(anchor);
@@ -120,19 +143,46 @@ export const CalendarView = ({ onNavigate }) => {
     return `${fmt(dates[0])} → ${fmt(dates[dates.length - 1])}`;
   }, [dates, lang]);
 
-  const applyBulk = () => {
-    const start = new Date(bulkFrom);
-    const end = new Date(bulkTo);
-    if (isNaN(start) || isNaN(end)) return;
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      const patch = {};
-      if (bulkRate) patch.rate = Number(bulkRate);
-      patch.stopSale = bulkStop;
-      if (bulkReason) patch.reason = bulkReason;
-      setCalendarCell(bulkRoom, isoDay(d), patch);
+  // applyBulk — unions every date inside every range, deduplicates by
+  // ISO key, intersects with the day-of-week filter (if set), then
+  // patches each (roomId × date) cell with the supplied changes. The
+  // patch is MERGED with any existing override so we don't blow away
+  // unrelated fields (e.g. a stop-sale cell keeping its reason text
+  // when the operator only meant to bump the rate).
+  const applyBulk = ({ ranges, roomIds, dowFilter, patch, mode, clearFields }) => {
+    if (!ranges || ranges.length === 0) return 0;
+    if (!roomIds || roomIds.length === 0) return 0;
+    const isoSet = new Set();
+    for (const r of ranges) {
+      if (!r.from || !r.to) continue;
+      const start = new Date(r.from);
+      const end   = new Date(r.to);
+      if (isNaN(start) || isNaN(end)) continue;
+      // Swap if reversed so the operator's UX is forgiving.
+      const lo = start <= end ? start : end;
+      const hi = start <= end ? end   : start;
+      for (let d = new Date(lo); d <= hi; d.setDate(d.getDate() + 1)) {
+        if (dowFilter && dowFilter.length > 0 && !dowFilter.includes(d.getDay())) continue;
+        isoSet.add(isoDay(d));
+      }
     }
+    let touched = 0;
+    isoSet.forEach((iso) => {
+      roomIds.forEach((rid) => {
+        const existing = calendar[`${rid}|${iso}`] || {};
+        let next = mode === "replace" ? { ...patch } : { ...existing, ...patch };
+        // Field-level "clear" support: when the operator picks "Clear"
+        // for a field we delete it explicitly so the cell falls back to
+        // the suite's default.
+        if (clearFields && clearFields.length > 0) {
+          clearFields.forEach((f) => { delete next[f]; });
+        }
+        setCalendarCell(rid, iso, next);
+        touched += 1;
+      });
+    });
     setBulkOpen(false);
-    setBulkRate(""); setBulkStop(false); setBulkReason("");
+    return touched;
   };
 
   const revenueWindow = useMemo(() => {
@@ -235,20 +285,39 @@ export const CalendarView = ({ onNavigate }) => {
         }
       >
         <div className="overflow-x-auto p-4">
+          {/* Legend strip — explains the weekend tint so a first-time
+              operator can read the calendar at a glance. */}
+          <div className="flex items-center gap-3 flex-wrap mb-3" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem" }}>
+            <span style={{ color: p.textMuted, letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>Legend</span>
+            <LegendChip p={p} swatch={p.accent + "22"} border={p.accent + "55"} label={`Weekend (${weekendDays.map((d) => DOW[d]?.short).filter(Boolean).join(" / ")})`} />
+            <LegendChip p={p} swatch={p.accent} border={p.accent} label="Today" textColor={p.theme === "light" ? "#FFFFFF" : "#15161A"} />
+            <LegendChip p={p} swatch={p.danger} border={p.danger} label="Stop-sale" textColor="#FFFFFF" />
+            <LegendChip p={p} swatch={p.theme === "light" ? "rgba(154,126,64,0.18)" : "rgba(201,169,97,0.18)"} border={p.accent + "55"} label="Override" />
+            <LegendChip p={p} swatch={p.theme === "light" ? "rgba(92,138,78,0.18)" : "rgba(127,169,112,0.18)"} border={p.success + "55"} label="High occupancy" />
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: `minmax(160px, 1fr) repeat(${dates.length}, minmax(56px, 1fr))`, gap: 2, fontFamily: "'Manrope', sans-serif" }}>
             <div />
             {dates.map((d) => {
-              const isWeekend = [5, 6].includes(d.getDay()); // Fri/Sat in BH
+              const isWeekend = isWeekendDate(d);
               const isToday = isoDay(d) === isoDay(new Date());
               return (
                 <div key={isoDay(d)} className="text-center"
                   style={{
                     fontSize: "0.6rem", padding: "6px 2px", lineHeight: 1.25,
-                    color: isToday ? p.accent : isWeekend ? p.textSecondary : p.textMuted,
-                    fontWeight: isToday ? 700 : isWeekend ? 600 : 500,
-                    backgroundColor: isWeekend ? p.bgPanelAlt : "transparent",
+                    color: isToday ? p.accent : isWeekend ? p.accent : p.textMuted,
+                    fontWeight: isToday ? 700 : isWeekend ? 700 : 500,
+                    letterSpacing: isWeekend ? "0.04em" : 0,
+                    // Stronger gold-tinted background for weekend columns —
+                    // theme-aware so the contrast reads correctly in both
+                    // light and dark palettes. The previous "bgPanelAlt"
+                    // was too subtle to register as a deliberate signal.
+                    backgroundColor: isWeekend
+                      ? (p.theme === "light" ? "rgba(201,169,97,0.18)" : "rgba(201,169,97,0.14)")
+                      : "transparent",
+                    borderTop: isWeekend ? `2px solid ${p.accent}` : "2px solid transparent",
                     borderBottom: isToday ? `2px solid ${p.accent}` : "2px solid transparent",
                   }}
+                  title={isWeekend ? `Weekend (${DOW[d.getDay()]?.short})` : undefined}
                 >
                   {dayLabel(d)}
                 </div>
@@ -273,21 +342,31 @@ export const CalendarView = ({ onNavigate }) => {
                   const occCount = occMap[`${r.id}|${k}`] || 0;
                   const overridden = !!ov;
                   const occHigh = occCount > 1;
+                  const isWeekend = isWeekendDate(d);
+                  // Layered background — stop-sale > override > high-occ >
+                  // weekend tint > base. Weekend is the bottom of the
+                  // stack so it never masks a more important signal but
+                  // still reads on otherwise-blank cells.
                   let bg = p.cellBase;
+                  if (isWeekend) bg = p.theme === "light" ? "rgba(201,169,97,0.10)" : "rgba(201,169,97,0.08)";
+                  if (occHigh && !overridden && !stopSale) bg = p.theme === "light" ? "rgba(92,138,78,0.18)" : "rgba(127,169,112,0.18)";
+                  if (overridden && !stopSale) bg = p.theme === "light" ? "rgba(154,126,64,0.18)" : "rgba(201,169,97,0.18)";
                   if (stopSale) bg = p.danger;
-                  else if (overridden) bg = p.theme === "light" ? "rgba(154,126,64,0.18)" : "rgba(201,169,97,0.18)";
-                  else if (occHigh) bg = p.theme === "light" ? "rgba(92,138,78,0.18)" : "rgba(127,169,112,0.18)";
                   const fg = stopSale ? "#FFFFFF" : p.textPrimary;
                   return (
                     <button
                       key={k}
                       onClick={() => setSelected({ roomId: r.id, dateISO: k })}
-                      title={`${dayLabel(d)} · ${stopSale ? "Stop-sale" : `${occCount} booked`}`}
+                      title={`${dayLabel(d)}${isWeekend ? " · weekend" : ""} · ${stopSale ? "Stop-sale" : `${occCount} booked`}`}
                       style={{
                         backgroundColor: bg,
                         color: fg,
                         border: `1px solid ${p.border}`,
                         borderInlineStart: overridden ? `2px solid ${p.accent}` : `1px solid ${p.border}`,
+                        // Subtle gold top stripe on weekend cells echoes the
+                        // header — keeps the column visually unified
+                        // top-to-bottom without overpowering the data.
+                        borderTop: isWeekend && !stopSale ? `2px solid ${p.accent}` : `1px solid ${p.border}`,
                         height: 56,
                         padding: 4,
                         textAlign: "center",
@@ -314,27 +393,17 @@ export const CalendarView = ({ onNavigate }) => {
 
       <CellEditor selected={selected} onClose={() => setSelected(null)} occMap={occMap} onNavigate={onNavigate} />
 
-      <Drawer
-        open={bulkOpen}
-        onClose={() => setBulkOpen(false)}
-        title="Bulk edit"
-        footer={<><GhostBtn onClick={() => setBulkOpen(false)} small>Cancel</GhostBtn><PrimaryBtn onClick={applyBulk} small>Apply</PrimaryBtn></>}
-      >
-        <div className="space-y-4">
-          <FormGroup label="Room type">
-            <SelectField value={bulkRoom} onChange={setBulkRoom} options={rooms.map(r => ({ value: r.id, label: t(`rooms.${r.id}.name`) }))} />
-          </FormGroup>
-          <div className="grid grid-cols-2 gap-3">
-            <FormGroup label="From"><TextField type="date" value={bulkFrom} onChange={setBulkFrom} /></FormGroup>
-            <FormGroup label="To"><TextField type="date" value={bulkTo} onChange={setBulkTo} /></FormGroup>
-          </div>
-          <FormGroup label="New rate (BHD)"><TextField type="number" value={bulkRate} onChange={setBulkRate} placeholder="leave blank to keep" suffix="BHD" /></FormGroup>
-          <label className="flex items-center gap-2" style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.85rem" }}>
-            <input type="checkbox" checked={bulkStop} onChange={(e) => setBulkStop(e.target.checked)} /> Apply stop-sale across this range
-          </label>
-          <FormGroup label="Reason / note"><TextField value={bulkReason} onChange={setBulkReason} placeholder="Group block, refurb, weekend uplift…" /></FormGroup>
-        </div>
-      </Drawer>
+      {bulkOpen && (
+        <BulkEditor
+          rooms={rooms}
+          weekendDays={weekendDays}
+          anchor={anchor}
+          defaultFrom={bulkFrom}
+          defaultTo={bulkTo}
+          onClose={() => setBulkOpen(false)}
+          onApply={applyBulk}
+        />
+      )}
     </div>
   );
 };
@@ -952,6 +1021,632 @@ function RefRow({ p, label, value }) {
         {label}
       </span>
       <span style={{ color: p.textPrimary, fontWeight: 500 }}>{value}</span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// LegendChip — tiny swatch + label pair used in the grid header legend
+// strip. `swatch` is the fill colour; `border` is the outline (so a
+// "stop-sale red" chip reads correctly even on a white page).
+// ─────────────────────────────────────────────────────────────────────────
+function LegendChip({ p, swatch, border, label, textColor }) {
+  return (
+    <span className="inline-flex items-center gap-1.5" style={{
+      padding: "2px 8px",
+      backgroundColor: swatch,
+      border: `1px solid ${border}`,
+      color: textColor || p.textSecondary,
+      fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+      letterSpacing: "0.16em", textTransform: "uppercase", fontWeight: 700,
+    }}>
+      {label}
+    </span>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// BulkEditor — full-page workspace for bulk rate / availability /
+// meal-plan / stop-sale edits across MULTIPLE date ranges and MULTIPLE
+// suites in one apply. Built to replace the cramped side-drawer bulk
+// editor and unblock the common ops:
+//
+//   • "Bump weekend rates +10% across the next two months"
+//   • "F1 weekend + National Day weekend = group block"
+//   • "Ramadan iftar HB push every Thu / Fri / Sat in March"
+//   • "Maintenance close the Studio across two specific weeks"
+//
+// Layout:
+//   ┌── Back to calendar ─────────────────── × Close ──┐
+//   │  Scope · Ranges · Changes · Presets · Preview     │
+//   └─── Reset · Cancel · Apply (N cells) ──────────────┘
+// ─────────────────────────────────────────────────────────────────────────
+function BulkEditor({ rooms, weekendDays, anchor, defaultFrom, defaultTo, onClose, onApply }) {
+  const t = useT();
+  const p = usePalette();
+
+  // Scope — which suites the patch applies to. Defaults to all so the
+  // common case ("everything") is a single click.
+  const [roomIds, setRoomIds] = useState(rooms.map((r) => r.id));
+  // Day-of-week filter — empty array means "all days". Operator can
+  // narrow to weekend-only / weekday-only / a specific chip combo.
+  const [dowFilter, setDowFilter] = useState([]);
+
+  // Ranges — an array of { id, from, to, label }. Start with one range
+  // seeded from the calendar window so the editor opens valid. The id
+  // is stable so React keys don't reshuffle on edits.
+  const newRangeId = () => `r-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const [ranges, setRanges] = useState([
+    { id: newRangeId(), from: defaultFrom, to: defaultTo, label: "" },
+  ]);
+
+  // Patch fields — each field has a tri-state:
+  //   • value present  → set this value on every targeted cell
+  //   • value blank    → leave the existing cell value untouched
+  //   • "clear" flagged → explicitly remove the field from the cell
+  //                       (operator wants to undo an earlier override
+  //                        without manually resetting each cell)
+  const [rate,      setRate]      = useState("");
+  const [rateMode,  setRateMode]  = useState("set");   // "set" | "uplift-pct" | "uplift-bhd"
+  const [blocked,   setBlocked]   = useState("");
+  const [stopSale,  setStopSale]  = useState("ignore"); // "ignore" | "on" | "off"
+  const [mealPlan,  setMealPlan]  = useState("");      // "" = leave / "ro/bb/hb/fb" / "__clear__"
+  const [reason,    setReason]    = useState("");
+
+  // ─── range CRUD ──
+  const addRange = () => setRanges((rs) => rs.concat({ id: newRangeId(), from: isoDay(anchor), to: isoDay(anchor), label: "" }));
+  const updateRange = (id, patch) => setRanges((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const removeRange = (id) => setRanges((rs) => (rs.length > 1 ? rs.filter((r) => r.id !== id) : rs));
+
+  // ─── room scope helpers ──
+  const toggleRoom = (id) => setRoomIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : cur.concat(id)));
+  const selectAllRooms = () => setRoomIds(rooms.map((r) => r.id));
+  const clearRooms     = () => setRoomIds([]);
+
+  // ─── dow filter helpers ──
+  const toggleDow = (d) => setDowFilter((cur) => (cur.includes(d) ? cur.filter((x) => x !== d) : cur.concat(d).sort()));
+  const onlyWeekends = () => setDowFilter([...weekendDays].sort());
+  const onlyWeekdays = () => setDowFilter([0, 1, 2, 3, 4, 5, 6].filter((d) => !weekendDays.includes(d)));
+  const allDays      = () => setDowFilter([]);
+
+  // ─── live preview — how many cells will this touch? ──
+  const cellCount = useMemo(() => {
+    let dayCount = 0;
+    const seen = new Set();
+    for (const r of ranges) {
+      if (!r.from || !r.to) continue;
+      const a = new Date(r.from);
+      const b = new Date(r.to);
+      if (isNaN(a) || isNaN(b)) continue;
+      const lo = a <= b ? a : b;
+      const hi = a <= b ? b : a;
+      for (let d = new Date(lo); d <= hi; d.setDate(d.getDate() + 1)) {
+        if (dowFilter.length > 0 && !dowFilter.includes(d.getDay())) continue;
+        const k = isoDay(d);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        dayCount += 1;
+      }
+    }
+    return dayCount * roomIds.length;
+  }, [ranges, roomIds, dowFilter]);
+
+  // Cells with anything actually changing — used by the "Apply" CTA
+  // gate so the operator can't accidentally fire a no-op apply.
+  const hasChange = rate !== "" || blocked !== "" || stopSale !== "ignore" || mealPlan !== "" || reason !== "";
+
+  // ─── presets — mutate LOCAL state; operator still hits Apply. ──
+  const applyPreset = (kind) => {
+    if (kind === "weekend-uplift") {
+      setRate("10");           // "10" interpreted as +10% by uplift-pct
+      setRateMode("uplift-pct");
+      setReason(reason || "Weekend uplift");
+      setDowFilter([...weekendDays].sort());
+    } else if (kind === "ramadan-hb") {
+      setMealPlan("hb");
+      setReason(reason || "Ramadan iftar HB");
+    } else if (kind === "bb-weekend") {
+      setMealPlan("bb");
+      setDowFilter([...weekendDays].sort());
+      setReason(reason || "BB-included weekend promo");
+    } else if (kind === "group-block") {
+      setStopSale("on");
+      setReason(reason || "Group block");
+    } else if (kind === "maintenance") {
+      setStopSale("on");
+      setBlocked("0");
+      setReason(reason || "Maintenance close");
+    } else if (kind === "reset") {
+      setRate(""); setRateMode("set"); setBlocked(""); setStopSale("ignore");
+      setMealPlan(""); setReason("");
+      setDowFilter([]);
+    }
+  };
+
+  // ─── compute the actual patch handed to onApply ──
+  const handleApply = () => {
+    if (cellCount === 0) {
+      pushApplyToast("No cells in scope — adjust your date ranges or room selection.");
+      return;
+    }
+    if (!hasChange) {
+      pushApplyToast("Pick at least one change to apply.");
+      return;
+    }
+    const patch = {};
+    const clearFields = [];
+    // Rate — three modes:
+    if (rate !== "" && Number.isFinite(Number(rate))) {
+      if (rateMode === "set") {
+        patch.rate = Number(rate);
+      }
+      // For uplift modes the rate field carries the delta; the actual
+      // base-rate lookup happens per-cell during apply. We hand a
+      // sentinel function over `__rateUplift` that the parent applyBulk
+      // resolves cell-by-cell. To keep the patch JSON-clean we instead
+      // expand uplift into individual cells *outside* applyBulk, by
+      // pre-resolving room.base × (1 + pct/100) for each room.
+      // (Implementation in onApply below.)
+    }
+    if (blocked !== "" && Number.isFinite(Number(blocked))) patch.blocked = Number(blocked);
+    if (stopSale === "on")  patch.stopSale = true;
+    if (stopSale === "off") patch.stopSale = false;
+    if (mealPlan === "__clear__") clearFields.push("mealPlan");
+    else if (mealPlan)            patch.mealPlan = mealPlan;
+    if (reason !== "")  patch.reason = reason;
+
+    // Uplift modes are resolved per-room here: we expand the bulk apply
+    // into one call per room with that room's effective base-rate
+    // patched in. Other fields ride along on each call.
+    if (rate !== "" && (rateMode === "uplift-pct" || rateMode === "uplift-bhd")) {
+      const delta = Number(rate) || 0;
+      const isPct = rateMode === "uplift-pct";
+      let total = 0;
+      roomIds.forEach((rid) => {
+        const room = rooms.find((r) => r.id === rid);
+        if (!room) return;
+        // Use the WEEKDAY rate as the base when an uplift is applied
+        // — keeps "+10% weekend uplift" intuitive (10% of the
+        // weekday rack). Operator can switch to weekend-rate uplift
+        // by selecting the weekend rate explicitly later.
+        const base = Number(room.price) || 0;
+        const next = isPct
+          ? Math.round(base * (1 + delta / 100))
+          : Math.round(base + delta);
+        const cellPatch = { ...patch, rate: next };
+        total += onApply({ ranges, roomIds: [rid], dowFilter, patch: cellPatch, mode: "merge", clearFields });
+      });
+      pushApplyToast(`${total} cell${total === 1 ? "" : "s"} updated · ${isPct ? `+${delta}% uplift on weekday base` : `+${formatCurrency(delta)} uplift on weekday base`}`);
+      return;
+    }
+
+    // Default path — single patch handed to the parent.
+    const touched = onApply({ ranges, roomIds, dowFilter, patch, mode: "merge", clearFields });
+    pushApplyToast(`${touched} cell${touched === 1 ? "" : "s"} updated.`);
+  };
+
+  // Local toast helper — avoids importing pushToast from ui.jsx in the
+  // editor's render path (which is already heavy on imports).
+  function pushApplyToast(msg) {
+    try {
+      // eslint-disable-next-line no-undef
+      window.dispatchEvent(new CustomEvent("ls-toast", { detail: { message: msg } }));
+    } catch (_) { /* no-op */ }
+  }
+
+  return (
+    <Drawer
+      open
+      onClose={onClose}
+      eyebrow="Bulk calendar edit"
+      title="Apply changes across multiple ranges & suites"
+      fullPage
+      contentMaxWidth="max-w-6xl"
+      footer={
+        <>
+          <GhostBtn small onClick={() => applyPreset("reset")}><RotateCcw size={11} /> Reset all</GhostBtn>
+          <div className="flex-1" />
+          <GhostBtn small onClick={onClose}>Cancel</GhostBtn>
+          <PrimaryBtn small onClick={handleApply}>
+            <Save size={11} /> Apply to {cellCount.toLocaleString()} cell{cellCount === 1 ? "" : "s"}
+          </PrimaryBtn>
+        </>
+      }
+    >
+      {/* Back-to-calendar nav (mirror of the CellEditor pattern) */}
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-6">
+        <button
+          onClick={onClose}
+          className="flex items-center gap-2"
+          style={{
+            color: p.textSecondary, padding: "0.5rem 0.85rem",
+            border: `1px solid ${p.border}`, backgroundColor: p.bgPanel, cursor: "pointer",
+            fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem",
+            letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = p.accent; e.currentTarget.style.borderColor = p.accent; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = p.textSecondary; e.currentTarget.style.borderColor = p.border; }}
+        >
+          <ArrowLeft size={12} /> Back to calendar
+        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span style={{
+            color: cellCount === 0 ? p.warn : p.accent,
+            backgroundColor: cellCount === 0 ? `${p.warn}10` : `${p.accent}10`,
+            border: `1px solid ${cellCount === 0 ? p.warn : p.accent}`,
+            padding: "0.3rem 0.7rem", fontFamily: "'Manrope', sans-serif",
+            fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+          }}>
+            {cellCount.toLocaleString()} cell{cellCount === 1 ? "" : "s"} in scope
+          </span>
+          {ranges.length > 1 && (
+            <span style={{
+              color: p.textSecondary, border: `1px solid ${p.border}`,
+              padding: "0.3rem 0.7rem", fontFamily: "'Manrope', sans-serif",
+              fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+            }}>
+              {ranges.length} ranges
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Quick presets row */}
+      <Card title="Quick presets" padded className="mb-6">
+        <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", lineHeight: 1.55, marginBottom: 12 }}>
+          One-click templates for the most common bulk edits. Each populates the scope + changes below — tap Apply when you're ready to commit.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <PresetBtn p={p} onClick={() => applyPreset("weekend-uplift")} icon={TrendingUp}>+10% weekend uplift</PresetBtn>
+          <PresetBtn p={p} onClick={() => applyPreset("bb-weekend")}     icon={Coffee}>BB-included weekend</PresetBtn>
+          <PresetBtn p={p} onClick={() => applyPreset("ramadan-hb")}     icon={Utensils}>Ramadan iftar HB</PresetBtn>
+          <PresetBtn p={p} onClick={() => applyPreset("group-block")}    icon={Users}>Group block</PresetBtn>
+          <PresetBtn p={p} onClick={() => applyPreset("maintenance")}    icon={Wrench}>Maintenance close</PresetBtn>
+        </div>
+      </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr,360px] gap-6">
+        <div className="space-y-6">
+          {/* Scope: rooms + day-of-week */}
+          <Card title="Scope" padded action={
+            <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem" }}>
+              {roomIds.length} of {rooms.length} suite{rooms.length === 1 ? "" : "s"} · {dowFilter.length === 0 ? "all days" : `${dowFilter.length} day filter`}
+            </span>
+          }>
+            <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
+              <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                Suites
+              </div>
+              <div className="flex gap-1.5">
+                <button onClick={selectAllRooms}
+                  style={chipBtnStyle(p, false, false)}
+                  title="Select every suite"
+                ><Check size={11} /> All</button>
+                <button onClick={clearRooms}
+                  style={chipBtnStyle(p, false, false)}
+                  title="Clear suite selection"
+                ><X size={11} /> None</button>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 mb-5">
+              {rooms.map((r) => {
+                const sel = roomIds.includes(r.id);
+                return (
+                  <button key={r.id}
+                    onClick={() => toggleRoom(r.id)}
+                    style={chipBtnStyle(p, sel, false)}
+                    aria-pressed={sel}
+                  >
+                    {sel ? <Check size={11} /> : <BedDouble size={11} />} {t(`rooms.${r.id}.name`)}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
+              <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                Day-of-week filter
+              </div>
+              <div className="flex gap-1.5">
+                <button onClick={onlyWeekends} style={chipBtnStyle(p, false, false)} title="Restrict to weekend days only"><Moon size={11} /> Weekends only</button>
+                <button onClick={onlyWeekdays} style={chipBtnStyle(p, false, false)} title="Restrict to weekday days only"><Sun size={11} /> Weekdays only</button>
+                <button onClick={allDays}      style={chipBtnStyle(p, false, false)} title="No day-of-week restriction">All days</button>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {DOW.map((d) => {
+                const sel = dowFilter.includes(d.id);
+                const isWE = weekendDays.includes(d.id);
+                return (
+                  <button key={d.id}
+                    onClick={() => toggleDow(d.id)}
+                    style={{
+                      ...chipBtnStyle(p, sel, false),
+                      borderColor: sel ? p.accent : (isWE ? p.accent + "55" : p.border),
+                      color: sel ? p.accent : (isWE ? p.accent : p.textSecondary),
+                    }}
+                    aria-pressed={sel}
+                  >
+                    {sel ? <Check size={11} /> : null} {d.short}
+                  </button>
+                );
+              })}
+            </div>
+            {dowFilter.length > 0 && (
+              <div className="mt-2" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", lineHeight: 1.5 }}>
+                Only nights falling on the highlighted days will be touched within each range. Clear the filter (or tap "All days") to apply to every date in range.
+              </div>
+            )}
+          </Card>
+
+          {/* Date ranges */}
+          <Card title={`Date ranges · ${ranges.length}`} padded={false} action={
+            <GhostBtn small onClick={addRange}>
+              <Plus size={11} /> Add range
+            </GhostBtn>
+          }>
+            <div>
+              {ranges.map((r, i) => {
+                const dayCount = (() => {
+                  if (!r.from || !r.to) return 0;
+                  const a = new Date(r.from);
+                  const b = new Date(r.to);
+                  if (isNaN(a) || isNaN(b)) return 0;
+                  return Math.abs(Math.round((b - a) / 86400000)) + 1;
+                })();
+                return (
+                  <div key={r.id} className="px-5 py-4"
+                    style={{ borderBottom: i === ranges.length - 1 ? "none" : `1px solid ${p.border}` }}>
+                    <div className="grid grid-cols-1 sm:grid-cols-[1fr,1fr,1fr,auto] gap-3 items-end">
+                      <FormGroup label={`Range ${i + 1} · From`}>
+                        <TextField type="date" value={r.from} onChange={(v) => updateRange(r.id, { from: v })} />
+                      </FormGroup>
+                      <FormGroup label="To">
+                        <TextField type="date" value={r.to} onChange={(v) => updateRange(r.id, { to: v })} />
+                      </FormGroup>
+                      <FormGroup label="Label (optional)">
+                        <TextField value={r.label} onChange={(v) => updateRange(r.id, { label: v })}
+                          placeholder="e.g. F1 weekend" />
+                      </FormGroup>
+                      <div style={{ paddingBottom: 6 }}>
+                        <button
+                          onClick={() => removeRange(r.id)}
+                          disabled={ranges.length === 1}
+                          title={ranges.length === 1 ? "Keep at least one range" : "Remove this range"}
+                          style={{
+                            padding: "0.55rem 0.7rem",
+                            color: ranges.length === 1 ? p.textMuted : p.danger,
+                            border: `1px solid ${p.border}`,
+                            backgroundColor: "transparent",
+                            cursor: ranges.length === 1 ? "not-allowed" : "pointer",
+                            opacity: ranges.length === 1 ? 0.4 : 1,
+                            display: "inline-flex", alignItems: "center", justifyContent: "center",
+                          }}
+                          onMouseEnter={(e) => { if (ranges.length > 1) e.currentTarget.style.borderColor = p.danger; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.borderColor = p.border; }}
+                          aria-label="Remove range"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </div>
+                    <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", marginTop: 6 }}>
+                      {dayCount} day{dayCount === 1 ? "" : "s"} in this range
+                      {r.label ? ` · "${r.label}"` : ""}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+
+          {/* Changes */}
+          <Card title="Changes to apply" padded>
+            <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", lineHeight: 1.55, marginBottom: 14 }}>
+              Leave a field blank to leave it untouched on each cell. Existing overrides are preserved field-by-field — we only patch what you explicitly change.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Rate */}
+              <div className="sm:col-span-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+                  <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                    Rate
+                  </div>
+                  <div className="flex gap-1.5">
+                    {[
+                      { id: "set",         label: "Set absolute (BHD)" },
+                      { id: "uplift-pct",  label: "Uplift +%" },
+                      { id: "uplift-bhd",  label: "Uplift +BHD" },
+                    ].map((m) => (
+                      <button key={m.id}
+                        onClick={() => setRateMode(m.id)}
+                        style={chipBtnStyle(p, rateMode === m.id, false)}
+                        aria-pressed={rateMode === m.id}
+                      >
+                        {rateMode === m.id ? <Check size={11} /> : null} {m.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <TextField
+                  type="number"
+                  value={rate}
+                  onChange={setRate}
+                  placeholder={
+                    rateMode === "set"        ? "Leave blank to keep · e.g. 48"
+                    : rateMode === "uplift-pct" ? "Leave blank to keep · e.g. 10 = +10%"
+                                                : "Leave blank to keep · e.g. 8 = +BHD 8"
+                  }
+                  suffix={rateMode === "uplift-pct" ? "%" : "BHD"}
+                />
+                <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", marginTop: 6, lineHeight: 1.5 }}>
+                  {rateMode === "set"
+                    ? "Replaces the selling rate on every targeted cell with this BHD value."
+                    : rateMode === "uplift-pct"
+                      ? "Recomputes per suite as weekday-base × (1 + %/100). Best for weekend uplifts and high-demand surges."
+                      : "Recomputes per suite as weekday-base + BHD. Useful for fixed event surcharges."}
+                </div>
+              </div>
+
+              {/* Stop-sale tri-state */}
+              <FormGroup label="Stop-sale">
+                <div className="flex gap-1.5">
+                  {[
+                    { id: "ignore", label: "No change", icon: null },
+                    { id: "on",     label: "Close (stop-sale)", icon: Lock, danger: true },
+                    { id: "off",    label: "Open (re-enable)",  icon: Check, success: true },
+                  ].map((opt) => {
+                    const sel = stopSale === opt.id;
+                    const Ic = opt.icon;
+                    return (
+                      <button key={opt.id}
+                        onClick={() => setStopSale(opt.id)}
+                        style={chipBtnStyle(p, sel, false,
+                          opt.danger ? p.danger : opt.success ? p.success : null)}
+                        aria-pressed={sel}
+                      >
+                        {Ic ? <Ic size={11} /> : null} {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </FormGroup>
+
+              {/* Blocked units */}
+              <FormGroup label="Rooms blocked (off-market)">
+                <TextField
+                  type="number"
+                  value={blocked}
+                  onChange={setBlocked}
+                  placeholder="Leave blank to keep · e.g. 4"
+                />
+              </FormGroup>
+
+              {/* Meal plan override */}
+              <FormGroup label="Meal plan override">
+                <SelectField
+                  value={mealPlan}
+                  onChange={setMealPlan}
+                  options={[
+                    { value: "",          label: "— Leave unchanged —" },
+                    { value: "__clear__", label: "Clear override (use booking's choice)" },
+                    ...MEAL_PLANS.map((m) => ({ value: m.code, label: `${m.short} · ${m.label}` })),
+                  ]}
+                />
+              </FormGroup>
+
+              {/* Reason */}
+              <FormGroup label="Reason / note" className="sm:col-span-2">
+                <TextField
+                  value={reason}
+                  onChange={setReason}
+                  placeholder="Group block · F1 weekend · Ramadan iftar HB · Maintenance · …"
+                />
+              </FormGroup>
+            </div>
+          </Card>
+        </div>
+
+        {/* Right rail — live preview */}
+        <div className="space-y-6">
+          <Card title="Live preview" padded>
+            <div className="space-y-3">
+              <PreviewRow p={p} label="Cells in scope" value={cellCount.toLocaleString()} accent={cellCount === 0 ? p.warn : p.accent} />
+              <PreviewRow p={p} label="Suites" value={`${roomIds.length} of ${rooms.length}`} />
+              <PreviewRow p={p} label="Ranges" value={ranges.length} />
+              <PreviewRow p={p} label="Day filter" value={
+                dowFilter.length === 0
+                  ? "All days"
+                  : dowFilter.map((d) => DOW[d]?.short).filter(Boolean).join(" · ")
+              } />
+              <PreviewRow p={p} label="Changes" value={
+                [
+                  rate !== "" ? (rateMode === "set" ? `Rate → ${formatCurrency(Number(rate) || 0)}` : `Rate uplift ${rateMode === "uplift-pct" ? `+${rate}%` : `+${formatCurrency(Number(rate) || 0)}`}`) : null,
+                  blocked !== "" ? `Blocked → ${blocked}` : null,
+                  stopSale === "on" ? "Stop-sale ON" : stopSale === "off" ? "Stop-sale OFF" : null,
+                  mealPlan === "__clear__" ? "Meal plan cleared" : mealPlan ? `Meal plan → ${mealPlan.toUpperCase()}` : null,
+                  reason !== "" ? "Reason set" : null,
+                ].filter(Boolean).join(" · ") || "—"
+              } accent={hasChange ? p.accent : p.textMuted} />
+            </div>
+            <div className="mt-4 p-3" style={{
+              backgroundColor: cellCount === 0 || !hasChange ? `${p.warn}10` : `${p.success}10`,
+              border: `1px solid ${cellCount === 0 || !hasChange ? p.warn : p.success}55`,
+              fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", lineHeight: 1.55,
+              color: cellCount === 0 || !hasChange ? p.warn : p.success,
+            }}>
+              {cellCount === 0
+                ? "Nothing in scope yet — add or widen a range and pick at least one suite."
+                : !hasChange
+                  ? "Pick at least one change above. Otherwise Apply would be a no-op."
+                  : `Ready to apply to ${cellCount.toLocaleString()} cell${cellCount === 1 ? "" : "s"}.`}
+            </div>
+          </Card>
+
+          <Card title="Existing ranges" padded>
+            <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.76rem", lineHeight: 1.55 }}>
+              Each range above is independent — overlapping ranges are deduplicated automatically, so "16–25 May + 20–30 May" only counts 16–30 once.
+            </p>
+            <div className="mt-3 space-y-2">
+              {ranges.map((r, i) => {
+                const dayCount = (() => {
+                  if (!r.from || !r.to) return 0;
+                  const a = new Date(r.from);
+                  const b = new Date(r.to);
+                  if (isNaN(a) || isNaN(b)) return 0;
+                  return Math.abs(Math.round((b - a) / 86400000)) + 1;
+                })();
+                return (
+                  <div key={r.id} className="p-2" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
+                    <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", fontWeight: 700 }}>
+                      {r.label || `Range ${i + 1}`}
+                    </div>
+                    <div style={{ color: p.textMuted, fontSize: "0.7rem", fontVariantNumeric: "tabular-nums", marginTop: 2 }}>
+                      {r.from || "—"} → {r.to || "—"} · {dayCount}d
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </div>
+      </div>
+    </Drawer>
+  );
+}
+
+// Chip-style button used inside Scope / DOW / mode rows. `selected`
+// gives the active state; `accentColor` lets the tri-state stop-sale
+// buttons render in red / green.
+function chipBtnStyle(p, selected, _disabled, accentColor) {
+  const c = accentColor || p.accent;
+  return {
+    padding: "0.4rem 0.8rem",
+    border: `1px solid ${selected ? c : p.border}`,
+    backgroundColor: selected ? `${c}1F` : "transparent",
+    color: selected ? c : p.textSecondary,
+    fontFamily: "'Manrope', sans-serif",
+    fontSize: "0.7rem", fontWeight: 700,
+    letterSpacing: "0.04em", cursor: "pointer",
+    display: "inline-flex", alignItems: "center", gap: 6,
+  };
+}
+
+function PreviewRow({ p, label, value, accent }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+        {label}
+      </span>
+      <span style={{
+        color: accent || p.textPrimary,
+        fontFamily: "'Manrope', sans-serif",
+        fontSize: "0.86rem",
+        fontWeight: 600,
+        fontVariantNumeric: "tabular-nums",
+        textAlign: "end",
+        maxWidth: "65%",
+      }}>{value}</span>
     </div>
   );
 }
