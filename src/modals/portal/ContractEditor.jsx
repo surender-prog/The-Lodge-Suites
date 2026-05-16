@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
 import { supabase, SUPABASE_CONFIGURED } from "../../lib/supabase.js";
-import { formatCurrency, MEAL_PLANS } from "../../data/store.jsx";
+import { formatCurrency, MEAL_PLANS, mealPlanSupplement, useData } from "../../data/store.jsx";
 import { pushToast } from "./admin/ui.jsx";
 
 // ---------------------------------------------------------------------------
@@ -154,6 +154,12 @@ export function defaultAgencyDraft(existingIds = []) {
 
 export function ContractEditor({ open, onClose, contract, kind, onSave, onRemove }) {
   const p = usePalette();
+  // Live rooms slice — drives the supplement matrix below the meal-plan
+  // picker so the operator sees exactly what the negotiated default
+  // costs across the property's suites. The rates themselves are
+  // sourced from each room's `mealPlans` master in Rooms & Rates;
+  // edits there flow through here automatically.
+  const { rooms } = useData();
   const [draft, setDraft] = useState(contract);
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
   const setRate = (mapKey, room, value) => setDraft((d) => ({
@@ -514,6 +520,17 @@ export function ContractEditor({ open, onClose, contract, kind, onSave, onRemove
                       })}
                     </div>
                   </div>
+
+                  {/* Live supplement matrix — per-suite × per-plan BHD,
+                      sourced from each room's `mealPlans` master in
+                      Rooms & Rates. The picked plan column is gold-tinted
+                      so the operator immediately sees what they've
+                      committed to. RO is always BHD 0. */}
+                  <MealPlanSupplementMatrix
+                    p={p}
+                    rooms={rooms}
+                    selectedPlan={draft.defaultMealPlan || "ro"}
+                  />
                 </div>
               </CECard>
 
@@ -1095,4 +1112,120 @@ function ceTh(p) {
     fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase",
     color: p.textMuted, fontWeight: 700,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// MealPlanSupplementMatrix
+//   Renders a rooms × meal-plans table showing the per-adult-per-night
+//   supplement (BHD) for each combination, sourced from each room's
+//   `mealPlans` master (Rooms & Rates → Meal plans card). The column for
+//   the currently-picked default plan is gold-tinted so the operator
+//   immediately sees what they've committed to.
+//
+//   This component is intentionally READ-ONLY — operators edit the
+//   master rates in one place (Rooms & Rates) so they stay consistent
+//   across contracts, agencies, tiers, and walk-up bookings.
+//
+//   Exported so the Loyalty tier editor (and any future surface that
+//   picks a default meal plan) can reuse the exact same matrix without
+//   duplication.
+// ─────────────────────────────────────────────────────────────────────────
+export function MealPlanSupplementMatrix({ p, rooms, selectedPlan }) {
+  if (!rooms || rooms.length === 0) return null;
+  const sel = selectedPlan || "ro";
+  return (
+    <div className="mt-4 pt-4" style={{ borderTop: `1px dashed ${p.border}` }}>
+      <div className="flex items-baseline justify-between gap-2 flex-wrap mb-2">
+        <div>
+          <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+            Supplement rates · sourced from room master
+          </div>
+          <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", marginTop: 3, lineHeight: 1.5 }}>
+            BHD per adult per night, on top of the negotiated rack. Edit the master rates in <strong style={{ color: p.textSecondary }}>Admin → Rooms &amp; Rates → Meal plans</strong>.
+          </div>
+        </div>
+        <span style={{
+          color: p.accent, backgroundColor: `${p.accent}10`,
+          border: `1px solid ${p.accent}`,
+          padding: "2px 8px", fontFamily: "'Manrope', sans-serif",
+          fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+        }}>
+          Picked: {sel.toUpperCase()}
+        </span>
+      </div>
+      <div style={{
+        border: `1px solid ${p.border}`, overflow: "hidden",
+        backgroundColor: p.bgPanel,
+      }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Manrope', sans-serif" }}>
+          <thead>
+            <tr style={{ backgroundColor: p.bgPanelAlt }}>
+              <th style={{
+                ...ceTh(p), textAlign: "start", padding: "8px 10px",
+                borderBottom: `1px solid ${p.border}`,
+              }}>Suite</th>
+              {MEAL_PLANS.map((m) => {
+                const isSel = m.code === sel;
+                return (
+                  <th key={m.code} style={{
+                    ...ceTh(p),
+                    color: isSel ? p.accent : p.textMuted,
+                    backgroundColor: isSel ? `${p.accent}14` : "transparent",
+                    padding: "8px 10px",
+                    textAlign: "end",
+                    borderBottom: `1px solid ${p.border}`,
+                    borderInlineStart: isSel ? `2px solid ${p.accent}` : "none",
+                    borderInlineEnd:   isSel ? `2px solid ${p.accent}` : "none",
+                  }}>
+                    {m.short}
+                    <div style={{ fontSize: "0.56rem", opacity: 0.7, marginTop: 2, letterSpacing: "0.04em" }}>
+                      {m.label}
+                    </div>
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {rooms.map((r, i) => (
+              <tr key={r.id} style={{ borderTop: i === 0 ? "none" : `1px solid ${p.border}` }}>
+                <td style={{
+                  padding: "8px 10px", color: p.textPrimary,
+                  fontFamily: "'Cormorant Garamond', serif", fontSize: "0.95rem",
+                  whiteSpace: "nowrap",
+                }}>
+                  {r.id === "studio"     ? "Lodge Studio" :
+                   r.id === "one-bed"    ? "One-Bedroom Suite" :
+                   r.id === "two-bed"    ? "Two-Bedroom Suite" :
+                   r.id === "three-bed"  ? "Three-Bedroom Suite" : r.id}
+                </td>
+                {MEAL_PLANS.map((m) => {
+                  const isSel = m.code === sel;
+                  const supp  = mealPlanSupplement(r, m.code);
+                  return (
+                    <td key={m.code} style={{
+                      padding: "8px 10px",
+                      textAlign: "end",
+                      fontVariantNumeric: "tabular-nums",
+                      color: isSel ? p.accent : (supp > 0 ? p.textPrimary : p.textMuted),
+                      fontWeight: isSel ? 700 : 500,
+                      backgroundColor: isSel ? `${p.accent}10` : "transparent",
+                      borderInlineStart: isSel ? `2px solid ${p.accent}` : "none",
+                      borderInlineEnd:   isSel ? `2px solid ${p.accent}` : "none",
+                      fontSize: "0.86rem",
+                    }}>
+                      {supp > 0 ? `+ ${formatCurrency(supp)}` : "—"}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", marginTop: 6, lineHeight: 1.5 }}>
+        For a 2-adult, 3-night stay this {selectedPlan === "ro" ? "default plan adds no F&B charge" : `default plan adds 2 × 3 × the supplement above per suite to the folio`}.
+      </div>
+    </div>
+  );
 }

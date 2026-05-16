@@ -4,6 +4,7 @@ import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween } from "../../../../utils/date.js";
 import { useData, formatCurrency, MEAL_PLANS } from "../../../../data/store.jsx";
+import { MealPlanSupplementMatrix } from "../../ContractEditor.jsx";
 import { Icon } from "../../../../components/Icon.jsx";
 import { Card, Drawer, FileUpload, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 import { WalletCardDrawer } from "./WalletCard.jsx";
@@ -733,7 +734,7 @@ function TiersGrid({ tiers, tierMembers, onEdit, onNew }) {
 // ---------------------------------------------------------------------------
 function TierEditor({ mode, draft: initial, onClose }) {
   const p = usePalette();
-  const { addTier, setTiers, tiers } = useData();
+  const { addTier, setTiers, tiers, rooms } = useData();
   const [draft, setDraft] = useState(initial);
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
 
@@ -798,17 +799,45 @@ function TierEditor({ mode, draft: initial, onClose }) {
               </FormGroup>
               {/* Default meal plan — pre-fills on this tier's bookings.
                   Silver typically RO (no perk); Gold BB; Platinum HB.
-                  Guest can still pick a different plan at checkout. */}
+                  Guest can still pick a different plan at checkout. The
+                  matrix below previews the per-suite supplement that
+                  flows from the room master. */}
               <FormGroup label="Default meal plan for this tier">
-                <SelectField
-                  value={draft.defaultMealPlan || "ro"}
-                  onChange={(v) => set({ defaultMealPlan: v })}
-                  options={MEAL_PLANS.map((m) => ({ value: m.code, label: `${m.short} · ${m.label}` }))}
-                />
+                <div className="flex flex-wrap gap-1.5">
+                  {MEAL_PLANS.map((m) => {
+                    const sel = (draft.defaultMealPlan || "ro") === m.code;
+                    return (
+                      <button key={m.code}
+                        onClick={() => set({ defaultMealPlan: m.code })}
+                        style={{
+                          padding: "0.45rem 0.85rem",
+                          border: `1px solid ${sel ? p.accent : p.border}`,
+                          backgroundColor: sel ? `${p.accent}1F` : "transparent",
+                          color: sel ? p.accent : p.textSecondary,
+                          fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", fontWeight: 700,
+                          letterSpacing: "0.04em", cursor: "pointer",
+                          display: "inline-flex", alignItems: "center", gap: 6,
+                        }}
+                        aria-pressed={sel}
+                        title={m.label}
+                      >
+                        {sel ? "✓ " : ""}{m.short}
+                      </button>
+                    );
+                  })}
+                </div>
                 <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", marginTop: 6, lineHeight: 1.55 }}>
-                  Pre-fills on bookings made by members at this tier. The supplement (per adult per night) is still pulled from the suite's <strong>Meal plans</strong> card in Rooms &amp; Rates.
+                  Pre-fills on bookings made by members at this tier. The per-adult-per-night supplement is sourced from the room master (Rooms &amp; Rates → Meal plans) and reflected below.
                 </div>
               </FormGroup>
+              {/* Live supplement matrix — same component used in the
+                  contract editor so corporate / agency / tier defaults
+                  all share one source of truth. */}
+              <MealPlanSupplementMatrix
+                p={p}
+                rooms={rooms}
+                selectedPlan={draft.defaultMealPlan || "ro"}
+              />
               <label className="flex items-center gap-2" style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.85rem" }}>
                 <input type="checkbox" checked={!!draft.featured} onChange={(e) => set({ featured: e.target.checked })} />
                 Mark as Featured (shows the "Most chosen" ribbon on the homepage)
