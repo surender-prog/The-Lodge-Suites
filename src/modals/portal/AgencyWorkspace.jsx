@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from "react";
 import {
   AlertCircle, BedDouble, Briefcase, Building2, Calendar as CalendarIcon, Check,
-  Coins, Copy, Crown, Download, Edit2, ExternalLink, Eye, EyeOff, FileText, Inbox,
-  KeyRound, Layers, Lock, Mail, Paperclip, Phone, Plus, Printer,
+  Coins, Copy, Crown, Download, Edit2, ExternalLink, Eye, EyeOff, FileBadge,
+  FileText, Inbox, KeyRound, Layers, Lock, Mail, Paperclip, Phone, Plus, Printer,
   Receipt as ReceiptIcon, ScrollText, Send, Shield, Star, Trash2, User2,
   UserPlus, X,
 } from "lucide-react";
@@ -242,6 +242,7 @@ export function AgencyWorkspaceDrawer({ agency: initialAgency, onClose, onEditCo
             <Tab id="activities" label="Activities" count={(activities || []).filter((a) => a.accountKind === "agent" && a.accountId === agency.id).length} active={tab === "activities"} onClick={() => setTab("activities")} p={p} />
             <Tab id="invoices"   label="Invoices"   count={agentInvoices.length} active={tab === "invoices"} onClick={() => setTab("invoices")} p={p} />
             <Tab id="receipts"   label="Receipts"   count={agentPayments.length} active={tab === "receipts"} onClick={() => setTab("receipts")} p={p} />
+            <Tab id="profile"    label="Profile"    count={null} active={tab === "profile"} onClick={() => setTab("profile")} p={p} />
             <Tab id="users"      label="Users"      count={(agency.users?.length || (agency.pocName ? 1 : 0))} active={tab === "users"} onClick={() => setTab("users")} p={p} />
             <Tab id="statement"  label="Statement"  count={null} active={tab === "statement"} onClick={() => setTab("statement")} p={p} />
           </div>
@@ -276,6 +277,14 @@ export function AgencyWorkspaceDrawer({ agency: initialAgency, onClose, onEditCo
           {tab === "receipts" && (
             <ReceiptsSection payments={agentPayments} bookings={agentBookings} agency={agency} p={p}
               onPreviewReceipt={(b) => setBookingPreview({ booking: b, kind: "receipt" })}
+            />
+          )}
+          {tab === "profile" && (
+            <ProfileSection
+              account={agency}
+              kind="agent"
+              p={p}
+              onEditContract={onEditContract}
             />
           )}
           {tab === "users" && (
@@ -401,6 +410,194 @@ function OverviewSection({ agency, kpis, bookings, invoices, payments, p, onSeeB
           for accounts still finalising paperwork. */}
       {agency.signedContractUrl && (
         <SignedContractCard account={agency} p={p} />
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ProfileSection — Profile tab content. Identical shape to the
+// CorporateWorkspace's ProfileSection — kept duplicated here to match
+// the existing convention of one Field / CardBlock / SignedContractCard
+// per workspace file, rather than reaching across modules. Tweaks
+// here should mirror in CorporateWorkspace.jsx.
+// ─────────────────────────────────────────────────────────────────────────
+function ProfileSection({ account, kind, p, onEditContract }) {
+  const isCorp = kind === "corporate";
+  const partyName = isCorp ? (account.account || "—") : (account.name || "—");
+  const expiryChip = (iso) => {
+    if (!iso) return null;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const d = new Date(iso); d.setHours(0, 0, 0, 0);
+    const left = Math.ceil((d - today) / 86400000);
+    if (left < 0)   return { color: p.danger,  label: `Expired ${Math.abs(left)}d ago` };
+    if (left <= 30) return { color: p.warn,    label: `Expires in ${left}d` };
+    return { color: p.success, label: `Valid · ${left}d left` };
+  };
+  const crChip  = expiryChip(account.crExpiry);
+  const vatChip = expiryChip(account.vatExpiry);
+
+  return (
+    <div className="grid lg:grid-cols-2 gap-6">
+      <CardBlock title={<><Building2 size={12} className="inline mr-1.5" /> Identity</>} p={p} action={
+        onEditContract ? (
+          <button
+            onClick={onEditContract}
+            className="inline-flex items-center gap-1.5"
+            style={{
+              color: p.accent, fontFamily: "'Manrope', sans-serif",
+              fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+              backgroundColor: "transparent", border: "none", cursor: "pointer",
+            }}
+          >
+            Edit contract →
+          </button>
+        ) : null
+      }>
+        <div className="px-5 py-4 grid sm:grid-cols-2 gap-4">
+          <Field label={isCorp ? "Account name" : "Agency name"} value={partyName} p={p} />
+          {isCorp && <Field label="Industry" value={account.industry || "—"} p={p} />}
+          {!isCorp && <Field label="Trading contact" value={account.contact || "—"} p={p} />}
+          <Field label="Contract id"   value={account.id} mono p={p} />
+          <Field label="Status"        value={(account.status || "draft").replace(/\b\w/g, (c) => c.toUpperCase())} p={p} />
+          <Field label="Signed on"     value={account.signedOn ? fmtDate(account.signedOn) : "—"} p={p} />
+          <Field label="Valid from"    value={account.startsOn ? fmtDate(account.startsOn) : "—"} p={p} />
+          <Field label="Valid to"      value={account.endsOn   ? fmtDate(account.endsOn)   : "—"} p={p} />
+          <Field label="Payment terms" value={account.paymentTerms || "—"} p={p} />
+          {(account.creditLimit > 0) && (
+            <Field label="Credit limit" value={fmtBhd(account.creditLimit)} p={p} />
+          )}
+        </div>
+      </CardBlock>
+
+      <CardBlock title={<><FileBadge size={12} className="inline mr-1.5" /> Statutory registration</>} p={p}>
+        <div className="px-5 py-4 space-y-4">
+          <div>
+            <div className="flex items-baseline justify-between gap-2 flex-wrap mb-1">
+              <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                Commercial Registration (CR)
+              </span>
+              {crChip && (
+                <span style={{
+                  color: crChip.color, backgroundColor: `${crChip.color}10`,
+                  border: `1px solid ${crChip.color}`,
+                  padding: "1px 7px", fontFamily: "'Manrope', sans-serif",
+                  fontSize: "0.56rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                }}>{crChip.label}</span>
+              )}
+            </div>
+            <div style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}>
+              <span style={{ fontWeight: 700 }}>{account.crNumber || "—"}</span>
+              {account.crExpiry && (
+                <span style={{ color: p.textMuted, marginInlineStart: 8, fontSize: "0.76rem" }}>· valid to {fmtDate(account.crExpiry)}</span>
+              )}
+            </div>
+            {account.crCertificateUrl ? (
+              <a href={account.crCertificateUrl} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 mt-2"
+                style={{
+                  color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem",
+                  letterSpacing: "0.04em", fontWeight: 600,
+                  textDecoration: "underline", textUnderlineOffset: 3,
+                }}
+              >
+                <FileText size={11} /> {account.crCertificateFilename || "Open CR certificate"}
+                {account.crCertificateUploadedAt && (
+                  <span style={{ color: p.textMuted, fontSize: "0.66rem", marginInlineStart: 4 }}>
+                    · uploaded {fmtDate(account.crCertificateUploadedAt.slice(0, 10))}
+                  </span>
+                )}
+              </a>
+            ) : (
+              <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", marginTop: 4, fontStyle: "italic" }}>
+                No CR certificate uploaded.
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div className="flex items-baseline justify-between gap-2 flex-wrap mb-1">
+              <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                VAT Registration
+              </span>
+              {vatChip && (
+                <span style={{
+                  color: vatChip.color, backgroundColor: `${vatChip.color}10`,
+                  border: `1px solid ${vatChip.color}`,
+                  padding: "1px 7px", fontFamily: "'Manrope', sans-serif",
+                  fontSize: "0.56rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                }}>{vatChip.label}</span>
+              )}
+            </div>
+            <div style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}>
+              <span style={{ fontWeight: 700 }}>{account.vatNumber || "—"}</span>
+              {account.vatExpiry && (
+                <span style={{ color: p.textMuted, marginInlineStart: 8, fontSize: "0.76rem" }}>· valid to {fmtDate(account.vatExpiry)}</span>
+              )}
+            </div>
+            {account.vatCertificateUrl ? (
+              <a href={account.vatCertificateUrl} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 mt-2"
+                style={{
+                  color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem",
+                  letterSpacing: "0.04em", fontWeight: 600,
+                  textDecoration: "underline", textUnderlineOffset: 3,
+                }}
+              >
+                <FileText size={11} /> {account.vatCertificateFilename || "Open VAT certificate"}
+                {account.vatCertificateUploadedAt && (
+                  <span style={{ color: p.textMuted, fontSize: "0.66rem", marginInlineStart: 4 }}>
+                    · uploaded {fmtDate(account.vatCertificateUploadedAt.slice(0, 10))}
+                  </span>
+                )}
+              </a>
+            ) : (
+              <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", marginTop: 4, fontStyle: "italic" }}>
+                No VAT certificate uploaded.
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>
+              Registered company address
+            </div>
+            {account.companyAddress ? (
+              <div style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", whiteSpace: "pre-line", lineHeight: 1.55 }}>
+                {account.companyAddress}
+              </div>
+            ) : (
+              <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", fontStyle: "italic" }}>
+                Not on file. Add it in the contract editor's Statutory registration card.
+              </div>
+            )}
+          </div>
+        </div>
+      </CardBlock>
+
+      <CardBlock title={<><User2 size={12} className="inline mr-1.5" /> Primary point of contact</>} p={p}>
+        <div className="px-5 py-4 grid sm:grid-cols-2 gap-4">
+          <Field label="Name"  value={account.pocName  || "—"} p={p} />
+          <Field label="Role"  value={account.pocRole  || "—"} p={p} />
+          <Field label="Email" value={account.pocEmail || "—"} p={p} />
+          <Field label="Phone" value={account.pocPhone || "—"} p={p} />
+        </div>
+        {account.notes && (
+          <div className="px-5 py-4" style={{ borderTop: `1px solid ${p.border}`, backgroundColor: p.bgPanelAlt }}>
+            <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>Internal notes</div>
+            <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.82rem", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{account.notes}</div>
+          </div>
+        )}
+      </CardBlock>
+
+      {account.signedContractUrl ? (
+        <SignedContractCard account={account} p={p} />
+      ) : (
+        <CardBlock title={<><Paperclip size={12} className="inline mr-1.5" /> Signed contract</>} p={p}>
+          <div className="px-5 py-5" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", lineHeight: 1.55 }}>
+            No countersigned contract uploaded yet. Use the <strong>Signed contract</strong> card in the contract editor to attach the PDF once the partner returns it.
+          </div>
+        </CardBlock>
       )}
     </div>
   );
