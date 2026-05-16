@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useState } from "react";
 import {
   AlertCircle, Building2, CalendarDays, Check, Coins, Download, ExternalLink,
-  FileText, Loader2, Mail, MapPin, Paperclip, Percent, Phone, Plus, Save, Send,
+  FileText, Loader2, Mail, MapPin, Paperclip, Percent, Phone, Plus, RotateCcw, Save, Send,
   Trash2, Upload, User2, X,
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
@@ -159,7 +159,7 @@ export function ContractEditor({ open, onClose, contract, kind, onSave, onRemove
   // costs across the property's suites. The rates themselves are
   // sourced from each room's `mealPlans` master in Rooms & Rates;
   // edits there flow through here automatically.
-  const { rooms } = useData();
+  const { rooms, eventSupplements: masterEvents } = useData();
   const [draft, setDraft] = useState(contract);
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
   const setRate = (mapKey, room, value) => setDraft((d) => ({
@@ -177,13 +177,75 @@ export function ContractEditor({ open, onClose, contract, kind, onSave, onRemove
   const monthlyKey = isCorporate ? "monthlyRates" : "monthlyNet";
 
   // Event-supplement helpers — keep all CRUD on the supplement list local
-  // so the editor stays self-contained.
+  // so the editor stays self-contained. The contract's `eventSupplements`
+  // is a snapshot — operators can either build it from scratch or import
+  // the active rows from the property-wide master (Property Info →
+  // Event-period supplements) which gives them Eid / F1 / Ironman / NYE
+  // out of the box, with per-contract supplement overrides.
   const addSupplement = () => set({
     eventSupplements: [
       ...(draft.eventSupplements || []),
       { id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`, name: "", fromDate: todayISO(), toDate: todayISO(), supplement: 0 },
     ],
   });
+  // Pull every active event from the master into the contract, skipping
+  // rows already present (matched by id then by name+from). Existing
+  // overrides survive — we only add what's missing.
+  const importFromMaster = () => {
+    const existing = draft.eventSupplements || [];
+    const existingKeys = new Set(existing.flatMap((e) => [e.id, `${e.name}|${e.fromDate}`].filter(Boolean)));
+    const newRows = (masterEvents || [])
+      .filter((m) => m && m.active !== false)
+      .filter((m) => (m.scope || "all") === "all"
+                  || (m.scope === "corporate" && isCorporate)
+                  || (m.scope === "agent"     && !isCorporate))
+      .filter((m) => !existingKeys.has(m.id) && !existingKeys.has(`${m.name}|${m.fromDate}`))
+      .map((m) => ({
+        // Generate a fresh id so the contract snapshot doesn't collide
+        // with the master's id if the master row is later edited.
+        id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 5)}-${m.id}`,
+        name: m.name,
+        fromDate: m.fromDate,
+        toDate: m.toDate,
+        supplement: Number(m.supplement) || 0,
+        sourceId: m.id,
+        sourceLabel: "master",
+      }));
+    if (newRows.length === 0) {
+      pushToast({ message: "All applicable master events are already on this contract.", kind: "warn" });
+      return;
+    }
+    set({ eventSupplements: [...existing, ...newRows] });
+    pushToast({ message: `Imported ${newRows.length} event${newRows.length === 1 ? "" : "s"} from the master.` });
+  };
+  // Replace the contract list with the master entirely — useful when the
+  // operator wants a clean snapshot synchronised to the property's
+  // current calendar.
+  const resetFromMaster = () => {
+    if (!masterEvents || masterEvents.length === 0) {
+      pushToast({ message: "Master is empty — add events in Property Info first.", kind: "warn" });
+      return;
+    }
+    if ((draft.eventSupplements || []).length > 0) {
+      if (!confirm("Replace this contract's event supplements with a fresh snapshot from the master? Any per-contract overrides will be lost.")) return;
+    }
+    const rows = masterEvents
+      .filter((m) => m && m.active !== false)
+      .filter((m) => (m.scope || "all") === "all"
+                  || (m.scope === "corporate" && isCorporate)
+                  || (m.scope === "agent"     && !isCorporate))
+      .map((m) => ({
+        id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 5)}-${m.id}`,
+        name: m.name,
+        fromDate: m.fromDate,
+        toDate: m.toDate,
+        supplement: Number(m.supplement) || 0,
+        sourceId: m.id,
+        sourceLabel: "master",
+      }));
+    set({ eventSupplements: rows });
+    pushToast({ message: `Loaded ${rows.length} event${rows.length === 1 ? "" : "s"} from the master.` });
+  };
   const updateSupplement = (id, patch) => set({
     eventSupplements: (draft.eventSupplements || []).map((e) => e.id === id ? { ...e, ...patch } : e),
   });
@@ -403,30 +465,79 @@ export function ContractEditor({ open, onClose, contract, kind, onSave, onRemove
                 </p>
               </CECard>
 
-              {/* Event supplements */}
+              {/* Event supplements — contract-level snapshot. Operators
+                  can manually add one-off rows, or pull every active row
+                  from the property-wide master (Property Info →
+                  Event-period supplements). Per-contract supplement
+                  overrides survive subsequent imports. */}
               <CECard title="Event-period supplements" icon={CalendarDays}
                 action={
-                  <button onClick={addSupplement} className="flex items-center gap-1.5"
-                    style={{
-                      padding: "0.4rem 0.85rem", border: `1px solid ${p.accent}`, color: p.accent,
-                      fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
-                      letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
-                    }}>
-                    <Plus size={11} /> Add period
-                  </button>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {(masterEvents || []).length > 0 && (
+                      <>
+                        <button onClick={importFromMaster} className="flex items-center gap-1.5"
+                          title="Pull every active event from the property-wide master that isn't already on this contract."
+                          style={{
+                            padding: "0.4rem 0.85rem", border: `1px solid ${p.border}`, color: p.textSecondary,
+                            backgroundColor: "transparent",
+                            fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+                            letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.color = p.accent; e.currentTarget.style.borderColor = p.accent; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.color = p.textSecondary; e.currentTarget.style.borderColor = p.border; }}
+                        >
+                          <Download size={11} /> Import from master
+                        </button>
+                        <button onClick={resetFromMaster} className="flex items-center gap-1.5"
+                          title="Replace this contract's events with a fresh snapshot of the master. Drops any per-contract overrides."
+                          style={{
+                            padding: "0.4rem 0.85rem", border: `1px solid ${p.border}`, color: p.textMuted,
+                            backgroundColor: "transparent",
+                            fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+                            letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.color = p.warn; e.currentTarget.style.borderColor = p.warn; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.color = p.textMuted; e.currentTarget.style.borderColor = p.border; }}
+                        >
+                          <RotateCcw size={11} /> Sync to master
+                        </button>
+                      </>
+                    )}
+                    <button onClick={addSupplement} className="flex items-center gap-1.5"
+                      style={{
+                        padding: "0.4rem 0.85rem", border: `1px solid ${p.accent}`, color: p.accent,
+                        backgroundColor: "transparent",
+                        fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+                        letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                        cursor: "pointer",
+                      }}>
+                      <Plus size={11} /> Add period
+                    </button>
+                  </div>
                 }
               >
                 {(draft.eventSupplements || []).length === 0 ? (
                   <div className="px-2 py-6 text-center" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem" }}>
                     No event supplements set.
-                    <button onClick={addSupplement} style={{ color: p.accent, fontWeight: 700, marginInlineStart: 6 }}>Add the first period →</button>
+                    {(masterEvents || []).length > 0 && (
+                      <button onClick={importFromMaster} style={{ color: p.accent, fontWeight: 700, marginInlineStart: 6, textDecoration: "underline" }}>
+                        Import {(masterEvents || []).filter((m) => m.active !== false).length} from master →
+                      </button>
+                    )}
+                    <span style={{ display: "block", marginTop: 6 }}>
+                      or <button onClick={addSupplement} style={{ color: p.accent, fontWeight: 700, textDecoration: "underline" }}>add a custom period</button>.
+                    </span>
                   </div>
                 ) : (
                   <div className="space-y-2">
                     {draft.eventSupplements.map((evt) => (
                       <div key={evt.id} className="grid gap-2 items-end" style={{
-                        gridTemplateColumns: "minmax(140px,1.4fr) minmax(120px,1fr) minmax(120px,1fr) minmax(110px,0.9fr) auto",
-                        border: `1px solid ${p.border}`, padding: "0.6rem 0.7rem", backgroundColor: p.bgPanelAlt,
+                        gridTemplateColumns: "minmax(140px,1.4fr) minmax(120px,1fr) minmax(120px,1fr) minmax(110px,0.9fr) auto auto",
+                        border: `1px solid ${evt.sourceLabel === "master" ? `${p.accent}40` : p.border}`,
+                        borderInlineStart: `3px solid ${evt.sourceLabel === "master" ? p.accent : "transparent"}`,
+                        padding: "0.6rem 0.7rem", backgroundColor: p.bgPanelAlt,
                       }}>
                         <CEField label="Event">
                           <CEInput value={evt.name} onChange={(v) => updateSupplement(evt.id, { name: v })} placeholder="e.g. Formula 1" />
@@ -434,6 +545,29 @@ export function ContractEditor({ open, onClose, contract, kind, onSave, onRemove
                         <CEField label="From"><CEInput type="date" value={evt.fromDate} onChange={(v) => updateSupplement(evt.id, { fromDate: v })} /></CEField>
                         <CEField label="To"><CEInput type="date" value={evt.toDate}   onChange={(v) => updateSupplement(evt.id, { toDate: v })} /></CEField>
                         <CEField label="Supplement"><CEInput type="number" value={evt.supplement} onChange={(v) => updateSupplement(evt.id, { supplement: Number(v) })} prefix="BHD" /></CEField>
+                        {/* Source chip — shows whether this row was
+                            imported from the property master or was
+                            added bespoke for this contract. Imported
+                            rows are still per-contract editable (the
+                            operator can override the supplement) and
+                            won't be auto-rewritten by future master
+                            edits unless they explicitly Sync. */}
+                        <div style={{ alignSelf: "end", marginBottom: 0 }}>
+                          <span style={{
+                            display: "inline-flex", alignItems: "center", gap: 4,
+                            padding: "0.35rem 0.55rem",
+                            color: evt.sourceLabel === "master" ? p.accent : p.textMuted,
+                            border: `1px solid ${evt.sourceLabel === "master" ? p.accent : p.border}`,
+                            backgroundColor: evt.sourceLabel === "master" ? `${p.accent}10` : "transparent",
+                            fontFamily: "'Manrope', sans-serif", fontSize: "0.56rem",
+                            letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+                            whiteSpace: "nowrap",
+                          }} title={evt.sourceLabel === "master"
+                            ? "Imported from the property-wide master. Supplement is overridable per contract; master date edits don't auto-propagate."
+                            : "Custom event added on this contract only."}>
+                            {evt.sourceLabel === "master" ? <><Download size={9} /> Master</> : "Custom"}
+                          </span>
+                        </div>
                         <button onClick={() => removeSupplement(evt.id)} title="Remove period"
                           style={{
                             color: p.danger, padding: "0.4rem 0.55rem", border: `1px solid ${p.border}`,
@@ -445,7 +579,7 @@ export function ContractEditor({ open, onClose, contract, kind, onSave, onRemove
                       </div>
                     ))}
                     <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.55, marginTop: 12 }}>
-                      Supplements apply per room, per night, on top of the contracted rate during the event window. Inclusive of starting and finishing dates.
+                      Supplements apply per room, per night, on top of the contracted rate during the event window. Inclusive of starting and finishing dates. Manage the property-wide event list in <strong style={{ color: p.textSecondary }}>Property Info → Event-period supplements</strong>.
                     </p>
                   </div>
                 )}

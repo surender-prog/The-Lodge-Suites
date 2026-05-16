@@ -403,6 +403,115 @@ export function enabledMealPlansFor(room) {
   return MEAL_PLANS.filter((m) => (map[m.code]?.enabled !== false));
 }
 
+// ─── Event-period supplements (property-wide master) ─────────────────────
+//
+// One place to register the BHD-per-room-per-night surcharge that
+// applies during named high-demand windows (Eid, Formula 1, Ironman
+// Bahrain, New Year's Eve, etc.). All booking surfaces read from this
+// list:
+//
+//   • Public BookingModal       — auto-applies any active event the
+//                                 stay overlaps
+//   • Corporate / agency        — "Import from master" copies entries
+//     contracts                   into the contract's eventSupplements
+//                                 (or operators can run pure-master
+//                                 mode and stop maintaining per-contract)
+//   • Calendar grid             — surface an event ribbon over the
+//                                 affected dates (future)
+//   • Reports                   — segment revenue by event window
+//
+// Shape: { id, name, fromDate, toDate, supplement, active, scope }
+//   • scope: 'all' (default) | 'corporate' | 'agent' | 'direct'
+//   • active: false hides the row from booking math without
+//             losing the date/amount (useful for cancelled events
+//             that may return next year).
+
+const _yr = new Date().getFullYear();
+export const DEFAULT_EVENT_SUPPLEMENTS = [
+  {
+    id: "evt-eid",
+    name: "Eid Al-Adha",
+    fromDate: `${_yr}-05-26`,
+    toDate:   `${_yr}-05-29`,
+    supplement: 25,
+    active: true,
+    scope: "all",
+  },
+  {
+    id: "evt-f1",
+    name: "Formula 1 Bahrain Grand Prix",
+    fromDate: `${_yr}-10-01`,
+    toDate:   `${_yr}-10-07`,
+    supplement: 25,
+    active: true,
+    scope: "all",
+  },
+  {
+    id: "evt-ironman",
+    name: "Ironman Bahrain",
+    fromDate: `${_yr}-12-15`,
+    toDate:   `${_yr}-12-17`,
+    supplement: 25,
+    active: true,
+    scope: "all",
+  },
+  {
+    id: "evt-nye",
+    name: "New Year's Eve",
+    fromDate: `${_yr}-12-31`,
+    toDate:   `${_yr + 1}-01-01`,
+    supplement: 25,
+    active: true,
+    scope: "all",
+  },
+];
+
+/** Return the master events whose window includes the supplied ISO date. */
+export function eventsCoveringDate(eventSupplements, isoDate) {
+  if (!eventSupplements || !isoDate) return [];
+  const d = new Date(isoDate);
+  if (isNaN(d)) return [];
+  return eventSupplements.filter((evt) => {
+    if (!evt || evt.active === false) return false;
+    const from = new Date(evt.fromDate);
+    const to   = new Date(evt.toDate);
+    if (isNaN(from) || isNaN(to)) return false;
+    return d >= from && d <= to;
+  });
+}
+
+/** Total event supplement that applies to a booking window (BHD per
+ *  room, summed across overlapping nights). For each event we count
+ *  the number of nights the booking falls inside its window, then
+ *  multiply by the supplement. Multiple overlapping events stack.
+ */
+export function totalEventSupplement(eventSupplements, { checkIn, checkOut, scope = "all" } = {}) {
+  if (!eventSupplements || !checkIn || !checkOut) return 0;
+  const start = new Date(checkIn);
+  const end   = new Date(checkOut);
+  if (isNaN(start) || isNaN(end)) return 0;
+  let total = 0;
+  for (const evt of eventSupplements) {
+    if (!evt || evt.active === false) continue;
+    // Scope filter — "all" applies everywhere; otherwise the event
+    // only triggers when the caller's scope matches.
+    if (evt.scope && evt.scope !== "all" && scope !== "all" && evt.scope !== scope) continue;
+    const eFrom = new Date(evt.fromDate);
+    const eTo   = new Date(evt.toDate);
+    if (isNaN(eFrom) || isNaN(eTo)) continue;
+    // Inclusive event window: any booking night that ENDS after eFrom
+    // and STARTS before (eTo + 1) is touched. We walk the stay day-
+    // by-day and sum the supplement for every overlapping night.
+    const cursor = new Date(Math.max(start.getTime(), eFrom.getTime()));
+    const stop   = new Date(Math.min(end.getTime() - 86400000, eTo.getTime()));
+    while (cursor <= stop) {
+      total += Number(evt.supplement) || 0;
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  }
+  return total;
+}
+
 // Approximate inverse: given a gross amount and the current tax config, work
 // back the net. Used by the invoice detail to display a plausible breakdown.
 // Compound rates introduce a multiplicative interaction — we handle the common
@@ -4094,6 +4203,25 @@ export function DataProvider({ children }) {
   }, []);
   const resetSmtpConfig = useCallback(() => setSmtpConfig(DEFAULT_SMTP_CONFIG), []);
 
+  // Property-wide event-period supplements master. Seeded with the
+  // common Bahrain windows (Eid, F1, Ironman, NYE). Edited from
+  // Property Info → Event-period supplements. All booking surfaces
+  // read off this list so a date / amount edit flows through every
+  // contract, agency, walk-up booking, and report at once.
+  const [eventSupplements, setEventSupplements] = useState(DEFAULT_EVENT_SUPPLEMENTS);
+  const upsertEventSupplement = useCallback((evt) => setEventSupplements((prev) => {
+    if (!evt || !evt.id) return prev;
+    const i = prev.findIndex((e) => e.id === evt.id);
+    if (i >= 0) {
+      const next = [...prev]; next[i] = { ...next[i], ...evt }; return next;
+    }
+    return [...prev, evt];
+  }), []);
+  const removeEventSupplement = useCallback((id) => {
+    setEventSupplements((prev) => prev.filter((e) => e.id !== id));
+  }, []);
+  const resetEventSupplements = useCallback(() => setEventSupplements(DEFAULT_EVENT_SUPPLEMENTS), []);
+
   // Property identity (legal name, address, CR/VAT, banking, contact).
   // Edited from the Property admin section; consumed by every printable
   // document and the public footer.
@@ -4244,6 +4372,7 @@ export function DataProvider({ children }) {
       fetchAll("tax_patterns")       .then(d => { if (!cancelled && d && d.length > 0) setTaxPatterns(d); }),
       // Singletons
       fetchSingleton("hotel_info")        .then(v => { if (!cancelled && v) setHotelInfo(v); }),
+      fetchSingleton("event_supplements") .then(v => { if (!cancelled && v && Array.isArray(v)) setEventSupplements(v); }),
       fetchSingleton("smtp_config")       .then(v => { if (!cancelled && v) setSmtpConfig(v); }),
       fetchSingleton("site_content")      .then(v => { if (!cancelled && v) setSiteContent(v); }),
       fetchSingleton("loyalty")           .then(v => { if (!cancelled && v) setLoyalty(v); }),
@@ -4322,6 +4451,7 @@ export function DataProvider({ children }) {
   useSlicePersistence("tax_patterns",        taxPatterns,        hydrated);
   // Singletons
   useSingletonPersistence("hotel_info",         hotelInfo,         hydrated);
+  useSingletonPersistence("event_supplements",  eventSupplements,  hydrated);
   useSingletonPersistence("smtp_config",        smtpConfig,        hydrated);
   useSingletonPersistence("site_content",       siteContent,       hydrated);
   useSingletonPersistence("loyalty",            loyalty,           hydrated);
@@ -5232,6 +5362,7 @@ export function DataProvider({ children }) {
     staffSession, signInStaff, signOutStaff,
     staffImpersonation, startStaffImpersonation, endStaffImpersonation,
     hotelInfo, updateHotelInfo, resetHotelInfo,
+    eventSupplements, upsertEventSupplement, removeEventSupplement, resetEventSupplements,
     smtpConfig, updateSmtpConfig, resetSmtpConfig,
     siteContent, setSiteText, setSiteImage, resetSiteContent,
     setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery,
@@ -5252,7 +5383,7 @@ export function DataProvider({ children }) {
     setCalendar, setCalendarCell,
     setLoyalty,
     addBooking, updateBooking, removeBooking,
-  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
+  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, eventSupplements, upsertEventSupplement, removeEventSupplement, resetEventSupplements, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
 
   return <DataStoreContext.Provider value={value}>{children}</DataStoreContext.Provider>;
 }

@@ -1,8 +1,8 @@
 import React, { useState } from "react";
-import { Building2, Coins, CreditCard, FileBadge, Globe, Mail, MapPin, Phone, RotateCcw, Save } from "lucide-react";
+import { Building2, Calendar as CalendarIcon, CalendarDays, Coins, CreditCard, FileBadge, Globe, Mail, MapPin, Phone, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useData, legalLine, formatCurrency } from "../../../../data/store.jsx";
-import { Card, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, TextField } from "../ui.jsx";
+import { Card, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, TextField } from "../ui.jsx";
 
 // ---------------------------------------------------------------------------
 // PropertyInfo — central record for the property's legal & contact identity.
@@ -13,7 +13,10 @@ import { Card, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, TextField
 // ---------------------------------------------------------------------------
 export const PropertyInfo = () => {
   const p = usePalette();
-  const { hotelInfo, updateHotelInfo, resetHotelInfo } = useData();
+  const {
+    hotelInfo, updateHotelInfo, resetHotelInfo,
+    eventSupplements, upsertEventSupplement, removeEventSupplement, resetEventSupplements,
+  } = useData();
   const [draft, setDraft] = useState(hotelInfo);
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(hotelInfo);
@@ -246,6 +249,19 @@ export const PropertyInfo = () => {
             </div>
           </Card>
 
+          {/* Event-period supplements — property-wide master for the
+              high-demand windows (Eid, F1, Ironman, NYE, etc.). Every
+              booking surface reads from this list so a date or amount
+              edit flows through contracts, agency rates, walk-up
+              bookings, and reports at once. */}
+          <EventSupplementsCard
+            p={p}
+            events={eventSupplements || []}
+            onUpsert={upsertEventSupplement}
+            onRemove={removeEventSupplement}
+            onReset={resetEventSupplements}
+          />
+
           {/* Weekend days — which days of the week are billed at the per-suite
               weekend rate. Picks are stored as JS day-of-week numbers
               (0 = Sun … 6 = Sat). Bahrain & the wider GCC use Fri+Sat by
@@ -402,6 +418,222 @@ function WeekendDaysPicker({ value, onChange, p }) {
           </button>
         );
       })}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// EventSupplementsCard — property-wide master for Eid / F1 / Ironman /
+// NYE-style demand windows. Operators edit rows inline; every change is
+// persisted to the `event_supplements` singleton and flows through to
+// every consumer that reads useData().eventSupplements:
+//
+//   • ContractEditor (corporate + agency)  — "Import from master" picker
+//   • Public BookingModal                  — auto-supplement during stays
+//                                            that overlap an active event
+//   • Calendar grid (planned)              — visible event ribbon
+//   • Reports                              — segment revenue by event
+//
+// Each row stores: id, name, fromDate, toDate, supplement, active, scope.
+// Rows can be deactivated rather than deleted so a cancelled-this-year
+// event keeps its dates ready for next year.
+// ─────────────────────────────────────────────────────────────────────────
+function EventSupplementsCard({ p, events, onUpsert, onRemove, onReset }) {
+  const sorted = [...(events || [])].sort((a, b) => {
+    const av = a.fromDate || "";
+    const bv = b.fromDate || "";
+    return av.localeCompare(bv);
+  });
+
+  const newRowId = () => `evt-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`;
+  const addRow = () => {
+    const today = new Date().toISOString().slice(0, 10);
+    onUpsert({
+      id: newRowId(),
+      name: "",
+      fromDate: today,
+      toDate: today,
+      supplement: 0,
+      active: true,
+      scope: "all",
+    });
+  };
+
+  return (
+    <Card title="Event-period supplements" action={
+      <div className="flex items-center gap-2 flex-wrap">
+        <span style={{
+          color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+          letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+        }}>
+          {sorted.length} period{sorted.length === 1 ? "" : "s"}
+        </span>
+        <button
+          onClick={addRow}
+          className="flex items-center gap-1.5"
+          style={{
+            padding: "0.4rem 0.85rem", border: `1px solid ${p.accent}`,
+            color: p.accent, backgroundColor: "transparent",
+            fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+            letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          <Plus size={11} /> Add period
+        </button>
+        {sorted.length > 0 && (
+          <button
+            onClick={() => {
+              if (!confirm("Reset the event-period master to the bundled Bahrain defaults (Eid · F1 · Ironman · NYE)? Custom events you've added will be lost.")) return;
+              onReset();
+              pushToast({ message: "Event-period master reset to defaults" });
+            }}
+            className="flex items-center gap-1.5"
+            style={{
+              padding: "0.4rem 0.85rem", border: `1px solid ${p.border}`,
+              color: p.textMuted, backgroundColor: "transparent",
+              fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+              letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+              cursor: "pointer",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = p.accent; e.currentTarget.style.borderColor = p.accent; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = p.textMuted; e.currentTarget.style.borderColor = p.border; }}
+          >
+            <RotateCcw size={11} /> Reset defaults
+          </button>
+        )}
+      </div>
+    }>
+      <p style={{ color: p.textSecondary, fontSize: "0.86rem", lineHeight: 1.6, marginBottom: 12 }}>
+        Property-wide master for the high-demand windows. Supplements stack on top of any contracted rate during the event window (inclusive of starting and finishing dates). One edit here flows into every contract import, every walk-up booking, and the calendar grid — keeping a single source of truth across the system.
+      </p>
+
+      {sorted.length === 0 ? (
+        <div className="px-2 py-8 text-center" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}>
+          <CalendarDays size={20} style={{ color: p.textMuted, opacity: 0.45, margin: "0 auto 8px" }} />
+          No event periods set.
+          <button onClick={addRow} style={{ color: p.accent, fontWeight: 700, marginInlineStart: 6, textDecoration: "underline" }}>
+            Add the first period →
+          </button>
+          <span style={{ display: "block", marginTop: 6 }}>
+            or <button onClick={onReset} style={{ color: p.accent, fontWeight: 700, textDecoration: "underline" }}>load the Bahrain defaults</button> (Eid · F1 · Ironman · NYE).
+          </span>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {sorted.map((evt) => (
+            <EventRow key={evt.id} p={p} evt={evt}
+              onUpdate={(patch) => onUpsert({ ...evt, ...patch })}
+              onRemove={() => {
+                if (!confirm(`Remove "${evt.name || "this event"}" from the master? Existing contracts that already imported it keep their copy; only future imports will lose this row.`)) return;
+                onRemove(evt.id);
+              }}
+            />
+          ))}
+          <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.55, marginTop: 10 }}>
+            Supplements apply per room, per night, on top of the contracted or rack rate during the event window. Set <strong>Scope</strong> to limit who sees the event (e.g. corporate-only blackouts). Toggle <strong>Active</strong> off to retire an event temporarily without losing its dates.
+          </p>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function EventRow({ p, evt, onUpdate, onRemove }) {
+  // Light validation: from must be ≤ to. We don't block the input —
+  // operators sometimes type dates out of order while editing — but we
+  // surface a soft warning so they catch swapped pairs before saving
+  // anywhere downstream.
+  const fromOk = !!evt.fromDate;
+  const toOk   = !!evt.toDate;
+  const orderOk = !fromOk || !toOk || evt.fromDate <= evt.toDate;
+  const dayCount = (() => {
+    if (!fromOk || !toOk) return 0;
+    const a = new Date(evt.fromDate);
+    const b = new Date(evt.toDate);
+    if (isNaN(a) || isNaN(b)) return 0;
+    return Math.abs(Math.round((b - a) / 86400000)) + 1;
+  })();
+
+  return (
+    <div style={{
+      border: `1px solid ${evt.active === false ? p.border : p.accent + "40"}`,
+      borderInlineStart: `3px solid ${evt.active === false ? p.border : p.accent}`,
+      padding: "0.7rem 0.85rem", backgroundColor: p.bgPanelAlt,
+      opacity: evt.active === false ? 0.65 : 1,
+    }}>
+      <div className="grid gap-2 items-end" style={{
+        gridTemplateColumns: "minmax(150px,1.4fr) minmax(130px,1fr) minmax(130px,1fr) minmax(120px,0.9fr) minmax(120px,0.9fr) auto auto",
+      }}>
+        <FormGroup label="Event">
+          <TextField value={evt.name || ""} onChange={(v) => onUpdate({ name: v })} placeholder="e.g. Formula 1" />
+        </FormGroup>
+        <FormGroup label="From">
+          <TextField type="date" value={evt.fromDate || ""} onChange={(v) => onUpdate({ fromDate: v })} />
+        </FormGroup>
+        <FormGroup label="To">
+          <TextField type="date" value={evt.toDate || ""} onChange={(v) => onUpdate({ toDate: v })} />
+        </FormGroup>
+        <FormGroup label="Supplement">
+          <TextField type="number" value={evt.supplement ?? 0} onChange={(v) => onUpdate({ supplement: Number(v) || 0 })} suffix="BHD" />
+        </FormGroup>
+        <FormGroup label="Scope">
+          <SelectField
+            value={evt.scope || "all"}
+            onChange={(v) => onUpdate({ scope: v })}
+            options={[
+              { value: "all",       label: "All bookings" },
+              { value: "corporate", label: "Corporate only" },
+              { value: "agent",     label: "Travel agent only" },
+              { value: "direct",    label: "Direct / walk-up only" },
+            ]}
+          />
+        </FormGroup>
+        {/* Active toggle */}
+        <button
+          onClick={() => onUpdate({ active: evt.active === false })}
+          title={evt.active === false ? "Inactive — click to re-enable" : "Active — click to disable"}
+          style={{
+            padding: "0.55rem 0.4rem",
+            color: evt.active === false ? p.textMuted : p.success,
+            border: `1px solid ${evt.active === false ? p.border : p.success}`,
+            backgroundColor: "transparent",
+            fontFamily: "'Manrope', sans-serif", fontSize: "0.58rem",
+            letterSpacing: "0.2em", textTransform: "uppercase", fontWeight: 700,
+            cursor: "pointer", whiteSpace: "nowrap", alignSelf: "end", marginBottom: 0,
+          }}
+        >
+          {evt.active === false ? "Off" : "On"}
+        </button>
+        <button
+          onClick={onRemove}
+          title="Remove event"
+          style={{
+            color: p.danger, padding: "0.55rem", border: `1px solid ${p.border}`,
+            backgroundColor: "transparent",
+            alignSelf: "end", marginBottom: 0, cursor: "pointer",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.borderColor = p.danger; }}
+          onMouseLeave={(e) => { e.currentTarget.style.borderColor = p.border; }}
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+      <div className="mt-1.5 flex items-center gap-3 flex-wrap" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", color: p.textMuted }}>
+        <span><CalendarIcon size={10} style={{ display: "inline", marginInlineEnd: 4, verticalAlign: -1 }} />
+          {dayCount > 0 ? `${dayCount} night${dayCount === 1 ? "" : "s"}` : "Set a valid date range"}
+        </span>
+        {!orderOk && (
+          <span style={{ color: p.warn, fontWeight: 700 }}>
+            Date range is reversed — "From" must be on or before "To".
+          </span>
+        )}
+        {(evt.supplement ?? 0) > 0 && dayCount > 0 && (
+          <span>
+            ≈ <strong style={{ color: p.accent }}>{formatCurrency((evt.supplement || 0) * dayCount)}</strong> per room across the window
+          </span>
+        )}
+      </div>
     </div>
   );
 }
