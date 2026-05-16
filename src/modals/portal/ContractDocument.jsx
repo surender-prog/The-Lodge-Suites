@@ -191,12 +191,24 @@ export function ContractDocumentView({ contract, kind }) {
         </div>
         <div>
           <div style={{ fontSize: "0.62rem", letterSpacing: "0.28em", textTransform: "uppercase", fontWeight: 700, color: "#8A7A4F", marginBottom: 6 }}>Issued by</div>
-          <div style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: "1.2rem", fontWeight: 600 }}>{HOTEL.legal}</div>
+          {/* Legal name + statutory IDs + phone numbers all use
+              white-space: nowrap so the column doesn't break long
+              tokens like "W.L.L.", "VAT No. 220017519800002", or
+              "+973 3306 9641" onto a new line. The address (multi-
+              line free text) wraps freely. */}
+          <div style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: "1.2rem", fontWeight: 600, whiteSpace: "nowrap" }}>{HOTEL.legal}</div>
           <div style={{ color: "#444" }}>{HOTEL.address}</div>
           <div style={{ color: "#444" }}>{HOTEL.area}</div>
-          <div style={{ color: "#444" }}>{[HOTEL.country, legalLine(HOTEL)].filter(Boolean).join(" · ")}</div>
-          <div style={{ color: "#444", marginTop: 6 }}>T: {HOTEL.phone} · WhatsApp: {HOTEL.whatsapp}</div>
-          <div style={{ color: "#444" }}>{HOTEL.email}</div>
+          <div style={{ color: "#444" }}>
+            <span style={{ whiteSpace: "nowrap" }}>{HOTEL.country}</span>
+            {HOTEL.cr  && <> · <span style={{ whiteSpace: "nowrap" }}>CR No. {HOTEL.cr}</span></>}
+            {HOTEL.vat && <> · <span style={{ whiteSpace: "nowrap" }}>VAT No. {HOTEL.vat}</span></>}
+          </div>
+          <div style={{ color: "#444", marginTop: 6 }}>
+            <span style={{ whiteSpace: "nowrap" }}>T: {HOTEL.phone}</span>
+            {HOTEL.whatsapp && <> · <span style={{ whiteSpace: "nowrap" }}>WhatsApp: {HOTEL.whatsapp}</span></>}
+          </div>
+          <div style={{ color: "#444", whiteSpace: "nowrap" }}>{HOTEL.email}</div>
         </div>
       </div>
 
@@ -567,48 +579,69 @@ export function buildContractHtml(contract, kind, { hotel, tax, rooms } = {}) {
   ────────────────────────────────────────────────────────────────── */
   @page {
     size: A4;
-    margin: 22mm 16mm 22mm 16mm;
+    /* The running header / footer occupy the top + bottom margins.
+       16mm sides keeps the body content well clear of the page
+       edge; 24mm top + 20mm bottom give the bands room without
+       crowding content. */
+    margin: 24mm 16mm 20mm 16mm;
 
+    /* Running header — short hotel name on the left, contract id
+       on the right. white-space:nowrap on both stops the browser
+       from stacking the text vertically when the corner box is
+       narrower than the content. The narrow corner boxes overflow
+       inward (toward each other) rather than wrapping, which is
+       what we want. */
+    @top-left-corner { content: ""; }
     @top-left {
       content: "${escapeForCssContent(HOTEL.name)} \\00B7  ${escapeForCssContent(HOTEL.tagline || "")}";
       font-family: 'Cormorant Garamond', Georgia, serif;
       font-style: italic;
-      font-size: 10pt;
+      font-size: 9.5pt;
       color: #8A7A4F;
+      white-space: nowrap;
       vertical-align: bottom;
       padding-bottom: 3mm;
       border-bottom: 0.5pt solid rgba(201,169,97,0.55);
-      width: 100%;
+      text-align: left;
     }
     @top-right {
       content: "${escapeForCssContent(docTitle)} \\00B7  #${escapeForCssContent(contract.id)}";
       font-family: 'Manrope', system-ui, sans-serif;
-      font-size: 8pt;
+      font-size: 7.5pt;
       letter-spacing: 0.04em;
       color: #555;
+      white-space: nowrap;
       vertical-align: bottom;
       padding-bottom: 3mm;
       border-bottom: 0.5pt solid rgba(201,169,97,0.55);
+      text-align: right;
     }
+    @top-right-corner { content: ""; }
+
+    @bottom-left-corner { content: ""; }
     @bottom-left {
       content: "${escapeForCssContent(runningFooter)}";
       font-family: 'Manrope', system-ui, sans-serif;
-      font-size: 7pt;
+      font-size: 6.5pt;
       color: #666;
+      white-space: nowrap;
       vertical-align: top;
       padding-top: 3mm;
       border-top: 0.5pt solid rgba(201,169,97,0.55);
-      width: 100%;
+      text-align: left;
     }
     @bottom-right {
-      content: "Page " counter(page) " of " counter(pages);
+      content: "Page " counter(page) " / " counter(pages);
       font-family: 'Manrope', system-ui, sans-serif;
-      font-size: 7pt;
+      font-size: 6.5pt;
       color: #666;
+      white-space: nowrap;
       vertical-align: top;
       padding-top: 3mm;
       border-top: 0.5pt solid rgba(201,169,97,0.55);
+      text-align: right;
     }
+    @bottom-right-corner { content: ""; }
   }
   /* First page already has the big inline title banner (hotel name +
      tagline + agreement title) — suppressing the running header there
@@ -693,7 +726,14 @@ export function buildContractHtml(contract, kind, { hotel, tax, rooms } = {}) {
   .muted { color: #555; }
   .accent { color: #8A7A4F; }
   .header { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 14pt; border-bottom: 1.5pt solid #15161A; }
-  .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 24pt; margin-top: 18pt; page-break-inside: avoid; }
+  /* Recipient + property identity block. The "Issued by" column
+     carries a 30-character legal name + a 16-digit VAT + a long
+     WhatsApp number, so we give it more width than the recipient
+     column (1fr) to stop those lines from wrapping mid-token. */
+  .meta { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr); gap: 18pt; margin-top: 18pt; page-break-inside: avoid; }
+  .meta .display { white-space: nowrap; overflow: visible; }
+  /* Phone + VAT lines mustn't break mid-token. */
+  .meta .nowrap-line { white-space: nowrap; }
   table { width: 100%; border-collapse: collapse; font-size: 9.5pt; margin-top: 4pt; page-break-inside: auto; }
   th { border-bottom: 1pt solid #15161A; padding: 6pt 8pt; text-align: start; font-size: 7.5pt; letter-spacing: 0.22em; text-transform: uppercase; font-weight: 700; background: rgba(201,169,97,0.08); }
   td { border-bottom: 0.5pt solid #d8d2c4; padding: 6pt 8pt; vertical-align: top; }
@@ -740,12 +780,20 @@ export function buildContractHtml(contract, kind, { hotel, tax, rooms } = {}) {
     </div>
     <div>
       <div class="eyebrow" style="margin-bottom:6px;">Issued by</div>
-      <div class="display" style="font-size:1.2rem;">${escapeHtml(HOTEL.legal)}</div>
+      <div class="display" style="font-size:1.2rem; white-space:nowrap;">${escapeHtml(HOTEL.legal)}</div>
       <div class="muted">${escapeHtml(HOTEL.address)}</div>
       <div class="muted">${escapeHtml(HOTEL.area)}</div>
-      <div class="muted">${escapeHtml([HOTEL.country, legalLine(HOTEL)].filter(Boolean).join(" · "))}</div>
-      <div class="muted" style="margin-top:6px;">T: ${escapeHtml(HOTEL.phone)} · WhatsApp: ${escapeHtml(HOTEL.whatsapp)}</div>
-      <div class="muted">${escapeHtml(HOTEL.email)}</div>
+      <!-- Country / CR / VAT — each token wrapped in nowrap so e.g.
+           "VAT No. 220017519800002" never breaks between "VAT No." and
+           the number itself. Tokens are still separated by middle dots
+           and can wrap between tokens if the column is narrow. -->
+      <div class="muted">
+        <span style="white-space:nowrap;">${escapeHtml(HOTEL.country)}</span>${HOTEL.cr  ? ` &middot; <span style="white-space:nowrap;">CR No. ${escapeHtml(HOTEL.cr)}</span>`  : ""}${HOTEL.vat ? ` &middot; <span style="white-space:nowrap;">VAT No. ${escapeHtml(HOTEL.vat)}</span>` : ""}
+      </div>
+      <div class="muted" style="margin-top:6px;">
+        <span style="white-space:nowrap;">T: ${escapeHtml(HOTEL.phone)}</span>${HOTEL.whatsapp ? ` &middot; <span style="white-space:nowrap;">WhatsApp: ${escapeHtml(HOTEL.whatsapp)}</span>` : ""}
+      </div>
+      <div class="muted" style="white-space:nowrap;">${escapeHtml(HOTEL.email)}</div>
     </div>
   </div>
 
