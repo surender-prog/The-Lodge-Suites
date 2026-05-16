@@ -89,7 +89,13 @@ export function ContractDocumentView({ contract, kind }) {
   // @bottom-* boxes emit so the preview matches the printed output.
   // (The running header is suppressed on page 1 in both surfaces
   // since the inline banner below covers the same ground.)
-  const runningFooter = `${HOTEL.legal || HOTEL.name} · ${HOTEL.address || ""} · ${[legalLine(HOTEL), HOTEL.phone, HOTEL.email].filter(Boolean).join(" · ")}`;
+  //
+  // Compact format: legal name + CR + VAT only. The address, phone
+  // and email already live on the cover page's "Issued by" block,
+  // so the running footer doesn't need to repeat them on every
+  // subsequent page — that just made the line so long it
+  // overflowed into the page-counter box on the right.
+  const runningFooter = [HOTEL.legal || HOTEL.name, legalLine(HOTEL)].filter(Boolean).join(" · ");
 
   return (
     // A4-shaped page (210 × 297 mm) so the on-screen preview matches
@@ -556,7 +562,10 @@ export function buildContractHtml(contract, kind, { hotel, tax, rooms } = {}) {
   // `content:` property takes a single quoted string, not HTML.
   const docTitle = isCorp ? "Corporate Rate Agreement" : "Wholesaler Contract Rates";
   const runningHeader = `${HOTEL.name} · ${docTitle} · #${contract.id}`;
-  const runningFooter = `${HOTEL.legal || HOTEL.name} · ${HOTEL.address || ""} · ${[legalLine(HOTEL), HOTEL.phone, HOTEL.email].filter(Boolean).join(" · ")}`;
+  // Compact legal line — legal name + CR + VAT. See the matching
+  // helper in ContractDocumentView for why the address/phone/email
+  // are dropped from the running footer.
+  const runningFooter = [HOTEL.legal || HOTEL.name, legalLine(HOTEL)].filter(Boolean).join(" · ");
 
   return `<!DOCTYPE html>
 <html lang="en"><head>
