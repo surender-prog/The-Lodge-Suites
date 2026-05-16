@@ -85,12 +85,60 @@ export function ContractDocumentView({ contract, kind }) {
   const showWeekend = hasAnyRates(r.weekend);
   const showMonthly = hasAnyRates(r.monthly);
 
+  // Running-header + footer text, computed once so the preview's
+  // fixed bands and the printed @page running content stay in sync.
+  const runningHeaderLeft  = `${HOTEL.name} · ${HOTEL.tagline || ""}`.trim().replace(/ · $/, "");
+  const runningHeaderRight = `${isCorp ? "Corporate Rate Agreement" : "Wholesaler Contract Rates"} · #${contract.id}`;
+  const runningFooter      = `${HOTEL.legal || HOTEL.name} · ${HOTEL.address || ""} · ${[legalLine(HOTEL), HOTEL.phone, HOTEL.email].filter(Boolean).join(" · ")}`;
+
   return (
+    // A4-shaped page (210 × 297 mm) so the on-screen preview matches
+    // what comes out of the printer. The preview shows ONE page — the
+    // browser's print engine handles the rest of the pagination
+    // automatically when buildContractHtml is opened in a print
+    // iframe (see printContract / downloadContract). The faux running
+    // header + footer bands render via positioned overlays so the
+    // operator can see roughly what'll appear on every printed page.
     <div style={{
-      backgroundColor: "#FBF8F1", color: "#15161A", padding: "44px 56px",
-      fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem", lineHeight: 1.55,
-      maxWidth: 860, margin: "0 auto", boxShadow: "0 4px 22px rgba(0,0,0,0.05)",
+      width: "210mm", minHeight: "297mm",
+      margin: "0 auto", backgroundColor: "#FBF8F1", color: "#15161A",
+      padding: "30mm 16mm 28mm 16mm",
+      fontFamily: "'Manrope', sans-serif", fontSize: "10pt", lineHeight: 1.55,
+      boxShadow: "0 4px 22px rgba(0,0,0,0.12)",
+      position: "relative",
     }}>
+      {/* Faux running header band — matches the @page @top-* margin
+          boxes used by the printed copy. Sits inside the page padding
+          so it reads as a top-of-page banner without overlapping the
+          inline title block below. */}
+      <div style={{
+        position: "absolute", top: "10mm", left: "16mm", right: "16mm",
+        display: "flex", justifyContent: "space-between", alignItems: "flex-end",
+        paddingBottom: "3mm",
+        borderBottom: "0.5pt solid rgba(201,169,97,0.55)",
+        pointerEvents: "none",
+      }}>
+        <span style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontSize: "10pt", color: "#8A7A4F" }}>
+          {runningHeaderLeft}
+        </span>
+        <span style={{ fontFamily: "'Manrope', sans-serif", fontSize: "8pt", color: "#555", letterSpacing: "0.04em" }}>
+          {runningHeaderRight}
+        </span>
+      </div>
+
+      {/* Faux running footer band — same as above, anchored bottom. */}
+      <div style={{
+        position: "absolute", bottom: "10mm", left: "16mm", right: "16mm",
+        display: "flex", justifyContent: "space-between", alignItems: "flex-start",
+        paddingTop: "3mm",
+        borderTop: "0.5pt solid rgba(201,169,97,0.55)",
+        fontFamily: "'Manrope', sans-serif", fontSize: "7pt", color: "#666",
+        pointerEvents: "none",
+      }}>
+        <span>{runningFooter}</span>
+        <span style={{ whiteSpace: "nowrap" }}>Page 1</span>
+      </div>
+
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", paddingBottom: 18, borderBottom: "2px solid #15161A" }}>
         <div>
@@ -492,41 +540,172 @@ export function buildContractHtml(contract, kind, { hotel, tax, rooms } = {}) {
     <td class="num">${escapeHtml(formatCurrency(Number(evt.supplement)))}</td>
   </tr>`).join("");
 
+  // Build the running header / footer strings up front so the @page
+  // margin boxes (Chrome's print engine renders these on every page)
+  // pull live values straight from the contract + property record.
+  // The escapeHtml + string concatenation is intentional — the CSS
+  // `content:` property takes a single quoted string, not HTML.
+  const docTitle = isCorp ? "Corporate Rate Agreement" : "Wholesaler Contract Rates";
+  const runningHeader = `${HOTEL.name} · ${docTitle} · #${contract.id}`;
+  const runningFooter = `${HOTEL.legal || HOTEL.name} · ${HOTEL.address || ""} · ${[legalLine(HOTEL), HOTEL.phone, HOTEL.email].filter(Boolean).join(" · ")}`;
+
   return `<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8" />
-<title>${escapeHtml(isCorp ? "Corporate Rate Agreement" : "Wholesaler Contract Rates")} · ${escapeHtml(contract.id)}</title>
+<title>${escapeHtml(docTitle)} · ${escapeHtml(contract.id)}</title>
 <style>
-  @page { size: A4; margin: 18mm; }
+  /* ──────────────────────────────────────────────────────────────────
+     A4 print layout with running header + footer on every page.
+
+     @page margin boxes are part of CSS Paged Media and are rendered
+     by Chrome's print engine (which is what window.print() runs
+     against from the iframe in printContract). The four key boxes
+     used here:
+       @top-left  · property name + tagline (small caps, gold)
+       @top-right · document title + contract id
+       @bottom-left  · full legal line
+       @bottom-right · "Page X of Y" counter
+     A4 = 210 × 297 mm; we leave 22mm top + 22mm bottom so the
+     running bands have breathing room without crowding content.
+  ────────────────────────────────────────────────────────────────── */
+  @page {
+    size: A4;
+    margin: 22mm 16mm 22mm 16mm;
+
+    @top-left {
+      content: "${escapeForCssContent(HOTEL.name)} \\00B7  ${escapeForCssContent(HOTEL.tagline || "")}";
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-style: italic;
+      font-size: 10pt;
+      color: #8A7A4F;
+      vertical-align: bottom;
+      padding-bottom: 3mm;
+      border-bottom: 0.5pt solid rgba(201,169,97,0.55);
+      width: 100%;
+    }
+    @top-right {
+      content: "${escapeForCssContent(docTitle)} \\00B7  #${escapeForCssContent(contract.id)}";
+      font-family: 'Manrope', system-ui, sans-serif;
+      font-size: 8pt;
+      letter-spacing: 0.04em;
+      color: #555;
+      vertical-align: bottom;
+      padding-bottom: 3mm;
+      border-bottom: 0.5pt solid rgba(201,169,97,0.55);
+    }
+    @bottom-left {
+      content: "${escapeForCssContent(runningFooter)}";
+      font-family: 'Manrope', system-ui, sans-serif;
+      font-size: 7pt;
+      color: #666;
+      vertical-align: top;
+      padding-top: 3mm;
+      border-top: 0.5pt solid rgba(201,169,97,0.55);
+      width: 100%;
+    }
+    @bottom-right {
+      content: "Page " counter(page) " of " counter(pages);
+      font-family: 'Manrope', system-ui, sans-serif;
+      font-size: 7pt;
+      color: #666;
+      vertical-align: top;
+      padding-top: 3mm;
+      border-top: 0.5pt solid rgba(201,169,97,0.55);
+    }
+  }
+
   * { box-sizing: border-box; }
-  body { font-family: 'Manrope', system-ui, -apple-system, sans-serif; color: #15161A; background: #F5F1E8; margin: 0; padding: 30px; line-height: 1.55; font-size: 13px; }
-  .doc { background: #FBF8F1; padding: 44px 56px; max-width: 860px; margin: 0 auto; box-shadow: 0 4px 22px rgba(0,0,0,0.08); }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Manrope', system-ui, -apple-system, sans-serif;
+    color: #15161A;
+    background: #EFE9DA;
+    line-height: 1.55;
+    font-size: 11pt;
+  }
+
+  /* Screen preview — render the document as stacked A4 sheets so
+     operators see exactly what'll come out of the printer. Each
+     `.page` is a 210 × 297 mm card with the same inner padding
+     (16mm sides, 22mm top/bottom) that print uses. */
+  .page {
+    width: 210mm;
+    min-height: 297mm;
+    margin: 12mm auto;
+    padding: 22mm 16mm 22mm 16mm;
+    background: #FBF8F1;
+    box-shadow: 0 4px 22px rgba(0,0,0,0.12);
+    position: relative;
+    page-break-after: always;
+  }
+  .page:last-child { page-break-after: auto; }
+
+  /* Faux running header / footer for SCREEN preview only — print
+     gets these from the @page margin boxes above. */
+  @media screen {
+    .page::before {
+      content: "${escapeForCssContent(HOTEL.name)} \\00B7  ${escapeForCssContent(HOTEL.tagline || "")}";
+      position: absolute;
+      top: 8mm; left: 16mm; right: 16mm;
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-style: italic;
+      font-size: 10pt;
+      color: #8A7A4F;
+      padding-bottom: 3mm;
+      border-bottom: 0.5pt solid rgba(201,169,97,0.55);
+    }
+    .page::after {
+      content: "${escapeForCssContent(runningFooter)}";
+      position: absolute;
+      bottom: 8mm; left: 16mm; right: 16mm;
+      font-family: 'Manrope', system-ui, sans-serif;
+      font-size: 7pt;
+      color: #666;
+      padding-top: 3mm;
+      border-top: 0.5pt solid rgba(201,169,97,0.55);
+      text-align: left;
+    }
+  }
+  @media print {
+    body { background: #FBF8F1; }
+    .page {
+      box-shadow: none;
+      margin: 0;
+      padding: 0;
+      width: auto;
+      min-height: 0;
+      page-break-after: auto;
+    }
+  }
+
   h1, h2, h3, .display { font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 600; }
-  h1 { font-size: 2.3rem; font-style: italic; margin: 0; line-height: 1.05; }
-  h2 { font-size: 1.6rem; margin: 0; letter-spacing: 0.04em; }
-  h3 { font-size: 1.4rem; margin: 24px 0 8px; }
-  .eyebrow { font-size: 0.66rem; letter-spacing: 0.28em; text-transform: uppercase; color: #8A7A4F; font-weight: 700; }
+  h1 { font-size: 22pt; font-style: italic; margin: 0; line-height: 1.05; }
+  h2 { font-size: 14pt; margin: 0; letter-spacing: 0.04em; }
+  h3 { font-size: 13pt; margin: 18pt 0 6pt; page-break-after: avoid; page-break-inside: avoid; }
+  .eyebrow { font-size: 7.5pt; letter-spacing: 0.28em; text-transform: uppercase; color: #8A7A4F; font-weight: 700; }
   .muted { color: #555; }
   .accent { color: #8A7A4F; }
-  .header { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 18px; border-bottom: 2px solid #15161A; }
-  .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 36px; margin-top: 24px; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.84rem; margin-top: 4px; }
-  th { border-bottom: 1.5px solid #15161A; padding: 8px 10px; text-align: start; font-size: 0.66rem; letter-spacing: 0.22em; text-transform: uppercase; font-weight: 700; background: rgba(201,169,97,0.08); }
-  td { border-bottom: 1px solid #d8d2c4; padding: 8px 10px; vertical-align: top; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 14pt; border-bottom: 1.5pt solid #15161A; }
+  .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 24pt; margin-top: 18pt; page-break-inside: avoid; }
+  table { width: 100%; border-collapse: collapse; font-size: 9.5pt; margin-top: 4pt; page-break-inside: auto; }
+  th { border-bottom: 1pt solid #15161A; padding: 6pt 8pt; text-align: start; font-size: 7.5pt; letter-spacing: 0.22em; text-transform: uppercase; font-weight: 700; background: rgba(201,169,97,0.08); }
+  td { border-bottom: 0.5pt solid #d8d2c4; padding: 6pt 8pt; vertical-align: top; }
+  /* Don't allow a row to split across a page break — better to bump
+     the whole row onto the next page than render half a cell. */
+  tr { page-break-inside: avoid; }
+  thead { display: table-header-group; } /* table header repeats on each page */
+  tfoot { display: table-footer-group; }
   td.num { font-variant-numeric: tabular-nums; font-weight: 600; color: #15161A; }
-  ul.cols { columns: 2; margin: 0; padding-inline-start: 22px; }
-  ul { margin: 0; padding-inline-start: 22px; line-height: 1.7; }
-  .sig { margin-top: 40px; display: grid; grid-template-columns: 1fr 1fr; gap: 56px; }
-  .sig .line { border-top: 1px solid #15161A; padding-top: 6px; font-size: 0.7rem; letter-spacing: 0.22em; text-transform: uppercase; color: #666; font-weight: 700; }
-  .footer { margin-top: 36px; padding-top: 14px; border-top: 1px solid #C9A961; font-size: 0.7rem; color: #666; text-align: center; letter-spacing: 0.05em; }
-  .pill { display: inline-block; padding: 1px 8px; font-size: 0.62rem; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 700; border: 1px solid #C9A961; color: #8A7A4F; margin-inline-start: 8px; }
-  @media print {
-    body { background: #FBF8F1; padding: 0; }
-    .doc { box-shadow: none; padding: 0; }
-  }
+  ul.cols { columns: 2; margin: 0; padding-inline-start: 22pt; }
+  ul { margin: 0; padding-inline-start: 22pt; line-height: 1.7; }
+  /* Signature block + closing paragraph belong together on the
+     final page — split would look unprofessional. */
+  .sig { margin-top: 30pt; display: grid; grid-template-columns: 1fr 1fr; gap: 42pt; page-break-inside: avoid; }
+  .sig .line { border-top: 0.5pt solid #15161A; padding-top: 4pt; font-size: 7.5pt; letter-spacing: 0.22em; text-transform: uppercase; color: #666; font-weight: 700; }
+  .pill { display: inline-block; padding: 1px 8px; font-size: 7pt; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 700; border: 1px solid #C9A961; color: #8A7A4F; margin-inline-start: 8px; }
 </style>
 </head><body>
-<div class="doc">
+<div class="page">
   <div class="header">
     <div>
       <h1>${escapeHtml(HOTEL.name)}</h1>
@@ -705,12 +884,23 @@ export function buildContractHtml(contract, kind, { hotel, tax, rooms } = {}) {
       <div class="muted" style="font-size:0.78rem;">Company Seal &amp; Date</div>
     </div>
   </div>
-
-  <div class="footer">
-    ${escapeHtml(HOTEL.name)} · ${escapeHtml(HOTEL.address)}, ${escapeHtml(HOTEL.area)} · ${escapeHtml(HOTEL.country)} · ${escapeHtml(HOTEL.phone)} · ${escapeHtml(HOTEL.email)} · ${escapeHtml(HOTEL.website)}
-  </div>
+  <!-- Inline footer removed — running footer is now drawn by the
+       @page @bottom-left / @bottom-right margin boxes on every printed
+       page, and by the .page::after pseudo-element on screen. -->
 </div>
 </body></html>`;
+}
+
+// CSS `content:` strings are sensitive to backslashes, quotes, and any
+// character that would close the string. Escape minimally so the
+// running-header / footer content renders as plain text. The
+// double-backslash unicode sequence `\\00B7` is left intact so it
+// becomes a real CSS unicode escape — the middle dot separator.
+function escapeForCssContent(s) {
+  return String(s ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, "\\\"")
+    .replace(/\r?\n/g, " ");
 }
 
 function escapeHtml(s) {
