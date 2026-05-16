@@ -85,11 +85,11 @@ export function ContractDocumentView({ contract, kind }) {
   const showWeekend = hasAnyRates(r.weekend);
   const showMonthly = hasAnyRates(r.monthly);
 
-  // Running-header + footer text, computed once so the preview's
-  // fixed bands and the printed @page running content stay in sync.
-  const runningHeaderLeft  = `${HOTEL.name} · ${HOTEL.tagline || ""}`.trim().replace(/ · $/, "");
-  const runningHeaderRight = `${isCorp ? "Corporate Rate Agreement" : "Wholesaler Contract Rates"} · #${contract.id}`;
-  const runningFooter      = `${HOTEL.legal || HOTEL.name} · ${HOTEL.address || ""} · ${[legalLine(HOTEL), HOTEL.phone, HOTEL.email].filter(Boolean).join(" · ")}`;
+  // Running-footer text — kept identical to what the printed @page
+  // @bottom-* boxes emit so the preview matches the printed output.
+  // (The running header is suppressed on page 1 in both surfaces
+  // since the inline banner below covers the same ground.)
+  const runningFooter = `${HOTEL.legal || HOTEL.name} · ${HOTEL.address || ""} · ${[legalLine(HOTEL), HOTEL.phone, HOTEL.email].filter(Boolean).join(" · ")}`;
 
   return (
     // A4-shaped page (210 × 297 mm) so the on-screen preview matches
@@ -102,31 +102,27 @@ export function ContractDocumentView({ contract, kind }) {
     <div style={{
       width: "210mm", minHeight: "297mm",
       margin: "0 auto", backgroundColor: "#FBF8F1", color: "#15161A",
-      padding: "30mm 16mm 28mm 16mm",
+      // First page: shorter top padding because the inline title
+      // banner IS the header. Other pages (handled by print's @page
+      // rule, not by this preview) reserve a 22mm top margin for the
+      // running header band.
+      padding: "16mm 16mm 28mm 16mm",
       fontFamily: "'Manrope', sans-serif", fontSize: "10pt", lineHeight: 1.55,
       boxShadow: "0 4px 22px rgba(0,0,0,0.12)",
       position: "relative",
     }}>
-      {/* Faux running header band — matches the @page @top-* margin
-          boxes used by the printed copy. Sits inside the page padding
-          so it reads as a top-of-page banner without overlapping the
-          inline title block below. */}
-      <div style={{
-        position: "absolute", top: "10mm", left: "16mm", right: "16mm",
-        display: "flex", justifyContent: "space-between", alignItems: "flex-end",
-        paddingBottom: "3mm",
-        borderBottom: "0.5pt solid rgba(201,169,97,0.55)",
-        pointerEvents: "none",
-      }}>
-        <span style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontSize: "10pt", color: "#8A7A4F" }}>
-          {runningHeaderLeft}
-        </span>
-        <span style={{ fontFamily: "'Manrope', sans-serif", fontSize: "8pt", color: "#555", letterSpacing: "0.04em" }}>
-          {runningHeaderRight}
-        </span>
-      </div>
+      {/* No faux running header on the preview — the preview shows
+          page 1, where the inline title banner below already carries
+          the property identity. The @page :first rule in
+          buildContractHtml suppresses the running header on the
+          printed page 1 to match. The running header DOES appear on
+          page 2+ when the document spans multiple pages — but that
+          only happens at print time. */}
 
-      {/* Faux running footer band — same as above, anchored bottom. */}
+      {/* Faux running footer band — kept on the preview because the
+          inline footer was removed from the document body; the only
+          place the legal line shows in the preview is here. Matches
+          the @page @bottom-* margin boxes that print on every page. */}
       <div style={{
         position: "absolute", bottom: "10mm", left: "16mm", right: "16mm",
         display: "flex", justifyContent: "space-between", alignItems: "flex-start",
@@ -613,6 +609,16 @@ export function buildContractHtml(contract, kind, { hotel, tax, rooms } = {}) {
       border-top: 0.5pt solid rgba(201,169,97,0.55);
     }
   }
+  /* First page already has the big inline title banner (hotel name +
+     tagline + agreement title) — suppressing the running header there
+     so the page doesn't show the same property identity twice. The
+     running footer (legal line + Page X of Y) stays on every page,
+     including the first, because the inline footer was removed. */
+  @page :first {
+    @top-left  { content: ""; border-bottom: none; }
+    @top-right { content: ""; border-bottom: none; }
+    margin-top: 16mm;
+  }
 
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
@@ -931,12 +937,48 @@ export function downloadContract(contract, kind, opts = {}) {
 
 export function printContract(contract, kind, opts = {}) {
   const html = buildContractHtml(contract, kind, opts);
-  const win = window.open("", "_blank", "width=900,height=900");
-  if (!win) return false;
-  win.document.open();
-  win.document.write(html);
-  win.document.close();
-  setTimeout(() => { try { win.focus(); win.print(); } catch (_) {} }, 350);
+  // Iframe approach — works without a pop-up blocker exception (the
+  // window.open path was getting silently blocked in Chrome's default
+  // policy). We mount a hidden iframe, write the HTML into it, wait
+  // for resources to load, fire print, then clean up.
+  const iframe = document.createElement("iframe");
+  iframe.style.position = "fixed";
+  iframe.style.right = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "0";
+  iframe.style.height = "0";
+  iframe.style.border = "0";
+  iframe.setAttribute("aria-hidden", "true");
+  document.body.appendChild(iframe);
+
+  const fire = () => {
+    try {
+      const w = iframe.contentWindow;
+      if (!w) return;
+      w.focus();
+      w.print();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[printContract] print failed:", err);
+    }
+    // Detach a bit after the print dialog is dismissed so the browser
+    // has time to actually start the print job.
+    setTimeout(() => {
+      try { iframe.parentNode?.removeChild(iframe); } catch (_) { /* no-op */ }
+    }, 2000);
+  };
+
+  // Some browsers fire `load` reliably for srcdoc; others don't. We
+  // double-up with a setTimeout fallback so the print dialog always
+  // pops within ~700ms even if the load event is missed.
+  let printed = false;
+  const once = () => { if (printed) return; printed = true; fire(); };
+  iframe.onload = once;
+  // srcdoc is the cleanest way to hand a fully-formed HTML document
+  // to an iframe — beats document.open()/write() which sometimes
+  // races against the load event.
+  iframe.srcdoc = html;
+  setTimeout(once, 700);
   return true;
 }
 
