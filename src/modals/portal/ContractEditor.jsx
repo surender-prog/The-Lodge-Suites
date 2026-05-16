@@ -116,6 +116,23 @@ const uploadSignedContract = (file, accountKind, accountId) =>
 const MAX_CONTRACT_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB — matches bucket policy
 const ALLOWED_CONTRACT_MIME = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
 
+// Quick-pick presets surfaced above the additional-services list in
+// the Inclusions card. Tapping a preset adds a pre-filled row; the
+// operator can still tweak the label or note inline before save. The
+// list is intentionally short — anything bespoke goes via the
+// "+ Custom service" button instead of cluttering this row.
+const ADDITIONAL_SERVICE_PRESETS = [
+  { label: "Daily laundry",           note: "2 pieces per occupant, per day" },
+  { label: "Office transportation",   note: "Round trip, weekdays, within Manama" },
+  { label: "Airport transfer",        note: "One-way private car on arrival & departure" },
+  { label: "Private butler",          note: "On-call during stay" },
+  { label: "Mini-bar stocked",        note: "Replenished daily, complimentary soft drinks" },
+  { label: "Welcome amenity",         note: "Fruit basket + still / sparkling water on arrival" },
+  { label: "Newspaper delivery",      note: "Local + international, morning delivery" },
+  { label: "Gym + pool access",       note: "Complimentary for all occupants" },
+  { label: "Pressing service",        note: "2 pieces per stay, complimentary" },
+];
+
 // ─────────────────────────────────────────────────────────────────────────
 // Meal-plan helpers — back-compat with single-default contracts.
 //
@@ -194,6 +211,14 @@ export function defaultCorporateDraft(existingIds = []) {
     // mirror exactly what's on the CR certificate.
     companyAddress: "",
     inclusions: { breakfast: false, lateCheckOut: false, parking: true, wifi: true, meetingRoom: false },
+    // Free-form list of bespoke services negotiated for this account
+    // on top of the five standard inclusion toggles above. Each row is
+    // { id, label, note? } so operators can capture things like "2 pc
+    // daily laundry", "Office transportation (Bahrain Bay round trip)",
+    // "Private butler" or any other in-stay perk that doesn't map to
+    // one of the boolean toggles. Rendered as bullets under Inclusions
+    // on the printed contract.
+    additionalServices: [],
     // Meal plans negotiated under this contract. `availablePlans` is
     // the full menu the corporate / agency can pick from at booking
     // time (e.g. ["bb","hb"] means they can choose either BB or HB but
@@ -224,6 +249,9 @@ export function defaultAgencyDraft(existingIds = []) {
     weekendNet: { studio: 0, oneBed: 0, twoBed: 0, threeBed: 0 },
     monthlyNet: { studio: 0, oneBed: 0, twoBed: 0, threeBed: 0 },
     weekendUpliftPct: 0, taxIncluded: false, accommodationFee: 0,
+    // Free-form list of bespoke services negotiated under this
+    // agency contract — same shape as the corporate template above.
+    additionalServices: [],
     // Statutory registration on file — see the corporate template
     // above for the field shape. Agencies typically carry both a
     // local CR and a VAT registration in their licensing jurisdiction.
@@ -263,6 +291,32 @@ export function ContractEditor({ open, onClose, contract, kind, onSave, onRemove
   }));
   const setInclusion = (key, on) => setDraft((d) => ({
     ...d, inclusions: { ...(d.inclusions || {}), [key]: on },
+  }));
+
+  // Additional-services CRUD — bespoke perks beyond the five standard
+  // inclusion toggles (Daily breakfast, Late check-out, Parking, Wi-Fi,
+  // Meeting room access). Stored as `[{ id, label, note? }]` so each
+  // entry is identifiable for inline edits + removal without touching
+  // its neighbours. The seed list below ships a handful of common
+  // negotiations as one-tap quick-picks.
+  const addAdditionalService = (preset) => setDraft((d) => ({
+    ...d,
+    additionalServices: [
+      ...(d.additionalServices || []),
+      {
+        id: `svc-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+        label: preset?.label || "",
+        note:  preset?.note  || "",
+      },
+    ],
+  }));
+  const updateAdditionalService = (id, patch) => setDraft((d) => ({
+    ...d,
+    additionalServices: (d.additionalServices || []).map((s) => s.id === id ? { ...s, ...patch } : s),
+  }));
+  const removeAdditionalService = (id) => setDraft((d) => ({
+    ...d,
+    additionalServices: (d.additionalServices || []).filter((s) => s.id !== id),
   }));
 
   const isCorporate = kind === "corporate";
@@ -718,6 +772,124 @@ export function ContractEditor({ open, onClose, contract, kind, onSave, onRemove
                     );
                   })}
                 </div>
+
+                {/* Additional services — free-form. Each entry has a
+                    label (the perk itself) and an optional note (frequency,
+                    quantity, restrictions, etc.). The QUICK-PICK row above
+                    the list lets operators add the most common negotiations
+                    in a single tap; anything bespoke goes via the
+                    "+ Custom service" button. */}
+                <div className="mt-5 pt-4" style={{ borderTop: `1px solid ${p.border}` }}>
+                  <div className="flex items-baseline justify-between gap-2 flex-wrap mb-2">
+                    <div>
+                      <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                        Additional services
+                      </div>
+                      <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", marginTop: 4, lineHeight: 1.55 }}>
+                        Bespoke perks negotiated beyond the standard inclusions above — e.g. <strong>2 pc daily laundry</strong>, <strong>office transportation</strong>, <strong>private butler</strong>. Each line is printed on the contract under Inclusions.
+                      </div>
+                    </div>
+                    <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", whiteSpace: "nowrap" }}>
+                      {(draft.additionalServices || []).length} on file
+                    </span>
+                  </div>
+
+                  {/* Quick-pick presets — one-tap add for the negotiations
+                      we see most. Tapping again adds a second entry rather
+                      than removing the first, so an operator can stack
+                      e.g. "2 pc daily laundry" + "3 pc daily laundry" if
+                      they're tiered by season. Custom service uses the
+                      plain "+ Custom service" button below. */}
+                  <div className="flex flex-wrap gap-1.5 mb-3">
+                    {ADDITIONAL_SERVICE_PRESETS.map((preset) => (
+                      <button key={preset.label}
+                        onClick={() => addAdditionalService(preset)}
+                        title={preset.note ? `${preset.label} · ${preset.note}` : preset.label}
+                        style={{
+                          padding: "0.35rem 0.7rem",
+                          backgroundColor: "transparent",
+                          color: p.textSecondary,
+                          border: `1px dashed ${p.border}`,
+                          fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", fontWeight: 600,
+                          cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6,
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = p.accent; e.currentTarget.style.borderColor = p.accent; e.currentTarget.style.borderStyle = "solid"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = p.textSecondary; e.currentTarget.style.borderColor = p.border; e.currentTarget.style.borderStyle = "dashed"; }}
+                      >
+                        <Plus size={10} /> {preset.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Live service list */}
+                  {(draft.additionalServices || []).length === 0 ? (
+                    <div className="px-2 py-5 text-center" style={{
+                      backgroundColor: p.bgPanelAlt, border: `1px dashed ${p.border}`,
+                      color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.82rem",
+                    }}>
+                      No additional services negotiated.
+                      <button
+                        onClick={() => addAdditionalService(null)}
+                        style={{ color: p.accent, fontWeight: 700, marginInlineStart: 6, textDecoration: "underline" }}
+                      >
+                        Add a custom service →
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {(draft.additionalServices || []).map((svc) => (
+                        <div key={svc.id} className="grid gap-2 items-end" style={{
+                          gridTemplateColumns: "minmax(160px, 1.2fr) minmax(160px, 1.6fr) auto",
+                          border: `1px solid ${p.border}`, padding: "0.55rem 0.7rem",
+                          backgroundColor: p.bgPanelAlt,
+                        }}>
+                          <CEField label="Service">
+                            <CEInput
+                              value={svc.label || ""}
+                              onChange={(v) => updateAdditionalService(svc.id, { label: v })}
+                              placeholder="e.g. 2 pc daily laundry"
+                            />
+                          </CEField>
+                          <CEField label="Note (optional)">
+                            <CEInput
+                              value={svc.note || ""}
+                              onChange={(v) => updateAdditionalService(svc.id, { note: v })}
+                              placeholder="Frequency, quantity, restrictions…"
+                            />
+                          </CEField>
+                          <button
+                            onClick={() => removeAdditionalService(svc.id)}
+                            title="Remove service"
+                            style={{
+                              color: p.danger, padding: "0.4rem 0.55rem",
+                              border: `1px solid ${p.border}`, backgroundColor: "transparent",
+                              alignSelf: "end", marginBottom: 0, cursor: "pointer",
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.borderColor = p.danger; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.borderColor = p.border; }}
+                          >
+                            <Trash2 size={11} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={() => addAdditionalService(null)}
+                    className="mt-3 inline-flex items-center gap-1.5"
+                    style={{
+                      padding: "0.4rem 0.85rem", border: `1px solid ${p.accent}`, color: p.accent,
+                      backgroundColor: "transparent",
+                      fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+                      letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <Plus size={11} /> Custom service
+                  </button>
+                </div>
+
                 {/* Meal plans — multi-select. The operator picks every
                     plan negotiated under this {kind} (e.g. BB + HB),
                     then chooses which one pre-fills on new bookings as

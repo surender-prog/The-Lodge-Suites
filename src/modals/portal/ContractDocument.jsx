@@ -315,8 +315,12 @@ export function ContractDocumentView({ contract, kind }) {
         )}
       </div>
 
-      {/* Inclusions */}
-      {Object.values(contract.inclusions || {}).some(Boolean) && (
+      {/* Inclusions — standard toggles + any free-form additional
+          services negotiated under the contract (e.g. 2 pc daily
+          laundry, private butler, office transportation). Renders the
+          combined list as a single bulleted block so the printed
+          contract reads as one negotiated package. */}
+      {(Object.values(contract.inclusions || {}).some(Boolean) || (contract.additionalServices || []).length > 0) && (
         <>
           <h3 style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: "1.4rem", marginTop: 24, marginBottom: 8 }}>Inclusions</h3>
           <ul style={{ margin: 0, paddingInlineStart: 22, lineHeight: 1.7 }}>
@@ -325,6 +329,14 @@ export function ContractDocumentView({ contract, kind }) {
             {contract.inclusions?.parking      && <li>Complimentary on-site parking</li>}
             {contract.inclusions?.wifi         && <li>High-speed Wi-Fi throughout the property</li>}
             {contract.inclusions?.meetingRoom  && <li>Meeting room access (subject to availability)</li>}
+            {(contract.additionalServices || [])
+              .filter((s) => (s.label || "").trim())
+              .map((s) => (
+                <li key={s.id}>
+                  <strong>{s.label}</strong>
+                  {s.note ? <span style={{ color: "#555" }}> — {s.note}</span> : null}
+                </li>
+              ))}
           </ul>
         </>
       )}
@@ -541,13 +553,29 @@ export function buildContractHtml(contract, kind, { hotel, tax, rooms } = {}) {
     </tr>`;
   }).filter(Boolean).join("");
 
-  const incl = [
+  // Standard inclusions — boolean toggles. Each true value adds one
+  // plain-text bullet. Note these are pre-escaped strings: they go
+  // into the <li>${escapeHtml(x)}</li> pipeline below.
+  const inclStd = [
     contract.inclusions?.breakfast    && "Daily breakfast",
     contract.inclusions?.lateCheckOut && "Guaranteed late check-out (subject to availability)",
     contract.inclusions?.parking      && "Complimentary on-site parking",
     contract.inclusions?.wifi         && "High-speed Wi-Fi throughout the property",
     contract.inclusions?.meetingRoom  && "Meeting room access (subject to availability)",
   ].filter(Boolean);
+  // Additional services — bespoke perks captured on the contract
+  // (2 pc daily laundry, private butler, office transportation, …).
+  // Rendered with the label in bold and the optional note in muted
+  // text, so it reads like a hand-typed addendum to the standard
+  // inclusions.
+  const inclExtra = (contract.additionalServices || [])
+    .filter((s) => (s.label || "").trim())
+    .map((s) => `<strong>${escapeHtml(s.label)}</strong>${s.note ? ` <span style="color:#555;">— ${escapeHtml(s.note)}</span>` : ""}`);
+  // Final list — both blocks share one bulleted block on the contract.
+  const inclRows = [
+    ...inclStd.map((x) => escapeHtml(x)),
+    ...inclExtra,
+  ];
 
   const events = (contract.eventSupplements || []).map((evt) => `<tr>
     <td><strong>${escapeHtml(evt.name || "")}</strong></td>
@@ -848,7 +876,7 @@ export function buildContractHtml(contract, kind, { hotel, tax, rooms } = {}) {
       : ""}
   </div>
 
-  ${incl.length > 0 ? `<h3>Inclusions</h3><ul>${incl.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul>` : ""}
+  ${inclRows.length > 0 ? `<h3>Inclusions</h3><ul>${inclRows.map((x) => `<li>${x}</li>`).join("")}</ul>` : ""}
 
   ${(() => {
     // Meal plans section — every available plan (RO is the rack
