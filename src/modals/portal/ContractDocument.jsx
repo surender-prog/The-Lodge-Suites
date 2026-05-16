@@ -1,7 +1,7 @@
 import React from "react";
 import { Download, Mail, Printer, Send, X } from "lucide-react";
 import { usePalette } from "./theme.jsx";
-import { legalLine, summarizeTax, useData, formatCurrency, resolveCurrency, getCurrentCurrency } from "../../data/store.jsx";
+import { legalLine, summarizeTax, useData, formatCurrency, resolveCurrency, getCurrentCurrency, MEAL_PLANS, mealPlanLabel, mealPlanSupplement, enabledMealPlansFor } from "../../data/store.jsx";
 
 // ---------------------------------------------------------------------------
 // ContractDocument — printable contract layout shared between Corporate and
@@ -238,6 +238,59 @@ export function ContractDocumentView({ contract, kind }) {
         </>
       )}
 
+      {/* Meal plan — only rendered when the contract specifies anything
+          other than Room Only. Documents the per-suite supplement so
+          the corporate or agent has a written record of the F&B
+          commitment they agreed to. */}
+      {contract.defaultMealPlan && contract.defaultMealPlan !== "ro" && (() => {
+        const plan = MEAL_PLANS.find((m) => m.code === contract.defaultMealPlan);
+        if (!plan) return null;
+        const rooms = data?.rooms || [];
+        return (
+          <>
+            <h3 style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: "1.4rem", marginTop: 24, marginBottom: 8 }}>
+              Meal plan · {plan.label}
+            </h3>
+            <p style={{ fontSize: "0.84rem", color: "#444", marginBottom: 8 }}>
+              All reservations under this {isCorp ? "agreement" : "contract"} are issued on the <strong>{plan.label}</strong> ({plan.short}) plan by default. {plan.blurb} Per-stay overrides remain available at booking.
+            </p>
+            <table style={tblStyle} cellPadding={0}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>Suite</th>
+                  <th style={thStyle}>Plan</th>
+                  <th style={{ ...thStyle, textAlign: "end" }}>Supplement (per adult / night)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rooms.map((rm) => {
+                  const supp = mealPlanSupplement(rm, plan.code);
+                  return (
+                    <tr key={rm.id}>
+                      <td style={tdStyle}>
+                        <strong>
+                          {rm.id === "studio"    ? "Lodge Studio" :
+                           rm.id === "one-bed"   ? "One-Bedroom Suite" :
+                           rm.id === "two-bed"   ? "Two-Bedroom Suite" :
+                           rm.id === "three-bed" ? "Three-Bedroom Suite" : rm.id}
+                        </strong>
+                      </td>
+                      <td style={tdStyle}>{plan.short} · {plan.label}</td>
+                      <td style={tdNumStyle}>
+                        {supp > 0 ? `+ ${formatCurrency(supp)}` : "Included"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <p style={{ fontSize: "0.78rem", color: "#666", marginTop: 8, lineHeight: 1.6 }}>
+              Supplements are levied per occupying adult per night, in addition to the contracted accommodation rate. Children under 12 dine complimentary from the children's menu under any plan. Plans may be substituted on request subject to the F&amp;B team's confirmation at least 24 hours prior to arrival.
+            </p>
+          </>
+        );
+      })()}
+
       {/* House privileges */}
       <h3 style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: "1.4rem", marginTop: 24, marginBottom: 8 }}>House privileges</h3>
       <ul style={{ margin: 0, paddingInlineStart: 22, lineHeight: 1.7, columns: 2 }}>
@@ -347,7 +400,7 @@ const tdNumStyle = { ...tdStyle, fontVariantNumeric: "tabular-nums", fontWeight:
 // Self-contained HTML for download — produces a styled, printable single
 // HTML file that mirrors <ContractDocumentView />.
 // ---------------------------------------------------------------------------
-export function buildContractHtml(contract, kind, { hotel, tax } = {}) {
+export function buildContractHtml(contract, kind, { hotel, tax, rooms } = {}) {
   // Pull the live tax-summary string from the current Tax Setup if a
   // `tax` config was passed by the caller; otherwise fall back to the
   // bundled-default label so non-React callers (legacy exports) still
@@ -496,6 +549,33 @@ export function buildContractHtml(contract, kind, { hotel, tax } = {}) {
   </div>
 
   ${incl.length > 0 ? `<h3>Inclusions</h3><ul>${incl.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul>` : ""}
+
+  ${(() => {
+    // Meal plan section — only when the contract has agreed an
+    // included plan (anything other than RO). Documents the per-suite
+    // supplement so accounts has the F&B commitment on paper.
+    if (!contract.defaultMealPlan || contract.defaultMealPlan === "ro") return "";
+    const plan = MEAL_PLANS.find((m) => m.code === contract.defaultMealPlan);
+    if (!plan) return "";
+    const roomList = (rooms || []).map((rm) => {
+      const supp = mealPlanSupplement(rm, plan.code);
+      const name = rm.id === "studio"    ? "Lodge Studio"
+                : rm.id === "one-bed"   ? "One-Bedroom Suite"
+                : rm.id === "two-bed"   ? "Two-Bedroom Suite"
+                : rm.id === "three-bed" ? "Three-Bedroom Suite" : rm.id;
+      return `<tr>
+        <td><strong>${escapeHtml(name)}</strong></td>
+        <td>${escapeHtml(plan.short)} · ${escapeHtml(plan.label)}</td>
+        <td class="num">${supp > 0 ? `+ ${escapeHtml(formatCurrency(supp))}` : "Included"}</td>
+      </tr>`;
+    }).join("");
+    return `<h3>Meal plan · ${escapeHtml(plan.label)}</h3>
+      <p class="muted" style="font-size:0.84rem; margin-bottom:8px;">All reservations under this ${isCorp ? "agreement" : "contract"} are issued on the <strong>${escapeHtml(plan.label)}</strong> (${escapeHtml(plan.short)}) plan by default. ${escapeHtml(plan.blurb)} Per-stay overrides remain available at booking.</p>
+      <table><thead><tr><th>Suite</th><th>Plan</th><th>Supplement (per adult / night)</th></tr></thead><tbody>${roomList}</tbody></table>
+      <p style="font-size:0.78rem; color:#666; margin-top:8px; line-height:1.6;">
+        Supplements are levied per occupying adult per night, in addition to the contracted accommodation rate. Children under 12 dine complimentary from the children's menu under any plan. Plans may be substituted on request subject to the F&amp;B team's confirmation at least 24 hours prior to arrival.
+      </p>`;
+  })()}
 
   <h3>House privileges</h3>
   <ul class="cols">
@@ -677,6 +757,7 @@ export function emailContract(contract, kind, hotel, tax) {
 export function ContractPreviewModal({ contract, kind, onClose }) {
   const data = useData();
   const hotel = data?.hotelInfo;
+  const rooms = data?.rooms;
   const p = usePalette();
   if (!contract) return null;
 
@@ -693,8 +774,8 @@ export function ContractPreviewModal({ contract, kind, onClose }) {
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <ToolbarBtn onClick={() => emailContract(contract, kind, hotel)}    icon={Mail}    label="Email" p={p} />
-          <ToolbarBtn onClick={() => downloadContract(contract, kind, { hotel })} icon={Download} label="Download" p={p} primary />
-          <ToolbarBtn onClick={() => printContract(contract, kind, { hotel })}    icon={Printer} label="Print" p={p} />
+          <ToolbarBtn onClick={() => downloadContract(contract, kind, { hotel, rooms })} icon={Download} label="Download" p={p} primary />
+          <ToolbarBtn onClick={() => printContract(contract, kind, { hotel, rooms })}    icon={Printer} label="Print" p={p} />
           <button onClick={onClose}
             className="flex items-center gap-2"
             style={{

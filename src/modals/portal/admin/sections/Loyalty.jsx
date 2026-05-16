@@ -734,7 +734,7 @@ function TiersGrid({ tiers, tierMembers, onEdit, onNew }) {
 // ---------------------------------------------------------------------------
 function TierEditor({ mode, draft: initial, onClose }) {
   const p = usePalette();
-  const { addTier, setTiers, tiers, rooms } = useData();
+  const { addTier, setTiers, tiers, rooms, updateRoom } = useData();
   const [draft, setDraft] = useState(initial);
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
 
@@ -832,11 +832,13 @@ function TierEditor({ mode, draft: initial, onClose }) {
               </FormGroup>
               {/* Live supplement matrix — same component used in the
                   contract editor so corporate / agency / tier defaults
-                  all share one source of truth. */}
+                  all share one source of truth. Inline edit mode lets
+                  the operator update the master from here too. */}
               <MealPlanSupplementMatrix
                 p={p}
                 rooms={rooms}
                 selectedPlan={draft.defaultMealPlan || "ro"}
+                onUpdateRoom={updateRoom}
               />
               <label className="flex items-center gap-2" style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.85rem" }}>
                 <input type="checkbox" checked={!!draft.featured} onChange={(e) => set({ featured: e.target.checked })} />

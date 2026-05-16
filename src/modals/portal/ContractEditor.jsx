@@ -159,7 +159,7 @@ export function ContractEditor({ open, onClose, contract, kind, onSave, onRemove
   // costs across the property's suites. The rates themselves are
   // sourced from each room's `mealPlans` master in Rooms & Rates;
   // edits there flow through here automatically.
-  const { rooms, eventSupplements: masterEvents } = useData();
+  const { rooms, eventSupplements: masterEvents, updateRoom } = useData();
   const [draft, setDraft] = useState(contract);
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
   const setRate = (mapKey, room, value) => setDraft((d) => ({
@@ -659,11 +659,15 @@ export function ContractEditor({ open, onClose, contract, kind, onSave, onRemove
                       sourced from each room's `mealPlans` master in
                       Rooms & Rates. The picked plan column is gold-tinted
                       so the operator immediately sees what they've
-                      committed to. RO is always BHD 0. */}
+                      committed to. RO is always BHD 0. Operators can
+                      flip to inline edit mode to adjust the master
+                      rates directly from the contract (changes affect
+                      every contract / tier / booking — clearly warned). */}
                   <MealPlanSupplementMatrix
                     p={p}
                     rooms={rooms}
                     selectedPlan={draft.defaultMealPlan || "ro"}
+                    onUpdateRoom={updateRoom}
                   />
                 </div>
               </CECard>
@@ -1264,9 +1268,32 @@ function ceTh(p) {
 //   picks a default meal plan) can reuse the exact same matrix without
 //   duplication.
 // ─────────────────────────────────────────────────────────────────────────
-export function MealPlanSupplementMatrix({ p, rooms, selectedPlan }) {
+export function MealPlanSupplementMatrix({ p, rooms, selectedPlan, onUpdateRoom }) {
+  // When `onUpdateRoom` is supplied the matrix offers an inline edit
+  // mode — the operator can adjust per-suite supplements directly from
+  // the contract / tier editor instead of navigating to Rooms & Rates.
+  // Edits write to the MASTER (each room's `mealPlans`) so the change
+  // flows through every contract, agency, tier, and walk-up booking.
+  // Falls back to read-only mode when `onUpdateRoom` is omitted.
+  const [editing, setEditing] = useState(false);
   if (!rooms || rooms.length === 0) return null;
   const sel = selectedPlan || "ro";
+  const canEdit = typeof onUpdateRoom === "function";
+
+  const handleEdit = (room, code, value) => {
+    const next = Number(value);
+    const supplement = Number.isFinite(next) && next >= 0 ? next : 0;
+    const map = { ...(room.mealPlans || {}) };
+    map[code] = { ...(map[code] || { enabled: true }), supplement };
+    onUpdateRoom(room.id, { mealPlans: map });
+  };
+  const toggleEnabled = (room, code) => {
+    const map = { ...(room.mealPlans || {}) };
+    const cur = map[code] || { enabled: true, supplement: 0 };
+    map[code] = { ...cur, enabled: cur.enabled === false };
+    onUpdateRoom(room.id, { mealPlans: map });
+  };
+
   return (
     <div className="mt-4 pt-4" style={{ borderTop: `1px dashed ${p.border}` }}>
       <div className="flex items-baseline justify-between gap-2 flex-wrap mb-2">
@@ -1275,18 +1302,48 @@ export function MealPlanSupplementMatrix({ p, rooms, selectedPlan }) {
             Supplement rates · sourced from room master
           </div>
           <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", marginTop: 3, lineHeight: 1.5 }}>
-            BHD per adult per night, on top of the negotiated rack. Edit the master rates in <strong style={{ color: p.textSecondary }}>Admin → Rooms &amp; Rates → Meal plans</strong>.
+            BHD per adult per night, on top of the negotiated rack. {canEdit ? <>Edit them inline below, or jump to <strong style={{ color: p.textSecondary }}>Admin → Rooms &amp; Rates → Meal plans</strong> for the full master.</> : <>Edit the master rates in <strong style={{ color: p.textSecondary }}>Admin → Rooms &amp; Rates → Meal plans</strong>.</>}
           </div>
         </div>
-        <span style={{
-          color: p.accent, backgroundColor: `${p.accent}10`,
-          border: `1px solid ${p.accent}`,
-          padding: "2px 8px", fontFamily: "'Manrope', sans-serif",
-          fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
-        }}>
-          Picked: {sel.toUpperCase()}
-        </span>
+        <div className="flex items-center gap-2">
+          <span style={{
+            color: p.accent, backgroundColor: `${p.accent}10`,
+            border: `1px solid ${p.accent}`,
+            padding: "2px 8px", fontFamily: "'Manrope', sans-serif",
+            fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+          }}>
+            Picked: {sel.toUpperCase()}
+          </span>
+          {canEdit && (
+            <button
+              onClick={() => setEditing((v) => !v)}
+              style={{
+                color: editing ? p.accent : p.textSecondary,
+                backgroundColor: editing ? `${p.accent}10` : "transparent",
+                border: `1px solid ${editing ? p.accent : p.border}`,
+                padding: "4px 10px", fontFamily: "'Manrope', sans-serif",
+                fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+                cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5,
+              }}
+              onMouseEnter={(e) => { if (!editing) { e.currentTarget.style.color = p.accent; e.currentTarget.style.borderColor = p.accent; } }}
+              onMouseLeave={(e) => { if (!editing) { e.currentTarget.style.color = p.textSecondary; e.currentTarget.style.borderColor = p.border; } }}
+              title="Edit the per-suite supplement rates. Saves to the room master so every contract, tier and booking reflects the change."
+            >
+              {editing ? "✓ Done" : "✎ Edit rates"}
+            </button>
+          )}
+        </div>
       </div>
+
+      {editing && (
+        <div className="mb-3 p-3" style={{
+          backgroundColor: `${p.warn}10`, border: `1px solid ${p.warn}55`,
+          color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.55,
+        }}>
+          <strong>Editing the property master.</strong> Changes save instantly and flow into every contract, agency, tier, and walk-up booking. For a contract-only F&amp;B negotiation, leave the master as-is and adjust the headline rate instead.
+        </div>
+      )}
+
       <div style={{
         border: `1px solid ${p.border}`, overflow: "hidden",
         backgroundColor: p.bgPanel,
@@ -1336,19 +1393,74 @@ export function MealPlanSupplementMatrix({ p, rooms, selectedPlan }) {
                 {MEAL_PLANS.map((m) => {
                   const isSel = m.code === sel;
                   const supp  = mealPlanSupplement(r, m.code);
+                  const entry = (r.mealPlans || {})[m.code];
+                  const disabled = entry?.enabled === false;
+                  const tdBase = {
+                    padding: "8px 10px",
+                    textAlign: "end",
+                    fontVariantNumeric: "tabular-nums",
+                    color: isSel ? p.accent : (supp > 0 ? p.textPrimary : p.textMuted),
+                    fontWeight: isSel ? 700 : 500,
+                    backgroundColor: isSel ? `${p.accent}10` : "transparent",
+                    borderInlineStart: isSel ? `2px solid ${p.accent}` : "none",
+                    borderInlineEnd:   isSel ? `2px solid ${p.accent}` : "none",
+                    fontSize: "0.86rem",
+                  };
+                  if (editing) {
+                    // RO is the rack baseline — always BHD 0 and not editable.
+                    // Every other plan is editable; double-click toggles
+                    // the enabled flag (operator can pull a plan from a
+                    // single suite without losing the supplement value).
+                    if (m.code === "ro") {
+                      return (
+                        <td key={m.code} style={{ ...tdBase, color: p.textMuted }}>—</td>
+                      );
+                    }
+                    return (
+                      <td key={m.code} style={tdBase}>
+                        <div className="inline-flex items-center justify-end gap-1">
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.5"
+                            value={entry?.supplement ?? 0}
+                            onChange={(e) => handleEdit(r, m.code, e.target.value)}
+                            disabled={disabled}
+                            style={{
+                              width: 78, padding: "4px 6px",
+                              backgroundColor: p.inputBg, color: disabled ? p.textMuted : p.textPrimary,
+                              border: `1px solid ${p.border}`,
+                              fontFamily: "'Manrope', sans-serif",
+                              fontVariantNumeric: "tabular-nums",
+                              fontSize: "0.82rem", textAlign: "end",
+                              opacity: disabled ? 0.55 : 1,
+                            }}
+                            title={disabled ? "Plan disabled for this suite — toggle on to re-enable" : "BHD per adult per night"}
+                          />
+                          <button
+                            onClick={() => toggleEnabled(r, m.code)}
+                            title={disabled ? "Enable this plan for this suite" : "Disable this plan for this suite"}
+                            style={{
+                              padding: "2px 6px",
+                              color: disabled ? p.textMuted : p.success,
+                              border: `1px solid ${disabled ? p.border : p.success}`,
+                              backgroundColor: "transparent",
+                              fontFamily: "'Manrope', sans-serif", fontSize: "0.52rem",
+                              letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                              cursor: "pointer", minWidth: 28,
+                            }}
+                          >
+                            {disabled ? "Off" : "On"}
+                          </button>
+                        </div>
+                      </td>
+                    );
+                  }
                   return (
-                    <td key={m.code} style={{
-                      padding: "8px 10px",
-                      textAlign: "end",
-                      fontVariantNumeric: "tabular-nums",
-                      color: isSel ? p.accent : (supp > 0 ? p.textPrimary : p.textMuted),
-                      fontWeight: isSel ? 700 : 500,
-                      backgroundColor: isSel ? `${p.accent}10` : "transparent",
-                      borderInlineStart: isSel ? `2px solid ${p.accent}` : "none",
-                      borderInlineEnd:   isSel ? `2px solid ${p.accent}` : "none",
-                      fontSize: "0.86rem",
-                    }}>
-                      {supp > 0 ? `+ ${formatCurrency(supp)}` : "—"}
+                    <td key={m.code} style={tdBase}>
+                      {disabled ? (
+                        <span style={{ color: p.textMuted, fontStyle: "italic", fontSize: "0.72rem" }}>off</span>
+                      ) : supp > 0 ? `+ ${formatCurrency(supp)}` : "—"}
                     </td>
                   );
                 })}

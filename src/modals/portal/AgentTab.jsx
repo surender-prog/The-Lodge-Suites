@@ -91,7 +91,7 @@ export const AgentTab = () => {
   const p = usePalette();
   const { lang } = useLang();
   const {
-    agencies, upsertAgency, removeAgency, prospects, hotelInfo, tax, addInvoice,
+    agencies, upsertAgency, removeAgency, prospects, hotelInfo, tax, rooms, addInvoice,
     bookings: storeBookings, invoices: storeInvoices,
   } = useData();
   // Build the agent bookings table from live store data. The previous
@@ -452,7 +452,7 @@ export const AgentTab = () => {
                         <RowIconBtn
                           title="Download contract (HTML)"
                           icon={Download}
-                          onClick={() => downloadContract(a, "agent", { hotel: hotelInfo, tax })}
+                          onClick={() => downloadContract(a, "agent", { hotel: hotelInfo, tax, rooms })}
                           p={p}
                         />
                         <RowIconBtn
@@ -956,7 +956,7 @@ export const AgentTab = () => {
                     <td className="px-6 py-3 text-end">
                       <div className="inline-flex items-center gap-1 justify-end">
                         <RowIconBtn title="Preview rate sheet" icon={Eye}      onClick={() => setPreviewing(a)} p={p} />
-                        <RowIconBtn title="Download contract"  icon={Download} onClick={() => downloadContract(a, "agent", { hotel: hotelInfo, tax })} p={p} />
+                        <RowIconBtn title="Download contract"  icon={Download} onClick={() => downloadContract(a, "agent", { hotel: hotelInfo, tax, rooms })} p={p} />
                         <RowIconBtn
                           title={(a.pocEmail || a.contact) ? `Email to ${a.pocEmail || a.contact}` : "No email on file"}
                           icon={Mail}

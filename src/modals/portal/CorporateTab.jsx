@@ -45,7 +45,7 @@ export const CorporateTab = () => {
   const {
     agreements, upsertAgreement, removeAgreement,
     rfps, addRfp, upsertRfp, removeRfp,
-    prospects, hotelInfo, tax,
+    prospects, hotelInfo, tax, rooms,
   } = useData();
   const [view, setView] = useState("dashboard");
   const [submitted, setSubmitted] = useState(false);
@@ -455,7 +455,7 @@ export const CorporateTab = () => {
                         <RowIconBtn
                           title="Download contract (HTML)"
                           icon={Download}
-                          onClick={() => downloadContract(a, "corporate", { hotel: hotelInfo, tax })}
+                          onClick={() => downloadContract(a, "corporate", { hotel: hotelInfo, tax, rooms })}
                           p={p}
                         />
                         <RowIconBtn
