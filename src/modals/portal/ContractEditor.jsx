@@ -1,8 +1,8 @@
 import React, { useMemo, useRef, useState } from "react";
 import {
   AlertCircle, Building2, CalendarDays, Check, Coins, Download, ExternalLink,
-  FileText, Loader2, Mail, MapPin, Paperclip, Percent, Phone, Plus, RotateCcw, Save, Send,
-  Trash2, Upload, User2, X,
+  FileBadge, FileText, Loader2, Mail, MapPin, Paperclip, Percent, Phone, Plus,
+  RotateCcw, Save, Send, Trash2, Upload, User2, X,
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
 import { supabase, SUPABASE_CONFIGURED } from "../../lib/supabase.js";
@@ -71,12 +71,24 @@ const fmtDateShort = (iso) => {
 // file without an auth round-trip. The bucket already exists with policies
 // permitting authenticated uploads/reads, max 10 MB, and a restricted MIME
 // allow-list (PDF + common image types).
-async function uploadSignedContract(file, accountKind, accountId) {
+// Uploads any compliance document attached to a contract (the countersigned
+// agreement itself, the CR certificate, the VAT certificate, etc.) to the
+// existing `contracts` Supabase Storage bucket and returns a long-lived
+// signed URL so the partner portal can render the file without an auth
+// round-trip. The bucket already exists with policies permitting
+// authenticated uploads/reads, max 10 MB, and a restricted MIME
+// allow-list (PDF + common image types).
+//
+//   docKind: "signed-contract" | "cr-certificate" | "vat-certificate"
+//
+// The storage path keeps a stable prefix per accountKind/accountId so a
+// new upload of the same kind replaces the previous file (via upsert).
+async function uploadComplianceDoc(file, accountKind, accountId, docKind) {
   if (!supabase) {
     throw new Error("Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env.local.");
   }
   const ext = (file.name.match(/\.[a-z0-9]+$/i)?.[0] || "").toLowerCase();
-  const path = `${accountKind}/${accountId}/signed-contract-${Date.now()}${ext}`;
+  const path = `${accountKind}/${accountId}/${docKind}-${Date.now()}${ext}`;
   const { error: uploadErr } = await supabase.storage
     .from("contracts")
     .upload(path, file, { upsert: true, cacheControl: "3600" });
@@ -94,6 +106,12 @@ async function uploadSignedContract(file, accountKind, accountId) {
     path,
   };
 }
+
+// Back-compat alias for the original helper signature — still used by
+// SignedContractCard further down. New consumers should call
+// uploadComplianceDoc directly with an explicit docKind.
+const uploadSignedContract = (file, accountKind, accountId) =>
+  uploadComplianceDoc(file, accountKind, accountId, "signed-contract");
 
 const MAX_CONTRACT_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB — matches bucket policy
 const ALLOWED_CONTRACT_MIME = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
@@ -160,6 +178,21 @@ export function defaultCorporateDraft(existingIds = []) {
     weekendRates: { studio: 0, oneBed: 0, twoBed: 0, threeBed: 0 },
     monthlyRates: { studio: 0, oneBed: 0, twoBed: 0, threeBed: 0 },
     weekendUpliftPct: 0, taxIncluded: false, accommodationFee: 0,
+    // Statutory registration on file — required for direct-billing
+    // partners. CR (Commercial Registration) + VAT are kept with their
+    // expiry dates so the renewal dashboard can flag accounts whose
+    // documents lapse before the contract does. Certificates upload to
+    // the same `contracts` Supabase Storage bucket as the signed
+    // contract; per-doc URL / filename / uploadedAt / path captured so
+    // the partner portal can render them without a re-auth.
+    crNumber: "", crExpiry: "",
+    crCertificateUrl: null, crCertificateFilename: null, crCertificateUploadedAt: null, crCertificatePath: null,
+    vatNumber: "", vatExpiry: "",
+    vatCertificateUrl: null, vatCertificateFilename: null, vatCertificateUploadedAt: null, vatCertificatePath: null,
+    // Registered company address — used on the printable contract +
+    // every billing document. Multi-line free text so the operator can
+    // mirror exactly what's on the CR certificate.
+    companyAddress: "",
     inclusions: { breakfast: false, lateCheckOut: false, parking: true, wifi: true, meetingRoom: false },
     // Meal plans negotiated under this contract. `availablePlans` is
     // the full menu the corporate / agency can pick from at booking
@@ -191,6 +224,14 @@ export function defaultAgencyDraft(existingIds = []) {
     weekendNet: { studio: 0, oneBed: 0, twoBed: 0, threeBed: 0 },
     monthlyNet: { studio: 0, oneBed: 0, twoBed: 0, threeBed: 0 },
     weekendUpliftPct: 0, taxIncluded: false, accommodationFee: 0,
+    // Statutory registration on file — see the corporate template
+    // above for the field shape. Agencies typically carry both a
+    // local CR and a VAT registration in their licensing jurisdiction.
+    crNumber: "", crExpiry: "",
+    crCertificateUrl: null, crCertificateFilename: null, crCertificateUploadedAt: null, crCertificatePath: null,
+    vatNumber: "", vatExpiry: "",
+    vatCertificateUrl: null, vatCertificateFilename: null, vatCertificateUploadedAt: null, vatCertificatePath: null,
+    companyAddress: "",
     // See the corporate template for the availablePlans / defaultMealPlan
     // contract. Agencies often quote BB nets to their leisure clients;
     // admin can flip per-contract here.
@@ -408,6 +449,14 @@ export function ContractEditor({ open, onClose, contract, kind, onSave, onRemove
                   </CEField>
                 </div>
               </CECard>
+
+              {/* Compliance / Statutory registration */}
+              <ComplianceCard
+                draft={draft}
+                set={set}
+                accountKind={kind === "corporate" ? "agreements" : "agencies"}
+                p={p}
+              />
 
               {/* Term */}
               <CECard title="Term" icon={CalendarDays}>
@@ -1033,6 +1082,335 @@ function PreviewRow({ label, value, mono, bold, accent, muted }) {
         fontVariantNumeric: "tabular-nums", textAlign: "end",
       }}>{value}</span>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────
+// ComplianceCard — statutory registration block on every corporate /
+// agency contract. Operators capture:
+//   • Commercial Registration (CR) number + expiry + uploaded certificate
+//   • VAT registration number + expiry + uploaded certificate
+//   • Company address as it appears on the CR (free-text multi-line)
+//
+// All three pieces are required by Bahraini accounting for direct-billing
+// partners. Expiry dates drive a renewal warning chip (amber within 30
+// days, red once lapsed) so the renewal dashboard can flag accounts that
+// will lose their billing privilege before the contract itself expires.
+// ─────────────────────────────────────────────────────────────────────────
+function ComplianceCard({ draft, set, accountKind, p }) {
+  return (
+    <CECard title="Statutory registration" icon={FileBadge}
+      action={<ComplianceExpiryChips draft={draft} p={p} />}
+    >
+      <div className="space-y-5">
+        {/* CR row */}
+        <ComplianceRow
+          p={p}
+          label="Commercial Registration (CR)"
+          numberField="crNumber"
+          numberPlaceholder="e.g. 12345-1"
+          expiryField="crExpiry"
+          urlField="crCertificateUrl"
+          filenameField="crCertificateFilename"
+          uploadedAtField="crCertificateUploadedAt"
+          pathField="crCertificatePath"
+          docKind="cr-certificate"
+          draft={draft}
+          set={set}
+          accountKind={accountKind}
+        />
+        {/* VAT row */}
+        <ComplianceRow
+          p={p}
+          label="VAT Registration"
+          numberField="vatNumber"
+          numberPlaceholder="e.g. 200012345600002"
+          expiryField="vatExpiry"
+          urlField="vatCertificateUrl"
+          filenameField="vatCertificateFilename"
+          uploadedAtField="vatCertificateUploadedAt"
+          pathField="vatCertificatePath"
+          docKind="vat-certificate"
+          draft={draft}
+          set={set}
+          accountKind={accountKind}
+        />
+        {/* Company address */}
+        <div>
+          <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
+            Registered company address
+          </div>
+          <textarea
+            value={draft.companyAddress || ""}
+            onChange={(e) => set({ companyAddress: e.target.value })}
+            rows={3}
+            placeholder={"Building / road · area / block · city · country\nas it appears on the CR certificate"}
+            className="w-full outline-none"
+            style={{
+              backgroundColor: p.inputBg, color: p.textPrimary,
+              border: `1px solid ${p.border}`, padding: "0.55rem 0.75rem",
+              fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem",
+              lineHeight: 1.55, resize: "vertical",
+            }}
+          />
+          <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", marginTop: 4, lineHeight: 1.55 }}>
+            Mirrored on the printable contract's "Issued to" header and on every billing document for this partner. Keep it identical to the CR certificate so banking matches.
+          </div>
+        </div>
+      </div>
+    </CECard>
+  );
+}
+
+// One row inside the ComplianceCard — number input + date input + upload
+// affordance. Re-used for CR and VAT so the two rows render identically.
+function ComplianceRow({
+  p, label, numberField, numberPlaceholder, expiryField,
+  urlField, filenameField, uploadedAtField, pathField, docKind,
+  draft, set, accountKind,
+}) {
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const hasFile  = !!draft[urlField];
+  const expiry   = draft[expiryField] || "";
+  const expiryState = computeExpiryState(expiry);
+
+  const handleFiles = async (files) => {
+    const file = files?.[0];
+    if (!file) return;
+    if (!SUPABASE_CONFIGURED) {
+      pushToast({ message: "Supabase isn't configured — uploads are disabled in this environment.", kind: "error" });
+      return;
+    }
+    if (file.size > MAX_CONTRACT_UPLOAD_BYTES) {
+      pushToast({ message: "File too large. Max 10 MB.", kind: "error" });
+      return;
+    }
+    if (file.type && !ALLOWED_CONTRACT_MIME.includes(file.type)) {
+      pushToast({ message: "Unsupported file type. Use PDF or an image.", kind: "error" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const { url, filename, uploadedAt, path } = await uploadComplianceDoc(file, accountKind, draft.id, docKind);
+      set({
+        [urlField]: url,
+        [filenameField]: filename,
+        [uploadedAtField]: uploadedAt,
+        [pathField]: path,
+      });
+      pushToast({ message: `${label} uploaded · ${filename}` });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[ContractEditor] compliance upload failed", err);
+      pushToast({ message: `Upload failed · ${err?.message || "unknown error"}`, kind: "error" });
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  };
+
+  const clear = () => {
+    if (!confirm(`Remove the uploaded ${label} certificate from this record? The file in storage will be left in place.`)) return;
+    set({
+      [urlField]: null,
+      [filenameField]: null,
+      [uploadedAtField]: null,
+      [pathField]: null,
+    });
+    pushToast({ message: `${label} certificate detached. Remember to save.` });
+  };
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-3 flex-wrap mb-2">
+        <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+          {label}
+        </div>
+        {expiryState.chip && (
+          <span style={{
+            color: expiryState.color, backgroundColor: `${expiryState.color}10`,
+            border: `1px solid ${expiryState.color}`,
+            padding: "2px 7px", fontFamily: "'Manrope', sans-serif",
+            fontSize: "0.56rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+          }}>
+            {expiryState.chip}
+          </span>
+        )}
+      </div>
+      <div className="grid sm:grid-cols-[1.4fr,1fr] gap-3">
+        <CEField label="Number">
+          <CEInput
+            value={draft[numberField] || ""}
+            onChange={(v) => set({ [numberField]: v })}
+            placeholder={numberPlaceholder}
+          />
+        </CEField>
+        <CEField label="Expires on">
+          <CEInput
+            type="date"
+            value={expiry}
+            onChange={(v) => set({ [expiryField]: v })}
+          />
+        </CEField>
+      </div>
+      {/* Upload widget */}
+      <div className="mt-3">
+        <input
+          ref={inputRef}
+          type="file"
+          accept="application/pdf,image/*"
+          className="hidden"
+          onChange={(e) => handleFiles(e.target.files)}
+        />
+        {hasFile ? (
+          <div className="flex items-start gap-3 flex-wrap" style={{
+            padding: "0.7rem 0.85rem",
+            backgroundColor: p.bgPanelAlt,
+            border: `1px solid ${p.border}`,
+          }}>
+            <FileText size={18} style={{ color: p.accent, flexShrink: 0, marginTop: 2 }} />
+            <div className="min-w-0 flex-1">
+              <div style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.82rem", fontWeight: 700, wordBreak: "break-word" }}>
+                {draft[filenameField] || "Certificate"}
+              </div>
+              <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", marginTop: 2 }}>
+                {draft[uploadedAtField]
+                  ? <>Uploaded · {fmtDateShort(draft[uploadedAtField].slice(0, 10))}</>
+                  : "Uploaded"}
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <a
+                href={draft[urlField]}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5"
+                style={{
+                  padding: "0.3rem 0.7rem", border: `1px solid ${p.accent}`, color: p.accent,
+                  fontFamily: "'Manrope', sans-serif", fontSize: "0.58rem",
+                  letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                  textDecoration: "none",
+                }}
+              >
+                <ExternalLink size={10} /> Open
+              </a>
+              <button
+                onClick={() => inputRef.current?.click()}
+                disabled={busy}
+                className="inline-flex items-center gap-1.5"
+                style={{
+                  padding: "0.3rem 0.7rem", border: `1px solid ${p.border}`, color: p.textSecondary,
+                  fontFamily: "'Manrope', sans-serif", fontSize: "0.58rem",
+                  letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                  cursor: busy ? "wait" : "pointer", opacity: busy ? 0.7 : 1,
+                  backgroundColor: "transparent",
+                }}
+                onMouseEnter={(e) => { if (!busy) { e.currentTarget.style.borderColor = p.accent; e.currentTarget.style.color = p.accent; } }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = p.border; e.currentTarget.style.color = p.textSecondary; }}
+              >
+                {busy ? <Loader2 size={10} className="animate-spin" /> : <Upload size={10} />} Replace
+              </button>
+              <button
+                onClick={clear}
+                disabled={busy}
+                title={`Detach uploaded ${label} certificate`}
+                className="inline-flex items-center"
+                style={{
+                  padding: "0.3rem 0.45rem", border: `1px solid ${p.border}`, color: p.danger,
+                  backgroundColor: "transparent",
+                  cursor: busy ? "wait" : "pointer", opacity: busy ? 0.7 : 1,
+                }}
+                onMouseEnter={(e) => { if (!busy) e.currentTarget.style.borderColor = p.danger; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = p.border; }}
+              >
+                <Trash2 size={10} />
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={busy}
+            className="w-full flex items-center justify-center gap-3"
+            style={{
+              padding: "0.9rem 1rem",
+              backgroundColor: p.bgPanelAlt,
+              border: `1.5px dashed ${p.border}`,
+              cursor: busy ? "wait" : "pointer",
+              opacity: busy ? 0.7 : 1,
+              fontFamily: "'Manrope', sans-serif",
+            }}
+            onMouseEnter={(e) => { if (!busy) e.currentTarget.style.borderColor = p.accent; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = p.border; }}
+          >
+            {busy ? <Loader2 size={14} className="animate-spin" style={{ color: p.accent }} /> : <Upload size={14} style={{ color: p.accent }} />}
+            <div className="text-start">
+              <div style={{ color: p.textPrimary, fontSize: "0.8rem", fontWeight: 700 }}>
+                {busy ? "Uploading…" : `Upload ${label} certificate`}
+              </div>
+              <div style={{ color: p.textMuted, fontSize: "0.68rem", marginTop: 1 }}>
+                PDF or image · max 10 MB
+              </div>
+            </div>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Renders a small expiry-status chip per compliance row. Returns null
+// (i.e. nothing rendered) when no expiry is set so a fresh draft
+// doesn't show a green "valid" badge before the operator has filled
+// anything in.
+function computeExpiryState(iso) {
+  if (!iso) return { chip: null };
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const exp = new Date(iso); exp.setHours(0, 0, 0, 0);
+  const daysLeft = Math.ceil((exp - today) / 86400000);
+  if (daysLeft < 0)  return { chip: `Expired ${Math.abs(daysLeft)}d ago`, color: "#9A3A30" };
+  if (daysLeft === 0) return { chip: "Expires today", color: "#B8852E" };
+  if (daysLeft <= 30) return { chip: `Expires in ${daysLeft}d`, color: "#B8852E" };
+  return { chip: `Valid · ${daysLeft}d left`, color: "#5C8A4E" };
+}
+
+// Header chip for the ComplianceCard that aggregates CR + VAT status.
+// Shows red when either is expired, amber when either is within 30
+// days, and a quiet "On file" pill when both are valid (and uploaded).
+function ComplianceExpiryChips({ draft, p }) {
+  const cr  = computeExpiryState(draft.crExpiry);
+  const vat = computeExpiryState(draft.vatExpiry);
+  const worst = [cr, vat]
+    .filter((s) => s.chip)
+    .reduce((acc, s) => {
+      if (!acc) return s;
+      // Red > Amber > Green priority
+      const order = { "#9A3A30": 3, "#B8852E": 2, "#5C8A4E": 1 };
+      return (order[s.color] || 0) > (order[acc.color] || 0) ? s : acc;
+    }, null);
+  if (!worst) return null;
+  // Label uses CR / VAT shorthand for the worst-state document so the
+  // operator immediately knows which one to chase.
+  const tag = (() => {
+    const worstIsCR  = worst === cr;
+    const worstIsVAT = worst === vat;
+    if (worstIsCR && worstIsVAT) return "CR/VAT";
+    if (worstIsCR)  return "CR";
+    if (worstIsVAT) return "VAT";
+    return "";
+  })();
+  return (
+    <span style={{
+      color: worst.color, backgroundColor: `${worst.color}10`,
+      border: `1px solid ${worst.color}`,
+      padding: "2px 8px", fontFamily: "'Manrope', sans-serif",
+      fontSize: "0.58rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+    }}>
+      {tag} · {worst.chip}
+    </span>
   );
 }
 

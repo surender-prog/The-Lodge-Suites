@@ -381,6 +381,7 @@ export const AgentTab = () => {
                               padding: "1px 6px", color: p.warn, border: `1px solid ${p.warn}`,
                             }}>+{a.eventSupplements.length} evt</span>
                         )}
+                        <AgentCrVatExpiryPill agency={a} p={p} />
                       </div>
                     </td>
                     <td className="px-3 py-3" style={{ whiteSpace: "nowrap" }}>
@@ -1760,5 +1761,38 @@ function RowIconBtn({ title, icon: Icon, onClick, p, disabled }) {
     >
       <Icon size={12} />
     </button>
+  );
+}
+
+// Compact CR / VAT expiry chip on the agency list rows. Mirrors the
+// pill on CorporateTab — surfaces a renewal cue (amber within 30 days,
+// red once lapsed) so the operator spots the document before they
+// quote the agency a new rate that the bank later rejects.
+function AgentCrVatExpiryPill({ agency, p }) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const state = (iso, tag) => {
+    if (!iso) return null;
+    const d = new Date(iso); d.setHours(0, 0, 0, 0);
+    const left = Math.ceil((d - today) / 86400000);
+    if (left < 0)   return { rank: 3, color: "#9A3A30", label: `${tag} expired`,         title: `${tag} certificate expired ${Math.abs(left)} days ago` };
+    if (left <= 30) return { rank: 2, color: "#B8852E", label: `${tag} expires ${left}d`, title: `${tag} certificate expires in ${left} days` };
+    return null;
+  };
+  const cr  = state(agency.crExpiry,  "CR");
+  const vat = state(agency.vatExpiry, "VAT");
+  const worst = !cr && !vat ? null : !cr ? vat : !vat ? cr : (cr.rank >= vat.rank ? cr : vat);
+  if (!worst) return null;
+  return (
+    <span
+      title={worst.title}
+      style={{
+        fontSize: "0.55rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+        padding: "1px 6px",
+        color: worst.color, border: `1px solid ${worst.color}`,
+        backgroundColor: `${worst.color}10`,
+      }}
+    >
+      {worst.label}
+    </span>
   );
 }

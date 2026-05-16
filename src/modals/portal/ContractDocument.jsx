@@ -113,6 +113,34 @@ export function ContractDocumentView({ contract, kind }) {
           <div style={{ fontSize: "0.62rem", letterSpacing: "0.28em", textTransform: "uppercase", fontWeight: 700, color: "#8A7A4F", marginBottom: 6 }}>Issued to</div>
           <div style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: "1.4rem", fontWeight: 600 }}>{r.name || "—"}</div>
           {isCorp && r.industry && <div style={{ color: "#444", fontSize: "0.78rem" }}>{r.industry}</div>}
+          {/* Registered address — mirrored from the partner's CR
+              certificate. Multi-line so we render each line cleanly
+              with whitespace preserved. */}
+          {contract.companyAddress && (
+            <div style={{ color: "#444", fontSize: "0.78rem", marginTop: 6, whiteSpace: "pre-line", lineHeight: 1.5 }}>
+              {contract.companyAddress}
+            </div>
+          )}
+          {/* Statutory IDs — CR + VAT. We render them on every contract
+              so the partner's bank / accounts has the legal record at
+              the top of the document. Expiry dates included for the
+              hotel's own renewal-tracking dashboard; redacted from
+              the printed copy via a small caption only on signed
+              documents (handled by the operator). */}
+          {(contract.crNumber || contract.vatNumber) && (
+            <div style={{ color: "#444", fontSize: "0.78rem", marginTop: 8, lineHeight: 1.55 }}>
+              {contract.crNumber && (
+                <div>CR No.: <strong style={{ color: "#15161A" }}>{contract.crNumber}</strong>
+                  {contract.crExpiry && <span style={{ color: "#888", marginInlineStart: 6 }}>· valid to {fmtDate(contract.crExpiry)}</span>}
+                </div>
+              )}
+              {contract.vatNumber && (
+                <div>VAT No.: <strong style={{ color: "#15161A" }}>{contract.vatNumber}</strong>
+                  {contract.vatExpiry && <span style={{ color: "#888", marginInlineStart: 6 }}>· valid to {fmtDate(contract.vatExpiry)}</span>}
+                </div>
+              )}
+            </div>
+          )}
           {contract.pocName  && <div style={{ marginTop: 8 }}>Attn: <strong>{contract.pocName}</strong></div>}
           {contract.pocEmail && <div style={{ color: "#444" }}>{contract.pocEmail}</div>}
           {contract.pocPhone && <div style={{ color: "#444" }}>{contract.pocPhone}</div>}
@@ -515,6 +543,11 @@ export function buildContractHtml(contract, kind, { hotel, tax, rooms } = {}) {
       <div class="eyebrow" style="margin-bottom:6px;">Issued to</div>
       <div class="display" style="font-size:1.4rem;">${escapeHtml(r.name || "—")}</div>
       ${isCorp && r.industry ? `<div class="muted" style="font-size:0.78rem;">${escapeHtml(r.industry)}</div>` : ""}
+      ${contract.companyAddress ? `<div class="muted" style="font-size:0.78rem;margin-top:6px;white-space:pre-line;line-height:1.5;">${escapeHtml(contract.companyAddress)}</div>` : ""}
+      ${(contract.crNumber || contract.vatNumber) ? `<div class="muted" style="font-size:0.78rem;margin-top:8px;line-height:1.55;">
+        ${contract.crNumber ? `<div>CR No.: <strong style="color:#15161A;">${escapeHtml(contract.crNumber)}</strong>${contract.crExpiry ? `<span style="color:#888;margin-left:6px;">· valid to ${escapeHtml(fmtDate(contract.crExpiry))}</span>` : ""}</div>` : ""}
+        ${contract.vatNumber ? `<div>VAT No.: <strong style="color:#15161A;">${escapeHtml(contract.vatNumber)}</strong>${contract.vatExpiry ? `<span style="color:#888;margin-left:6px;">· valid to ${escapeHtml(fmtDate(contract.vatExpiry))}</span>` : ""}</div>` : ""}
+      </div>` : ""}
       ${contract.pocName  ? `<div style="margin-top:8px;">Attn: <strong>${escapeHtml(contract.pocName)}</strong></div>` : ""}
       ${contract.pocEmail ? `<div class="muted">${escapeHtml(contract.pocEmail)}</div>` : ""}
       ${contract.pocPhone ? `<div class="muted">${escapeHtml(contract.pocPhone)}</div>` : ""}

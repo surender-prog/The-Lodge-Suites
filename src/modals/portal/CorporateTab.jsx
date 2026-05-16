@@ -387,6 +387,7 @@ export const CorporateTab = () => {
                               padding: "1px 6px", color: p.warn, border: `1px solid ${p.warn}`,
                             }}>+{a.eventSupplements.length} evt</span>
                         )}
+                        <CrVatExpiryPill agreement={a} p={p} />
                       </div>
                     </td>
                     <td className="px-3 py-3" style={{ whiteSpace: "nowrap" }}>
@@ -1367,4 +1368,50 @@ function RowIconBtn({ title, icon: Icon, onClick, p, disabled }) {
       <Icon size={12} />
     </button>
   );
+}
+
+// CrVatExpiryPill — renders a tiny chip on a contract row when either
+// the CR or VAT registration is expired / expiring within 30 days. The
+// chip carries the worst-state document (red beats amber). Returns
+// nothing when both are valid (or no expiry has been set yet) so a
+// freshly-loaded contract doesn't show a "compliant" badge that the
+// operator hasn't earned.
+function CrVatExpiryPill({ agreement, p }) {
+  const state = worstComplianceExpiry(agreement);
+  if (!state) return null;
+  return (
+    <span
+      title={state.title}
+      style={{
+        fontSize: "0.55rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+        padding: "1px 6px",
+        color: state.color, border: `1px solid ${state.color}`,
+        backgroundColor: `${state.color}10`,
+      }}
+    >
+      {state.label}
+    </span>
+  );
+}
+
+// Pure helper — returns null when both CR + VAT are valid (or empty),
+// otherwise the worst-state chip metadata. Exported as a function-level
+// helper so AgentTab can reuse it via copy-paste; if either consumer
+// grows another it should be lifted into a shared module.
+function worstComplianceExpiry(contract) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const stateFor = (iso, tag) => {
+    if (!iso) return null;
+    const d = new Date(iso); d.setHours(0, 0, 0, 0);
+    const left = Math.ceil((d - today) / 86400000);
+    if (left < 0)   return { rank: 3, color: "#9A3A30", label: `${tag} expired`,         title: `${tag} certificate expired ${Math.abs(left)} days ago` };
+    if (left <= 30) return { rank: 2, color: "#B8852E", label: `${tag} expires ${left}d`, title: `${tag} certificate expires in ${left} days` };
+    return null;
+  };
+  const cr  = stateFor(contract.crExpiry,  "CR");
+  const vat = stateFor(contract.vatExpiry, "VAT");
+  if (!cr && !vat) return null;
+  if (!cr) return vat;
+  if (!vat) return cr;
+  return cr.rank >= vat.rank ? cr : vat;
 }
