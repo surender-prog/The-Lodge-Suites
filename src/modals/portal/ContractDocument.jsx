@@ -479,10 +479,11 @@ export function ContractDocumentView({ contract, kind }) {
         </div>
       </div>
 
-      {/* Footer */}
-      <div style={{ marginTop: 36, paddingTop: 14, borderTop: "1px solid #C9A961", fontSize: "0.7rem", color: "#666", textAlign: "center", letterSpacing: "0.05em" }}>
-        {HOTEL.name} · {HOTEL.address}, {HOTEL.area} · {HOTEL.country} · {HOTEL.phone} · {HOTEL.email} · {HOTEL.website}
-      </div>
+      {/* Inline footer removed — the running footer band at the
+          bottom of the preview (and the @page @bottom-* margin
+          boxes in print) carry the legal line + page number on
+          every page. Keeping the inline footer here showed the
+          legal info twice on page 1. */}
     </div>
   );
 }
@@ -632,7 +633,7 @@ export function buildContractHtml(contract, kind, { hotel, tax, rooms } = {}) {
 
   /* Screen preview — render the document as stacked A4 sheets so
      operators see exactly what'll come out of the printer. Each
-     `.page` is a 210 × 297 mm card with the same inner padding
+     .page element is a 210 × 297 mm card with the same inner padding
      (16mm sides, 22mm top/bottom) that print uses. */
   .page {
     width: 210mm;
