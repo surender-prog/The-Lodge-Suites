@@ -12,7 +12,8 @@ import {
   whatsAppShareUrl, emailShareUrl, nativeShare, downloadBlob, tierVisuals, hotel,
 } from "../utils/membershipPass.js";
 import { useT } from "../i18n/LanguageContext.jsx";
-import { useData, applyTaxes, priceExtra, priceLabelFor, legalLine, roomFitsParty, buildCardOnFile, nightlyBreakdown, formatCurrency, resolveCurrency } from "../data/store.jsx";
+import { useData, applyTaxes, priceExtra, priceLabelFor, legalLine, roomFitsParty, buildCardOnFile, nightlyBreakdown, formatCurrency, resolveCurrency, MEAL_PLANS, mealPlanSupplement, mealPlanLabel, enabledMealPlansFor } from "../data/store.jsx";
+import { ensurePlanList, resolveDefaultPlan } from "./portal/ContractEditor.jsx";
 import { Icon as ExtraIcon } from "../components/Icon.jsx";
 import { PortalThemeProvider, ThemeToggle, usePalette } from "./portal/theme.jsx";
 import { ToastHost, pushToast } from "./portal/admin/ui.jsx";
@@ -2740,6 +2741,34 @@ function BookStayTab({ session, kind, account, onComplete }) {
   const [requestNotes, setRequestNotes] = useState("");
   const [confirmation, setConfirmation] = useState(null);
 
+  // Meal plans available under this account / agency / tier. For
+  // corporate + agent we read straight off the contract; for members
+  // we look up the matching tier. Default to RO if nothing's been
+  // negotiated. The picker on Step 3 narrows to this list so the
+  // booker only sees the plans actually agreed.
+  const accountTierRec = kind === "member"
+    ? (tiers || []).find((t) => t.id === account?.tier)
+    : null;
+  const accountPlanSource = kind === "member" ? accountTierRec : account;
+  const accountAvailablePlans = useMemo(
+    () => ensurePlanList(accountPlanSource?.availablePlans, accountPlanSource?.defaultMealPlan),
+    [accountPlanSource]
+  );
+  const accountDefaultPlan = useMemo(
+    () => resolveDefaultPlan(accountPlanSource?.availablePlans, accountPlanSource?.defaultMealPlan),
+    [accountPlanSource]
+  );
+  const [mealPlan, setMealPlan] = useState(accountDefaultPlan || "ro");
+  // Keep mealPlan in sync when the source list updates (e.g. operator
+  // edits the contract mid-session). Falls back to the default when
+  // the current pick is no longer in the available set.
+  useEffect(() => {
+    if (!accountAvailablePlans.includes(mealPlan)) {
+      setMealPlan(accountDefaultPlan || "ro");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountAvailablePlans.join("|"), accountDefaultPlan]);
+
   // Pre-payment branch — when the partner's underlying contract is on
   // "Pre-payment (cash)" terms (corporate or agency), surface the same
   // Pay-on-arrival / Pay-now-save-5% choice the public B2C BookingModal
@@ -2887,6 +2916,22 @@ function BookStayTab({ session, kind, account, onComplete }) {
   const extrasList = (activeExtras || []).filter((e) => pickedExtras[e.id]);
   const extrasTotal = extrasList.reduce((sum, e) => sum + priceExtra(e, { adults: partySize, nights: Math.max(1, nights) }), 0);
 
+  // Meal plan supplement folded into the subtotal. Walks every booking
+  // line and applies the picked plan's per-adult-per-night supplement
+  // to that suite's adult headcount × nights × quantity. RO is always
+  // free (supplement = 0).
+  const mealPlanTotal = useMemo(() => {
+    if (!mealPlan || mealPlan === "ro") return 0;
+    return Math.round(stayTotals.reduce((sum, s) => {
+      const room = rooms.find((r) => r.id === s.roomId);
+      const supp = mealPlanSupplement(room, mealPlan);
+      if (!supp) return sum;
+      const qty   = Number(s.quantity) || 1;
+      const adultsPerLine = Number(s.adults) || 0;
+      return sum + (supp * adultsPerLine * Math.max(1, nights) * qty);
+    }, 0));
+  }, [mealPlan, stayTotals, rooms, nights]);
+
   // Pay-now incentive — 5% off the room subtotal when a pre-payment-
   // contracted partner opts to settle at booking. Mirrors the public
   // BookingModal so the saving is the same across surfaces. Does not stack
@@ -2897,10 +2942,11 @@ function BookStayTab({ session, kind, account, onComplete }) {
 
   const taxIncluded = kind !== "member" && !!account.taxIncluded;
   const roomsAfterDiscount = Math.max(0, subTotalRoom - payNowDiscount);
+  const taxableBase = roomsAfterDiscount + extrasTotal + mealPlanTotal;
   const taxBreakdown = taxIncluded
-    ? { totalTax: 0, gross: roomsAfterDiscount + extrasTotal }
-    : applyTaxes(roomsAfterDiscount + extrasTotal, tax, Math.max(1, nights));
-  const grandTotal = taxIncluded ? roomsAfterDiscount + extrasTotal : taxBreakdown.gross;
+    ? { totalTax: 0, gross: taxableBase }
+    : applyTaxes(taxableBase, tax, Math.max(1, nights));
+  const grandTotal = taxIncluded ? taxableBase : taxBreakdown.gross;
 
   const tier = kind === "member" ? tiers.find((t) => t.id === account.tier) : null;
   const pointsEarned = kind === "member" && tier ? Math.round((tier.earnRate || 1) * grandTotal) : 0;
@@ -3019,8 +3065,24 @@ function BookStayTab({ session, kind, account, onComplete }) {
     // Pattern lookup once per confirm() — every per-line booking gets the
     // same pattern stamp.
     const activePattern = (taxPatterns || []).find((p) => p.id === activePatternId);
+    // Per-line meal-plan supplement — distribute proportionally so a
+    // 2-suite booking's meal cost is split across the lines. Computed
+    // from this line's adults × nights × per-suite supplement; total
+    // across all lines must match the headline mealPlanTotal.
+    const planLineCostFor = (s, qty) => {
+      if (!mealPlan || mealPlan === "ro") return 0;
+      const room = rooms.find((r) => r.id === s.roomId);
+      const supp = mealPlanSupplement(room, mealPlan);
+      if (!supp) return 0;
+      const adultsLine = Number(s.adults) || 0;
+      return Math.round(supp * adultsLine * Math.max(1, nights) * qty);
+    };
     stayTotals.forEach((s) => {
       const qty = Number(s.quantity) || 1;
+      // Total meal-plan supplement allocated to all `qty` units of this
+      // stay (we then divide by qty when stamping each booking).
+      const stayMealTotal = planLineCostFor(s, qty);
+      const perUnitMealCost = qty > 0 ? Math.round((stayMealTotal / qty) * 1000) / 1000 : 0;
       for (let i = 0; i < qty; i++) {
         // Weekday/weekend-aware suite charge — sum of nightly rates from
         // the breakdown rather than a single rate × nights, so a stay
@@ -3030,11 +3092,12 @@ function BookStayTab({ session, kind, account, onComplete }) {
         const roomTotal = Math.max(0, roomTotalGross - lineDiscount);
         const isLead = !extrasAttached;
         const lineExtras = isLead ? extrasTotal : 0;
+        const lineMealPlanTotal = perUnitMealCost;
         // Run the configured tax pattern once for this line and keep both
         // the totalTax (for the row total) and the per-component lines so
         // the Tax Report can aggregate. Tax-included contracts emit an
         // empty lines array and zero amount.
-        const lineTaxBase = roomTotal + lineExtras;
+        const lineTaxBase = roomTotal + lineExtras + lineMealPlanTotal;
         const lineTaxResult = taxIncluded
           ? { totalTax: 0, lines: [] }
           : applyTaxes(lineTaxBase, tax, Math.max(1, nights));
@@ -3046,7 +3109,7 @@ function BookStayTab({ session, kind, account, onComplete }) {
         const lineCommissionDeduction = (kind === "agent" && canDeductCommission && deductCommission)
           ? Math.round((roomTotal * (account.commissionPct || 0) / 100) * 1000) / 1000
           : 0;
-        const total = Math.round((roomTotal + lineExtras + lineTax - lineCommissionDeduction) * 1000) / 1000;
+        const total = Math.round((roomTotal + lineExtras + lineMealPlanTotal + lineTax - lineCommissionDeduction) * 1000) / 1000;
         const bookedByOther = bookFor === "other";
         // Payment status mapping mirrors the public BookingModal contract.
         // For pre-payment-contracted partners, pay-now captures the card
@@ -3115,6 +3178,13 @@ function BookStayTab({ session, kind, account, onComplete }) {
           weekendNights:    s.breakdown?.weekendNights || 0,
           rateWeekday:      s.rateWeekday || s.rate || 0,
           rateWeekend:      s.rateWeekend || s.rate || 0,
+          // Meal plan stamped on the booking — admin sees the plan
+          // code on the folio + receipt and the supplement is already
+          // baked into the total above. Always writes the field (even
+          // for RO) so reports can segment by plan.
+          mealPlan:      mealPlan || "ro",
+          mealPlanLabel: mealPlanLabel(mealPlan || "ro"),
+          mealPlanTotal: lineMealPlanTotal,
         };
         if (kind === "corporate") booking.accountId = account.id;
         if (kind === "agent") {
@@ -3288,6 +3358,12 @@ function BookStayTab({ session, kind, account, onComplete }) {
               activeExtras={activeExtras} pickedExtras={pickedExtras} setPickedExtras={setPickedExtras}
               partySize={partySize} nights={nights}
               requestNotes={requestNotes} setRequestNotes={setRequestNotes}
+              stays={stays} rooms={rooms}
+              mealPlan={mealPlan} setMealPlan={setMealPlan}
+              availablePlans={accountAvailablePlans}
+              defaultPlan={accountDefaultPlan}
+              mealPlanTotal={mealPlanTotal}
+              kind={kind}
             />
           )}
           {step === 4 && (
@@ -3331,6 +3407,7 @@ function BookStayTab({ session, kind, account, onComplete }) {
               commissionDeduction={commissionDeduction}
               commissionPct={kind === "agent" ? account?.commissionPct : 0}
               grandTotalNet={grandTotalNet}
+              mealPlan={mealPlan} mealPlanTotal={mealPlanTotal}
             />
 
             {step < 4 ? (
@@ -3979,10 +4056,108 @@ function SuiteStep({ rooms, stays, addRoomType, decRoomType, updateStay, removeS
 }
 
 // ─── Step 3 · Extras ────────────────────────────────────────────────────
-function ExtrasStep({ activeExtras, pickedExtras, setPickedExtras, partySize, nights, requestNotes, setRequestNotes }) {
+function ExtrasStep({
+  activeExtras, pickedExtras, setPickedExtras, partySize, nights, requestNotes, setRequestNotes,
+  stays, rooms, mealPlan, setMealPlan, availablePlans, defaultPlan, mealPlanTotal, kind,
+}) {
   const p = usePalette();
+  // Plans visible to this booker: intersection of the account's
+  // available plans with the lead suite's enabled plans. Falls back
+  // gracefully when one side is empty.
+  const planLeadRoom = stays && stays.length > 0
+    ? (rooms || []).find((r) => r.id === stays[0].roomId)
+    : (rooms || [])[0];
+  const roomPlans = planLeadRoom ? enabledMealPlansFor(planLeadRoom) : MEAL_PLANS;
+  const allowedPlans = (availablePlans && availablePlans.length > 0)
+    ? roomPlans.filter((m) => availablePlans.includes(m.code))
+    : roomPlans;
+  // Always offer RO as a fallback so the booker can opt out of any
+  // included plan if they want.
+  const visiblePlans = allowedPlans.length > 0
+    ? allowedPlans
+    : (planLeadRoom ? [MEAL_PLANS[0]] : MEAL_PLANS);
+  const adultsTotal = stays
+    ? Math.max(1, stays.reduce((s, st) => s + ((Number(st.adults) || 0) * (Number(st.quantity) || 1)), 0))
+    : 1;
+  const showPicker = visiblePlans.length > 1 || (visiblePlans.length === 1 && visiblePlans[0].code !== "ro");
   return (
     <>
+      {showPicker && (
+        <Card title="Meal plan" className="mb-5"
+          action={
+            kind && kind !== "member" && (availablePlans || []).length > 1 ? (
+              <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                Negotiated under your contract
+              </span>
+            ) : null
+          }>
+          <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.82rem", lineHeight: 1.55, marginBottom: 12 }}>
+            {visiblePlans.length === 1
+              ? "Only one plan is available on this booking."
+              : <>
+                  Pick a plan for this stay. Supplements are per adult, per night, and fold into your room total.
+                  {defaultPlan && availablePlans?.length > 1 && defaultPlan !== "ro" && (
+                    <> Your default is <strong style={{ color: p.accent }}>{mealPlanLabel(defaultPlan)}</strong>.</>
+                  )}
+                </>
+            }
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+            {visiblePlans.map((m) => {
+              const sel = mealPlan === m.code;
+              const supp = planLeadRoom ? mealPlanSupplement(planLeadRoom, m.code) : 0;
+              const lineCost = supp * adultsTotal * Math.max(1, nights);
+              const isDefault = m.code === defaultPlan;
+              return (
+                <button key={m.code}
+                  onClick={() => setMealPlan(m.code)}
+                  className="text-start p-3 transition-colors"
+                  style={{
+                    backgroundColor: sel ? `${p.accent}10` : "transparent",
+                    border: `1px solid ${sel ? p.accent : p.border}`,
+                    borderInlineStart: sel ? `3px solid ${p.accent}` : `1px solid ${p.border}`,
+                    cursor: "pointer",
+                  }}
+                  aria-pressed={sel}
+                  title={m.label}
+                >
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.05rem", color: p.textPrimary, fontWeight: 500 }}>
+                      {m.label}
+                    </span>
+                    <span style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, color: p.accent }}>
+                      {isDefault && availablePlans?.length > 1 ? `★ ${m.short}` : m.short}
+                    </span>
+                  </div>
+                  <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", marginTop: 4, lineHeight: 1.5 }}>
+                    {m.blurb}
+                  </div>
+                  <div className="mt-2 flex items-baseline justify-between gap-2">
+                    <span style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", color: p.textMuted }}>
+                      {supp > 0
+                        ? <>+ {formatCurrency(supp)} / adult / night</>
+                        : <span style={{ color: p.success, fontWeight: 700 }}>Included</span>}
+                    </span>
+                    {sel && lineCost > 0 && (
+                      <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1rem", fontWeight: 500, color: p.accent }}>
+                        + {formatCurrency(lineCost)}
+                      </span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          {mealPlan && mealPlan !== "ro" && mealPlanTotal > 0 && (
+            <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5" style={{
+              backgroundColor: `${p.accent}10`, border: `1px solid ${p.accent}55`,
+              fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", color: p.textPrimary,
+            }}>
+              <strong>{mealPlanLabel(mealPlan)}</strong> for {adultsTotal} adult{adultsTotal === 1 ? "" : "s"} × {Math.max(1, nights)} night{nights === 1 ? "" : "s"} = <strong>{formatCurrency(mealPlanTotal)}</strong>
+            </div>
+          )}
+        </Card>
+      )}
       <Card title={`Add to your stay · ${(activeExtras || []).length} available`}>
         {(activeExtras || []).length === 0 ? (
           <div style={{ color: p.textMuted, fontSize: "0.84rem" }}>
@@ -4439,7 +4614,7 @@ function PortalPaymentChoice({ active, title, hint, badge, onClick, p }) {
 }
 
 // ─── Sticky reservation rail ────────────────────────────────────────────
-function ReservationRail({ p, checkIn, checkOut, nights, stayTotals, partySize, extrasList, subTotalRoom, grandTotal, taxBreakdown, taxIncluded, guest, bookFor, totalAdults, totalChildren, payNowDiscount = 0, payNowDiscountPct = 0, commissionDeduction = 0, commissionPct = 0, grandTotalNet }) {
+function ReservationRail({ p, checkIn, checkOut, nights, stayTotals, partySize, extrasList, subTotalRoom, grandTotal, taxBreakdown, taxIncluded, guest, bookFor, totalAdults, totalChildren, payNowDiscount = 0, payNowDiscountPct = 0, commissionDeduction = 0, commissionPct = 0, grandTotalNet, mealPlan, mealPlanTotal = 0 }) {
   const t = useT();
   const guestsLabel = (() => {
     const a = Number(totalAdults) || 0;
@@ -4521,6 +4696,12 @@ function ReservationRail({ p, checkIn, checkOut, nights, stayTotals, partySize, 
               <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtBhd(priceExtra(e, { adults: partySize, nights: Math.max(1, nights) }))}</span>
             </div>
           ))}
+          {mealPlan && mealPlan !== "ro" && mealPlanTotal > 0 && (
+            <div className="flex items-center justify-between" style={{ color: p.textMuted, fontSize: "0.78rem" }}>
+              <span>{mealPlanLabel(mealPlan)} · {Math.max(1, stayTotals.reduce((s, st) => s + ((Number(st.adults) || 0) * (Number(st.quantity) || 1)), 0))} adult{stayTotals.reduce((s, st) => s + ((Number(st.adults) || 0) * (Number(st.quantity) || 1)), 0) === 1 ? "" : "s"} × {Math.max(1, nights)}n</span>
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtBhd(mealPlanTotal)}</span>
+            </div>
+          )}
           {!taxIncluded && taxBreakdown.totalTax > 0 && (
             <div className="flex items-center justify-between" style={{ color: p.textMuted, fontSize: "0.78rem" }}>
               <span>Tax & levies</span>
