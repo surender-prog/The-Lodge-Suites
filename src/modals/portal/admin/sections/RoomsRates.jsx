@@ -1557,10 +1557,19 @@ function RoomTypeCreator({ existingIds, tax, onCancel, onCreate }) {
 
   // Live derived figures so the operator sees the impact of every
   // pricing edit without committing.
+  // Live derived figures — same as the RoomTypeEditor so the creator
+  // surfaces the same gross + capacity context as the existing editor.
   const rate         = Number(draft.price) || 0;
   const rateWeekend  = Number(draft.priceWeekend) || 0;
   const grossPN      = Math.round(applyTaxes(rate, tax, 1).gross);
   const grossWeekend = Math.round(applyTaxes(rateWeekend, tax, 1).gross);
+  const ebFee        = draft.extraBedAvailable ? (Number(draft.extraBedFee) || 0) : 0;
+  const grossWithBed = Math.round(applyTaxes(rate + ebFee, tax, 1).gross);
+  const adultCap = Number(draft.maxAdults)   || 0;
+  const childCap = Number(draft.maxChildren) || 0;
+  const ebAddsA  = Number(draft.extraBedAddsAdults)   || 0;
+  const ebAddsC  = Number(draft.extraBedAddsChildren) || 0;
+  const ebMax    = Number(draft.maxExtraBeds) || 0;
 
   return (
     <Drawer
@@ -1634,7 +1643,10 @@ function RoomTypeCreator({ existingIds, tax, onCancel, onCreate }) {
           </div>
         </Card>
 
-        {/* Pricing + size */}
+        {/* Pricing + size — matches the editor: three gross tiles
+            (Weekday / Weekend / With extra bed) all running through
+            the live tax pattern, so the operator sees what the guest
+            actually pays before they commit. */}
         <Card title="Pricing & size" className="lg:col-span-2">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <FormGroup label="Weekday rate (BHD / night, excl. tax)">
@@ -1647,7 +1659,10 @@ function RoomTypeCreator({ existingIds, tax, onCancel, onCreate }) {
               <TextField type="number" value={draft.sqm} onChange={(v) => set({ sqm: v })} suffix="m²" />
             </FormGroup>
           </div>
-          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="mt-3" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.55 }}>
+            The set of "weekend days" is operator-configurable in <strong>Property Info → Weekend days</strong>. Set the weekday and weekend rates to the same value if you don't want to differentiate.
+          </div>
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="p-4" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
               <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, fontFamily: "'Manrope', sans-serif" }}>Weekday gross</div>
               <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.accent, fontWeight: 600, lineHeight: 1.05, marginTop: 4 }}>
@@ -1662,63 +1677,285 @@ function RoomTypeCreator({ existingIds, tax, onCancel, onCreate }) {
               </div>
               <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>incl. taxes</div>
             </div>
+            <div className="p-4" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
+              <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, fontFamily: "'Manrope', sans-serif" }}>With extra bed</div>
+              <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: draft.extraBedAvailable ? p.accent : p.textMuted, fontWeight: 600, lineHeight: 1.05, marginTop: 4 }}>
+                {draft.extraBedAvailable ? formatCurrency(grossWithBed) : "—"}
+              </div>
+              <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>
+                {draft.extraBedAvailable ? `+ BHD ${ebFee}/night per bed (excl. tax)` : "Extra bed not offered"}
+              </div>
+            </div>
           </div>
         </Card>
 
-        {/* Capacity */}
+        {/* Capacity — with the same allowed-combinations live preview
+            the editor renders, so the operator sees exactly which
+            adult / child mixes the new suite will accept. */}
         <Card title="Capacity" className="lg:col-span-3">
           <p style={{ color: p.textSecondary, fontSize: "0.86rem", lineHeight: 1.6, marginBottom: 14 }}>
-            <strong>Total occupancy</strong> is the hard ceiling on adults + children. <strong>Max adults</strong> and <strong>Max children</strong> are optional sub-caps; set them equal to occupancy for "no restriction", or dial down to forbid specific combinations.
+            <strong>Total occupancy</strong> is the hard ceiling — any booking line's <em>adults + children</em> must fit inside it. <strong>Max adults</strong> and <strong>Max children</strong> are <em>optional sub-caps</em>: leave them equal to occupancy to allow any mix, or dial them down to forbid specific combinations (e.g. set Max children to <code>0</code> to refuse children entirely on a suite type). Extra beds (configured below) layer on top of all three.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <FormGroup label="Total occupancy">
+            <FormGroup label="Total occupancy (hard ceiling)">
               <TextField type="number" value={draft.occupancy} onChange={(v) => set({ occupancy: v })} />
+              <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 4 }}>Adults + children combined cannot exceed this.</div>
             </FormGroup>
-            <FormGroup label="Max adults">
+            <FormGroup label="Max adults (optional sub-cap)">
               <TextField type="number" value={draft.maxAdults} onChange={(v) => set({ maxAdults: v })} />
+              <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 4 }}>Set equal to occupancy for "no restriction".</div>
             </FormGroup>
-            <FormGroup label="Max children">
+            <FormGroup label="Max children (optional sub-cap)">
               <TextField type="number" value={draft.maxChildren} onChange={(v) => set({ maxChildren: v })} />
+              <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 4 }}>Set to <code>0</code> to refuse children entirely.</div>
             </FormGroup>
+          </div>
+
+          {/* Allowed-combinations preview — same logic as the editor. */}
+          <div className="mt-4 p-3" style={{ backgroundColor: `${p.accent}10`, border: `1px solid ${p.accent}40`, borderInlineStart: `3px solid ${p.accent}` }}>
+            <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, color: p.accent, marginBottom: 8 }}>
+              Allowed combinations
+            </div>
+            {(() => {
+              const occ = Number(draft.occupancy) || 0;
+              if (occ <= 0) return <div style={{ color: p.textMuted, fontSize: "0.82rem" }}>Set occupancy ≥ 1 to see allowed combinations.</div>;
+              const combos = [];
+              for (let a = 0; a <= adultCap; a++) {
+                for (let c = 0; c <= childCap; c++) {
+                  if (a + c >= 1 && a + c <= occ) combos.push({ a, c });
+                }
+              }
+              if (combos.length === 0) {
+                return <div style={{ color: p.warn, fontSize: "0.82rem" }}>Current caps disallow every combination — guests can't book this suite. Raise occupancy or one of the sub-caps.</div>;
+              }
+              return (
+                <>
+                  <div className="flex flex-wrap gap-1.5">
+                    {combos.map(({ a, c }) => (
+                      <span key={`${a}-${c}`} style={{
+                        padding: "3px 10px", fontFamily: "'Manrope', sans-serif",
+                        fontSize: "0.74rem", fontWeight: 700,
+                        color: p.textPrimary,
+                        backgroundColor: `${p.accent}25`,
+                        border: `1px solid ${p.accent}`,
+                        letterSpacing: "0.04em",
+                      }}>
+                        {a > 0 ? `${a}A` : ""}{a > 0 && c > 0 ? "+" : ""}{c > 0 ? `${c}C` : ""}
+                      </span>
+                    ))}
+                  </div>
+                  <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 8 }}>
+                    {combos.length} combination{combos.length === 1 ? "" : "s"} valid · ceiling <strong style={{ color: p.textPrimary }}>{occ}</strong>
+                    {draft.extraBedAvailable && ebMax > 0 && (
+                      <> · with up to {ebMax} extra bed{ebMax === 1 ? "" : "s"} the ceiling rises to <strong style={{ color: p.textPrimary }}>{occ + ebMax * (ebAddsA + ebAddsC)}</strong></>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </Card>
 
-        {/* Extra-bed */}
+        {/* Extra-bed configuration — full master-toggle row + 4 detail
+            fields, identical to the editor. */}
         <Card title="Extra-bed configuration" className="lg:col-span-3" action={
-          <button
-            onClick={() => set({ extraBedAvailable: !draft.extraBedAvailable })}
-            style={{
-              width: 44, height: 24, borderRadius: 999,
-              backgroundColor: draft.extraBedAvailable ? p.accent : p.border,
-              position: "relative", border: "none", cursor: "pointer",
-            }}
-            aria-pressed={draft.extraBedAvailable}
-            aria-label="Toggle extra bed availability"
-          >
-            <span style={{
-              position: "absolute", top: 2, left: draft.extraBedAvailable ? 22 : 2,
-              width: 20, height: 20, borderRadius: "50%",
-              backgroundColor: "#fff", transition: "left 120ms",
-            }} />
-          </button>
+          <div className="flex items-center gap-2" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem" }}>
+            <BedDouble size={13} style={{ color: draft.extraBedAvailable ? p.accent : p.textMuted }} />
+            <span style={{ color: draft.extraBedAvailable ? p.accent : p.textMuted, letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}>
+              {draft.extraBedAvailable ? "Offered" : "Not offered"}
+            </span>
+          </div>
         }>
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4" style={{ opacity: draft.extraBedAvailable ? 1 : 0.45 }}>
+          {/* Master toggle */}
+          <div className="p-3 flex items-start justify-between gap-3 flex-wrap" style={{
+            backgroundColor: draft.extraBedAvailable ? `${p.accent}10` : p.bgPanelAlt,
+            border: `1px solid ${draft.extraBedAvailable ? p.accent : p.border}`,
+            borderInlineStart: `3px solid ${draft.extraBedAvailable ? p.accent : p.border}`,
+          }}>
+            <div className="flex items-start gap-3">
+              <BedDouble size={16} style={{ color: draft.extraBedAvailable ? p.accent : p.textMuted, marginTop: 2 }} />
+              <div>
+                <div style={{ color: p.textPrimary, fontWeight: 700, fontSize: "0.86rem" }}>Offer extra bed for this suite</div>
+                <div style={{ color: p.textMuted, fontSize: "0.78rem", marginTop: 2, maxWidth: 540, lineHeight: 1.5 }}>
+                  Sofa-bed or rollaway. When enabled, guests can add up to the configured maximum during the booking flow. Each bed is billed at the per-night fee below and adds the configured capacity.
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => set({ extraBedAvailable: !draft.extraBedAvailable })}
+              style={{
+                width: 44, height: 24, borderRadius: 999,
+                backgroundColor: draft.extraBedAvailable ? p.accent : p.border,
+                position: "relative", border: "none", cursor: "pointer", flexShrink: 0,
+              }}
+              aria-pressed={draft.extraBedAvailable}
+              aria-label="Toggle extra bed availability"
+            >
+              <span style={{
+                position: "absolute", top: 2, left: draft.extraBedAvailable ? 22 : 2,
+                width: 20, height: 20, borderRadius: "50%",
+                backgroundColor: "#fff", transition: "left 120ms",
+              }} />
+            </button>
+          </div>
+
+          {/* Detail fields — only meaningful when the toggle is on */}
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-4 gap-4" style={{ opacity: draft.extraBedAvailable ? 1 : 0.45 }}>
             <FormGroup label="Max extra beds">
               <TextField type="number" value={draft.maxExtraBeds} onChange={(v) => set({ maxExtraBeds: v })} />
+              <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 4 }}>Hard cap, e.g. <code>1</code> or <code>2</code>.</div>
             </FormGroup>
-            <FormGroup label="Fee (BHD / night)">
+            <FormGroup label="Fee (BHD / night, excl. tax)">
               <TextField type="number" value={draft.extraBedFee} onChange={(v) => set({ extraBedFee: v })} suffix="BHD" />
+              <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 4 }}>Per bed, per night.</div>
             </FormGroup>
             <FormGroup label="Adds adult sleeper">
               <TextField type="number" value={draft.extraBedAddsAdults} onChange={(v) => set({ extraBedAddsAdults: v })} />
+              <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 4 }}>Per bed.</div>
             </FormGroup>
             <FormGroup label="Adds child sleeper">
               <TextField type="number" value={draft.extraBedAddsChildren} onChange={(v) => set({ extraBedAddsChildren: v })} />
+              <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 4 }}>Per bed.</div>
             </FormGroup>
           </div>
-          <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", marginTop: 10, lineHeight: 1.55 }}>
-            Toggle on to allow guests to add rollaways to this suite during the booking flow. Defaults are sensible — operators can tweak per-suite later from the Edit room type drawer.
+        </Card>
+
+        {/* Meal plans — full 4-tile editor. Same component layout as
+            the editor's meal-plans card so the new room type starts
+            life with a properly seeded F&B catalogue and the operator
+            can dial supplements at creation time. */}
+        <Card title="Meal plans" className="lg:col-span-3" action={
+          <div className="flex items-center gap-2" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem" }}>
+            <Utensils size={13} style={{ color: p.accent }} />
+            <span style={{ color: p.accent, letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}>
+              {Object.values(draft.mealPlans || DEFAULT_MEAL_PLANS_FOR_ROOM).filter((m) => m?.enabled !== false).length} offered
+            </span>
+          </div>
+        }>
+          <p style={{ color: p.textSecondary, fontSize: "0.86rem", lineHeight: 1.6, marginBottom: 14 }}>
+            Each plan adds a per-adult-per-night supplement on top of the rack rate. <strong>RO</strong> (Room Only) is the rack-rate baseline. <strong>BB</strong> (Bed &amp; Breakfast), <strong>HB</strong> (Half Board) and <strong>FB</strong> (Full Board) climb from there. Turn a plan <em>off</em> to hide it from this suite's booking picker without losing the supplement value.
           </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {MEAL_PLANS.map((m) => {
+              const map   = draft.mealPlans || DEFAULT_MEAL_PLANS_FOR_ROOM;
+              const entry = map[m.code] || { enabled: false, supplement: 0 };
+              const Ic    = m.icon === "ChefHat" ? ChefHat : m.icon === "Croissant" ? Croissant : m.icon === "Utensils" ? Utensils : Coffee;
+              return (
+                <div key={m.code} className="p-4" style={{
+                  backgroundColor: entry.enabled !== false ? `${p.accent}10` : p.bgPanelAlt,
+                  border: `1px solid ${entry.enabled !== false ? p.accent : p.border}`,
+                  borderInlineStart: `3px solid ${entry.enabled !== false ? p.accent : p.border}`,
+                  opacity: entry.enabled !== false ? 1 : 0.7,
+                }}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Ic size={14} style={{ color: entry.enabled !== false ? p.accent : p.textMuted }} />
+                      <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.1rem", color: p.textPrimary, fontWeight: 500 }}>
+                        {m.label}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => set({
+                        mealPlans: { ...map, [m.code]: { ...entry, enabled: entry.enabled === false } },
+                      })}
+                      style={{
+                        width: 36, height: 20, borderRadius: 999,
+                        backgroundColor: entry.enabled !== false ? p.accent : p.border,
+                        position: "relative", border: "none", cursor: m.code === "ro" ? "not-allowed" : "pointer",
+                        flexShrink: 0,
+                        opacity: m.code === "ro" ? 0.5 : 1,
+                      }}
+                      disabled={m.code === "ro"}
+                      aria-pressed={entry.enabled !== false}
+                      aria-label={`Toggle ${m.label} availability`}
+                      title={m.code === "ro" ? "RO (Room Only) is always available — it's the rack-rate baseline" : `Toggle ${m.label}`}
+                    >
+                      <span style={{
+                        position: "absolute", top: 2, left: entry.enabled !== false ? 18 : 2,
+                        width: 16, height: 16, borderRadius: "50%",
+                        backgroundColor: "#fff", transition: "left 120ms",
+                      }} />
+                    </button>
+                  </div>
+                  <div style={{ color: p.textMuted, fontSize: "0.72rem", marginTop: 4, fontFamily: "'Manrope', sans-serif", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}>
+                    {m.short} · per adult / night
+                  </div>
+                  <div className="mt-2">
+                    <FormGroup label={`${m.short} supplement`}>
+                      <TextField
+                        type="number"
+                        value={entry.supplement ?? 0}
+                        onChange={(v) => set({
+                          mealPlans: { ...map, [m.code]: { ...entry, supplement: v, enabled: m.code === "ro" ? true : entry.enabled !== false } },
+                        })}
+                        suffix="BHD"
+                      />
+                    </FormGroup>
+                  </div>
+                  <div style={{ color: p.textMuted, fontSize: "0.72rem", marginTop: 8, lineHeight: 1.5 }}>
+                    {m.blurb}
+                  </div>
+                  {Number(entry.supplement) > 0 && entry.enabled !== false && (
+                    <div className="mt-3 p-2" style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}`, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem" }}>
+                      <span style={{ color: p.textMuted }}>2 adults · 3 nights →</span>
+                      <span style={{ color: p.accent, fontWeight: 700, marginInlineStart: 6 }}>+ {formatCurrency(Number(entry.supplement) * 2 * 3)}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+
+        {/* Booking-flow preview — what the public booking widget will
+            show once the new type is live. Mirrors the editor's
+            preview card, with the publicName / description / sqm /
+            occupancy / extra-bed signal all drawn from the live
+            draft so the operator sees the impact of every edit. */}
+        <Card title="Booking-flow preview" className="lg:col-span-3">
+          <p style={{ color: p.textMuted, fontSize: "0.78rem", marginBottom: 12 }}>
+            How this suite will appear in step 2 of the public booking flow with current values.
+          </p>
+          <div className="flex gap-4 p-3" style={{ border: `1px solid ${p.border}`, backgroundColor: p.bgPanelAlt }}>
+            <div style={{
+              width: 130, height: 100, flexShrink: 0,
+              backgroundColor: p.bgPanel,
+              border: `1px dashed ${p.border}`,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: p.textMuted, fontSize: "0.66rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+              fontFamily: "'Manrope', sans-serif", textAlign: "center", padding: 8,
+            }}>
+              Photo<br/>after save
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                <h4 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: p.textPrimary, fontWeight: 500 }}>
+                  {draft.publicName || "Untitled suite"}
+                </h4>
+                <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", color: p.accent, fontWeight: 500 }}>
+                  {formatCurrency(rate)}<span style={{ fontSize: "0.7rem", color: p.textMuted, fontFamily: "'Manrope', sans-serif", letterSpacing: "0.1em" }}> /night</span>
+                </div>
+              </div>
+              {draft.description && (
+                <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", marginTop: 6, lineHeight: 1.55 }}>
+                  {draft.description}
+                </div>
+              )}
+              <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 6 }}>
+                {draft.sqm || 0} m² · sleeps up to <strong>{Number(draft.occupancy) || 0}</strong>
+                {childCap === 0 && (
+                  <span style={{ color: p.warn, fontWeight: 600 }}> · adults only</span>
+                )}
+              </div>
+              {draft.extraBedAvailable && ebMax > 0 && (
+                <div style={{ color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 4 }}>
+                  <BedDouble size={11} style={{ display: "inline", marginInlineEnd: 4 }} />
+                  Extra bed available · up to {ebMax} · BHD {ebFee}/night each
+                  {ebAddsA + ebAddsC > 0 && <> · adds {ebAddsA > 0 ? `${ebAddsA} adult${ebAddsA === 1 ? "" : "s"}` : ""}{ebAddsA > 0 && ebAddsC > 0 ? " + " : ""}{ebAddsC > 0 ? `${ebAddsC} child${ebAddsC === 1 ? "" : "ren"}` : ""}/bed</>}
+                </div>
+              )}
+            </div>
+          </div>
         </Card>
 
         {/* Validation panel */}
