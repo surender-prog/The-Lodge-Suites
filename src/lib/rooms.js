@@ -40,6 +40,10 @@ export function dbRoomToClient(row) {
     maxExtraBeds:       row.max_extra_beds || 0,
     extraBedFee:        Number(row.extra_bed_fee || 0),
     extraBedAdds:       row.extra_bed_adds || { adults: 0, children: 0 },
+    // Meal plan catalogue per suite — see DEFAULT_MEAL_PLANS_FOR_ROOM
+    // for the canonical shape. Falls back to the seeded defaults so
+    // legacy rows (pre-migration 009) render with sensible values.
+    mealPlans:          row.meal_plans || seed?.mealPlans || null,
     isActive:           row.is_active !== false,
     displayOrder:       row.display_order || 0,
   };
@@ -60,6 +64,7 @@ export function clientPatchToDb(patch) {
   if (patch.maxExtraBeds       !== undefined) out.max_extra_beds       = patch.maxExtraBeds;
   if (patch.extraBedFee        !== undefined) out.extra_bed_fee        = patch.extraBedFee;
   if (patch.extraBedAdds       !== undefined) out.extra_bed_adds       = patch.extraBedAdds;
+  if (patch.mealPlans          !== undefined) out.meal_plans           = patch.mealPlans;
   if (patch.isActive           !== undefined) out.is_active            = patch.isActive;
   if (patch.displayOrder       !== undefined) out.display_order        = patch.displayOrder;
   return out;

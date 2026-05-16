@@ -3,7 +3,7 @@ import { Ban, Briefcase, Building2, Calculator, CalendarCheck, Check, CheckCircl
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween } from "../../../../utils/date.js";
-import { useData, applyTaxes, roomFitsParty, canViewCardOnFile, maskCardNumber, cardOnFileExpired, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, describePackageConditions, packagePriceSuffix, getPackageRoomPrice, formatCurrency } from "../../../../data/store.jsx";
+import { useData, applyTaxes, roomFitsParty, canViewCardOnFile, maskCardNumber, cardOnFileExpired, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, describePackageConditions, packagePriceSuffix, getPackageRoomPrice, formatCurrency, MEAL_PLANS, mealPlanLabel } from "../../../../data/store.jsx";
 import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 import { BookingDocPreviewModal, emailBookingDoc, printBookingDoc } from "../BookingDocs.jsx";
 
@@ -1552,6 +1552,23 @@ function BookingEditor({ booking, onClose }) {
               </div>
               <FormGroup label="Guests">
                 <TextField type="number" value={draft.guests} onChange={(v) => update({ guests: Number(v) || 0 })} />
+              </FormGroup>
+              {/* Meal plan — flips the F&B inclusion on the folio. The
+                  supplement that was charged at booking sits on
+                  `mealPlanTotal`; changing the plan here doesn't
+                  retroactively re-bill (use Recalc in Pricing for that).
+                  Defaults to RO when the booking pre-dates the field. */}
+              <FormGroup label="Meal plan">
+                <SelectField
+                  value={draft.mealPlan || "ro"}
+                  onChange={(v) => update({ mealPlan: v, mealPlanLabel: mealPlanLabel(v) })}
+                  options={MEAL_PLANS.map((m) => ({ value: m.code, label: `${m.short} · ${m.label}` }))}
+                />
+                {Number(draft.mealPlanTotal) > 0 && (
+                  <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", marginTop: 6 }}>
+                    Supplement on folio: <strong style={{ color: p.accent }}>{formatCurrency(draft.mealPlanTotal)}</strong>
+                  </div>
+                )}
               </FormGroup>
             </div>
           </Card>

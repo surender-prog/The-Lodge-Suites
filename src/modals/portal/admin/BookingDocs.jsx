@@ -236,6 +236,15 @@ export function BookingDocView({ booking, kind, tax, rooms, extras }) {
               <div style={{ color: "#666", fontSize: "0.74rem", marginTop: 2 }}>
                 {folio.room?.id === "studio" ? "Lodge Studio" : folio.room?.id === "one-bed" ? "One-Bedroom Suite" : folio.room?.id === "two-bed" ? "Two-Bedroom Suite" : folio.room?.id === "three-bed" ? "Three-Bedroom Suite" : "Suite"} · {fmtDate(booking.checkIn)} – {fmtDate(booking.checkOut)}
               </div>
+              {/* Meal plan — stamped on the booking at checkout and folded
+                  into the suite charge. Shows the plan + per-stay cost so
+                  the guest sees exactly what F&B they're entitled to. */}
+              {booking.mealPlan && booking.mealPlan !== "ro" && (
+                <div style={{ color: "#8A7A4F", fontSize: "0.74rem", marginTop: 2 }}>
+                  Meal plan: <strong>{booking.mealPlanLabel || booking.mealPlan.toUpperCase()}</strong>
+                  {Number(booking.mealPlanTotal) > 0 ? ` · ${fmtBhd(booking.mealPlanTotal)} included in suite charge` : ""}
+                </div>
+              )}
               {/* Weekday/weekend split — rendered as two indented sub-rows
                   below the main suite line so the operator (and any guest
                   reading the folio) can see exactly how the total broke down. */}

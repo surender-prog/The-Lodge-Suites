@@ -3,7 +3,7 @@ import { ArrowDown, ArrowUp, Award, BedDouble, Calendar, Check, Copy, Crown, Edi
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween } from "../../../../utils/date.js";
-import { useData, formatCurrency } from "../../../../data/store.jsx";
+import { useData, formatCurrency, MEAL_PLANS } from "../../../../data/store.jsx";
 import { Icon } from "../../../../components/Icon.jsx";
 import { Card, Drawer, FileUpload, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 import { WalletCardDrawer } from "./WalletCard.jsx";
@@ -795,6 +795,19 @@ function TierEditor({ mode, draft: initial, onClose }) {
               </div>
               <FormGroup label="Intro line (homepage tagline)">
                 <TextField value={draft.intro} onChange={(v) => set({ intro: v })} placeholder="A short, evocative line for the public site." />
+              </FormGroup>
+              {/* Default meal plan — pre-fills on this tier's bookings.
+                  Silver typically RO (no perk); Gold BB; Platinum HB.
+                  Guest can still pick a different plan at checkout. */}
+              <FormGroup label="Default meal plan for this tier">
+                <SelectField
+                  value={draft.defaultMealPlan || "ro"}
+                  onChange={(v) => set({ defaultMealPlan: v })}
+                  options={MEAL_PLANS.map((m) => ({ value: m.code, label: `${m.short} · ${m.label}` }))}
+                />
+                <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", marginTop: 6, lineHeight: 1.55 }}>
+                  Pre-fills on bookings made by members at this tier. The supplement (per adult per night) is still pulled from the suite's <strong>Meal plans</strong> card in Rooms &amp; Rates.
+                </div>
               </FormGroup>
               <label className="flex items-center gap-2" style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.85rem" }}>
                 <input type="checkbox" checked={!!draft.featured} onChange={(e) => set({ featured: e.target.checked })} />

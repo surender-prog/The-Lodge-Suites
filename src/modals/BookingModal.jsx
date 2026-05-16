@@ -8,7 +8,7 @@ import { CountrySelect } from "../components/CountrySelect.jsx";
 import { findCountryByCode, parsePhone, DEFAULT_COUNTRY_CODE } from "../data/countryCodes.js";
 import { useT, useLang } from "../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween, todayISO } from "../utils/date.js";
-import { priceExtra, priceLabelFor, useData, evalPackageEligibility, describePackageConditions, roomFitsParty, computePackageCharge, computePackageSaving, packagePriceSuffix, getPackageRoomPrice, getPackageMinPrice, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, applyTaxes, nightlyBreakdown, formatCurrency, findRedeemableGiftCard, evaluateGiftCardForBooking, normaliseGiftCardCode } from "../data/store.jsx";
+import { priceExtra, priceLabelFor, useData, evalPackageEligibility, describePackageConditions, roomFitsParty, computePackageCharge, computePackageSaving, packagePriceSuffix, getPackageRoomPrice, getPackageMinPrice, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, applyTaxes, nightlyBreakdown, formatCurrency, findRedeemableGiftCard, evaluateGiftCardForBooking, normaliseGiftCardCode, MEAL_PLANS, mealPlanSupplement, mealPlanLabel, enabledMealPlansFor } from "../data/store.jsx";
 
 export const BookingModal = ({ open, onClose, initial }) => {
   const t = useT();
@@ -29,6 +29,13 @@ export const BookingModal = ({ open, onClose, initial }) => {
     // "Book this suite" CTAs on the homepage) is normalised into a
     // single-row rooms array on open.
     rooms: [{ id: (ROOMS[1] || ROOMS[0])?.id, qty: 1 }],
+    // Meal plan applied to the whole booking. Defaults to RO (Room
+    // Only) — guests upgrade to BB / HB / FB on Step 3 and the
+    // supplement (BHD per adult per night) folds into the grand total.
+    // The picker reads enabled plans + per-adult supplements off the
+    // lead suite's `mealPlans` catalogue (admin-editable in Rooms &
+    // Rates → Meal plans).
+    mealPlan: "ro",
     package: null,
     addOns: {},
     name: "", email: "", phone: "", country: DEFAULT_COUNTRY_CODE,
@@ -272,6 +279,20 @@ export const BookingModal = ({ open, onClose, initial }) => {
   const partySize     = (Number(data.adults) || 0) + (Number(data.children) || 0);
   const leadRoom      = roomLines[0]?.room || ROOMS[1] || ROOMS[0];
 
+  // Meal plan supplement folded into the grand total. RO is free
+  // (baseline); BB/HB/FB add `supplement × adults × nights` per line.
+  // Adults are spread proportionally across multi-suite bookings so a
+  // 2-suite Family + Studio party sees each suite's supplement applied
+  // to the right share of the party. Zero when RO is picked or when no
+  // suites have qty yet.
+  const mealPlanCode  = data.mealPlan || "ro";
+  const mealPlanTotal = mealPlanCode === "ro" ? 0 : Math.round(roomLines.reduce((s, l) => {
+    const supp = mealPlanSupplement(l.room, mealPlanCode);
+    if (!supp) return s;
+    const share = totalRooms > 0 ? ((Number(data.adults) || 0) * l.qty / totalRooms) : (Number(data.adults) || 0);
+    return s + supp * share * nights;
+  }, 0));
+
   // Compute add-on lines dynamically from the active extras catalogue —
   // billed against the declared party size, not per-room caps.
   const addOnLines = activeExtras
@@ -356,6 +377,22 @@ export const BookingModal = ({ open, onClose, initial }) => {
     : (data.member ? "silver" : null);
   const memberPct = memberTier ? (TIER_DISCOUNT[memberTier] || 0) : 0;
   const memberDiscount = memberPct && !pkg ? Math.round(roomTotal * (memberPct / 100)) : 0;
+
+  // Tier-driven default meal plan. When a recognised member's email is
+  // entered AND the guest hasn't explicitly picked a plan, we apply the
+  // tier's `defaultMealPlan` so Gold lands on BB / Platinum on HB out
+  // of the box. The guest can still override on Step 3.
+  const tierMealDefault = useMemo(() => {
+    if (!memberTier) return null;
+    const t = (tiers || []).find((x) => x.id === memberTier);
+    return t?.defaultMealPlan || null;
+  }, [memberTier, tiers]);
+  useEffect(() => {
+    if (!tierMealDefault) return;
+    if (data.mealPlan && data.mealPlan !== "ro") return; // operator/guest already picked
+    setData((d) => ({ ...d, mealPlan: tierMealDefault }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tierMealDefault]);
   // Suite line in the summary — package charge (per the chosen pricing
   // rule) replaces the per-night rack rate when an offer is applied. Tax
   // + add-ons still pile on top.
@@ -399,7 +436,7 @@ export const BookingModal = ({ open, onClose, initial }) => {
   const giftCardDiscount = giftEval && giftEval.ok
     ? Math.min(Math.round(giftEval.savings), leadLine?.lineRevenue || 0)
     : 0;
-  const subtotal = Math.max(0, stayCharge + addOnTotal - memberDiscount - payNowDiscount - giftCardDiscount);
+  const subtotal = Math.max(0, stayCharge + addOnTotal + mealPlanTotal - memberDiscount - payNowDiscount - giftCardDiscount);
   // Run the configured tax pattern (Settings → Tax Setup) instead of a
   // hardcoded 10%. `tax` here is the tax-config object from useData() —
   // shadowed by the previous local `tax` variable, now renamed to
@@ -657,6 +694,14 @@ export const BookingModal = ({ open, onClose, initial }) => {
         giftCardNights:  giftCardDiscount > 0 ? (giftEval?.redeemNights || 0) : 0,
         giftCardSavings: giftCardDiscount,
         extras: addOnLines.map((l) => ({ id: l.id, title: l.title, price: l.total })),
+        // Meal plan stamped on the booking — admin sees the plan
+        // code on the folio + receipt and the supplement is already
+        // baked into the total above. Setting `mealPlan: "ro"` is
+        // safe (it adds zero) so we always write the field for
+        // queryability in reports.
+        mealPlan:      mealPlanCode,
+        mealPlanLabel: mealPlanLabel(mealPlanCode),
+        mealPlanTotal,
       });
       // Decrement the card's balance + push a redemption history entry
       // referencing this booking. Run AFTER addBooking so the booking
@@ -1121,6 +1166,77 @@ export const BookingModal = ({ open, onClose, initial }) => {
 
               {step === 3 && (
                 <div className="space-y-3">
+                  {/* Meal plan picker — RO / BB / HB / FB. Plans + per-adult
+                      supplements come from the lead suite's `mealPlans`
+                      catalogue (admin-editable). The supplement folds into
+                      the grand total in the summary rail on the right. */}
+                  {(() => {
+                    const planLeadRoom = roomLines[0]?.room || leadRoom;
+                    const plans = enabledMealPlansFor(planLeadRoom);
+                    const adults = Math.max(1, Number(data.adults) || 1);
+                    return (
+                      <div className="mb-2">
+                        <h4 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.3rem", color: C.bgDeep, marginBottom: 8 }}>
+                          Meal plan
+                        </h4>
+                        <p style={{ fontFamily: "'Manrope', sans-serif", color: C.textDim, fontSize: "0.82rem", marginBottom: 12, lineHeight: 1.55 }}>
+                          Add breakfast, dinner or all three meals to your stay. Supplements are per adult, per night.
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                          {plans.map((m) => {
+                            const supp     = mealPlanSupplement(planLeadRoom, m.code);
+                            const stayCost = Math.round(supp * adults * nights);
+                            const sel      = data.mealPlan === m.code;
+                            return (
+                              <button key={m.code}
+                                onClick={() => setData({ ...data, mealPlan: m.code })}
+                                className="text-start p-3 transition-colors"
+                                style={{
+                                  border: `1px solid ${sel ? C.gold : "rgba(0,0,0,0.12)"}`,
+                                  backgroundColor: sel ? "rgba(201,169,97,0.08)" : C.cream,
+                                  cursor: "pointer",
+                                }}
+                                aria-pressed={sel}
+                              >
+                                <div className="flex items-baseline justify-between gap-2">
+                                  <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.05rem", color: C.bgDeep, fontWeight: 500 }}>
+                                    {m.label}
+                                  </span>
+                                  <span style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, color: C.goldDeep }}>
+                                    {m.short}
+                                  </span>
+                                </div>
+                                <div style={{ fontFamily: "'Manrope', sans-serif", color: C.textDim, fontSize: "0.72rem", marginTop: 4, lineHeight: 1.5 }}>
+                                  {m.blurb}
+                                </div>
+                                <div className="mt-2 flex items-baseline justify-between gap-2">
+                                  <span style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", color: C.textDim }}>
+                                    {supp > 0
+                                      ? <>+ {formatCurrency(supp)} <span style={{ opacity: 0.7 }}>/adult/night</span></>
+                                      : <span style={{ color: C.success || "#16A34A", fontWeight: 700 }}>Included</span>}
+                                  </span>
+                                  {stayCost > 0 && (
+                                    <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1rem", fontWeight: 500, color: C.goldDeep }}>
+                                      + {formatCurrency(stayCost)}
+                                    </span>
+                                  )}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {data.mealPlan && data.mealPlan !== "ro" && mealPlanTotal > 0 && (
+                          <div className="mt-2 inline-flex items-center gap-2 px-3 py-1.5" style={{
+                            backgroundColor: "rgba(201,169,97,0.10)",
+                            border: "1px solid rgba(201,169,97,0.45)",
+                            fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", color: C.bgDeep,
+                          }}>
+                            <strong>{mealPlanLabel(data.mealPlan)}</strong> for {adults} adult{adults === 1 ? "" : "s"} × {nights} night{nights === 1 ? "" : "s"} = <strong>{formatCurrency(mealPlanTotal)}</strong>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <h4 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.3rem", color: C.bgDeep, marginBottom: 8 }}>{t("booking.addToYourStay")}</h4>
                   {activeExtras.length === 0 ? (
                     <p style={{ fontFamily: "'Manrope', sans-serif", color: C.textDim, fontSize: "0.85rem" }}>
@@ -1611,6 +1727,12 @@ export const BookingModal = ({ open, onClose, initial }) => {
                 {addOnLines.map((line) => (
                   <div key={line.id} className="flex justify-between"><span style={{ color: C.textMuted }}>{line.title}</span><span>{formatCurrency(line.total)}</span></div>
                 ))}
+                {mealPlanCode !== "ro" && mealPlanTotal > 0 && (
+                  <div className="flex justify-between" style={{ color: C.goldDeep }}>
+                    <span>{mealPlanLabel(mealPlanCode)} · {Math.max(1, Number(data.adults) || 1)} adult{(Number(data.adults) || 1) === 1 ? "" : "s"} × {nights}n</span>
+                    <span>{formatCurrency(mealPlanTotal)}</span>
+                  </div>
+                )}
                 {memberDiscount > 0 && (
                   <div className="flex justify-between" style={{ color: C.gold }}>
                     <span>

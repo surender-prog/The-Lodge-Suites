@@ -58,6 +58,16 @@ export const ROOMS = [
     maxExtraBeds: 0,
     extraBedFee: 0,
     extraBedAdds: { adults: 0, children: 0 },
+    // Meal plan supplements per adult per night. RO is always free
+    // (the rack rate); BB / HB / FB scale roughly with what we'd pay
+    // an F&B partner per cover. Admin can edit per-room via the
+    // Rooms & Rates editor → Meal plans card.
+    mealPlans: {
+      ro: { enabled: true, supplement: 0 },
+      bb: { enabled: true, supplement: 6 },
+      hb: { enabled: true, supplement: 18 },
+      fb: { enabled: true, supplement: 28 },
+    },
   },
   {
     id: "one-bed",
@@ -76,6 +86,12 @@ export const ROOMS = [
     // sleeper. Doesn't increase the child cap (already covered by the
     // sofa-bed policy in the suite).
     extraBedAdds: { adults: 1, children: 0 },
+    mealPlans: {
+      ro: { enabled: true, supplement: 0 },
+      bb: { enabled: true, supplement: 7 },
+      hb: { enabled: true, supplement: 22 },
+      fb: { enabled: true, supplement: 32 },
+    },
   },
   {
     id: "two-bed",
@@ -90,6 +106,12 @@ export const ROOMS = [
     maxExtraBeds: 1,
     extraBedFee: 18,
     extraBedAdds: { adults: 1, children: 0 },
+    mealPlans: {
+      ro: { enabled: true, supplement: 0 },
+      bb: { enabled: true, supplement: 8 },
+      hb: { enabled: true, supplement: 26 },
+      fb: { enabled: true, supplement: 38 },
+    },
   },
   {
     id: "three-bed",
@@ -104,5 +126,11 @@ export const ROOMS = [
     maxExtraBeds: 2,
     extraBedFee: 18,
     extraBedAdds: { adults: 1, children: 0 },
+    mealPlans: {
+      ro: { enabled: true, supplement: 0 },
+      bb: { enabled: true, supplement: 9 },
+      hb: { enabled: true, supplement: 30 },
+      fb: { enabled: true, supplement: 44 },
+    },
   },
 ];

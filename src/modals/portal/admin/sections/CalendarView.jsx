@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Save, Trash2 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
-import { useData, formatCurrency } from "../../../../data/store.jsx";
+import { useData, formatCurrency, MEAL_PLANS } from "../../../../data/store.jsx";
 import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, SelectField, Stat, TextField } from "../ui.jsx";
 
 // Convert a Date → 'YYYY-MM-DD' in local time so cell edits don't drift across
@@ -376,9 +376,15 @@ function CellEditor({ selected, onClose, occMap }) {
   const [stopSale, setStopSale] = useState(initial?.stopSale ?? false);
   const [blocked, setBlocked] = useState(initial?.blocked ?? 0);
   const [reason, setReason] = useState(initial?.reason ?? "");
+  // Per-day meal plan override — "" means "no override" (booking flow
+  // uses whatever the guest picked / the channel default). Setting it
+  // forces a specific plan for this date, e.g. a "BB included" promo
+  // weekend or a Ramadan iftar HB push.
+  const [mealPlan, setMealPlan] = useState(ov?.mealPlan ?? "");
 
   React.useEffect(() => {
     if (initial) { setRate(initial.rate); setStopSale(initial.stopSale); setBlocked(initial.blocked); setReason(initial.reason); }
+    setMealPlan(ov?.mealPlan ?? "");
   }, [selected]);
 
   if (!selected || !room) return null;
@@ -389,6 +395,8 @@ function CellEditor({ selected, onClose, occMap }) {
       stopSale,
       blocked: Number(blocked),
       reason,
+      // Persist null when blank so we don't pollute the cell with empty strings.
+      mealPlan: mealPlan || null,
     });
     onClose();
   };
@@ -423,6 +431,19 @@ function CellEditor({ selected, onClose, occMap }) {
         <label className="flex items-center gap-2" style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.85rem" }}>
           <input type="checkbox" checked={stopSale} onChange={(e) => setStopSale(e.target.checked)} /> Stop-sale (close availability)
         </label>
+        <FormGroup label="Meal plan override (optional)">
+          <SelectField
+            value={mealPlan}
+            onChange={setMealPlan}
+            options={[
+              { value: "", label: "— No override (use booking's choice) —" },
+              ...MEAL_PLANS.map((m) => ({ value: m.code, label: `${m.short} · ${m.label}` })),
+            ]}
+          />
+          <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", marginTop: 6, lineHeight: 1.55 }}>
+            Forces a specific plan on bookings that include this date for this suite — useful for "BB-included weekends" or Ramadan iftar HB pushes. Leave blank to honour whatever the guest picked at checkout.
+          </div>
+        </FormGroup>
         <FormGroup label="Reason / note"><TextField value={reason} onChange={setReason} placeholder="Group block, refurb, weekend uplift…" /></FormGroup>
       </div>
     </Drawer>

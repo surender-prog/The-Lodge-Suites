@@ -23,6 +23,11 @@ const INITIAL_TIERS = [
     id: "silver", name: "Silver", nightsLabel: "1–9 nights",
     intro: "The first step into LS Privilege.",
     icon: "Award", color: "#A8A8A8", earnRate: 1, builtIn: true,
+    // Meal plan pre-filled on member bookings at this tier. Silver
+    // members default to RO (no perk); Gold gets BB; Platinum gets HB.
+    // Admin can edit per-tier via the Tiers section. The booking flow
+    // still lets the guest pick a different plan if they want.
+    defaultMealPlan: "ro",
     benefits: [
       { id: "s1", label: "5% member rate on every booking", on: true },
       { id: "s2", label: "1 point per BHD spent on rooms", on: true },
@@ -37,6 +42,7 @@ const INITIAL_TIERS = [
     id: "gold", name: "Gold", nightsLabel: "10–24 nights",
     intro: "Where the meaningful perks begin.",
     icon: "Crown", color: "#C9A961", earnRate: 1.5, builtIn: true, featured: true,
+    defaultMealPlan: "bb",
     benefits: [
       { id: "g1", label: "10% member rate on every booking", on: true },
       { id: "g2", label: "1.5 points per BHD spent", on: true },
@@ -51,6 +57,7 @@ const INITIAL_TIERS = [
     id: "platinum", name: "Platinum", nightsLabel: "25+ nights / year",
     intro: "Treated as residents, not guests.",
     icon: "Gem", color: "#D4B97A", earnRate: 2, builtIn: true,
+    defaultMealPlan: "hb",
     benefits: [
       { id: "p1", label: "15% member rate + best rate guarantee", on: true },
       { id: "p2", label: "2 points per BHD spent", on: true },
@@ -319,6 +326,81 @@ export function nightlyBreakdown({ checkIn, checkOut, room, weekendDays, overrid
     cursor.setDate(cursor.getDate() + 1);
   }
   return { weekdayNights, weekendNights, perNight, total, rateWeekday, rateWeekend };
+}
+
+// ─── Meal plans ───────────────────────────────────────────────────────────
+//
+// Each suite type carries a catalogue of meal plans (RO / BB / HB / FB)
+// with a per-adult-per-night supplement that's added on top of the
+// rack-rate when a booking line picks that plan. The catalogue lives on
+// `room.mealPlans` so admin can edit per-suite — different suite types
+// can have different F&B economics, and the bigger suites typically
+// attract higher-spending guests.
+//
+// Touch-points:
+//   • Public BookingModal       — meal-plan picker per booking line
+//   • Admin booking creator     — same picker, defaults to operator pref
+//   • Corporate agreement rates — each rate row stores its own mealPlan
+//   • Travel-agency rates       — same shape as corporate
+//   • Member tier benefits      — tiers can pre-set a default mealPlan
+//   • Calendar cell             — override mealPlan per day (promo runs)
+//   • Invoice / receipt PDFs    — show the plan on the line item
+//
+// Helpers:
+//   mealPlanSupplement(room, code) → BHD per adult per night
+//   mealPlanCost(room, code, { adults, nights }) → total BHD added
+//   enabledMealPlansFor(room) → ordered MEAL_PLANS list filtered to "on"
+//   mealPlanLabel(code) → "Room Only" / "Bed & Breakfast" / ...
+
+export const MEAL_PLANS = [
+  { code: "ro", short: "RO", label: "Room Only",      blurb: "Accommodation only — no meals included.",                              icon: "Coffee" },
+  { code: "bb", short: "BB", label: "Bed & Breakfast", blurb: "Buffet breakfast served daily in The Conservatory, 6:30–10:30am.",     icon: "Croissant" },
+  { code: "hb", short: "HB", label: "Half Board",      blurb: "Breakfast + dinner. Choose the à-la-carte menu or the chef's plat du jour.", icon: "Utensils" },
+  { code: "fb", short: "FB", label: "Full Board",      blurb: "Breakfast, lunch and dinner. Best for long stays and corporate parties.", icon: "ChefHat" },
+];
+
+export const MEAL_PLAN_CODES = MEAL_PLANS.map((m) => m.code);
+const MEAL_PLAN_BY_CODE = MEAL_PLANS.reduce((acc, m) => { acc[m.code] = m; return acc; }, {});
+
+// The default catalogue applied to a room when `mealPlans` is missing.
+// Mirrors the studio's seed in src/data/rooms.js so a stripped-down room
+// row still renders meaningfully.
+export const DEFAULT_MEAL_PLANS_FOR_ROOM = {
+  ro: { enabled: true, supplement: 0 },
+  bb: { enabled: true, supplement: 6 },
+  hb: { enabled: true, supplement: 18 },
+  fb: { enabled: true, supplement: 28 },
+};
+
+export function mealPlanLabel(code) {
+  return MEAL_PLAN_BY_CODE[code]?.label || "Room Only";
+}
+export function mealPlanShort(code) {
+  return MEAL_PLAN_BY_CODE[code]?.short || "RO";
+}
+export function mealPlanBlurb(code) {
+  return MEAL_PLAN_BY_CODE[code]?.blurb || "";
+}
+
+/** Read the per-adult-per-night supplement for `code` from this room. */
+export function mealPlanSupplement(room, code) {
+  if (!room || !code) return 0;
+  const map = room.mealPlans || DEFAULT_MEAL_PLANS_FOR_ROOM;
+  const entry = map[code];
+  if (!entry || entry.enabled === false) return 0;
+  return Number(entry.supplement) || 0;
+}
+
+/** Total BHD that `code` adds to a booking line. */
+export function mealPlanCost(room, code, { adults = 0, nights = 0 } = {}) {
+  const per = mealPlanSupplement(room, code);
+  return per * Math.max(0, Number(adults) || 0) * Math.max(0, Number(nights) || 0);
+}
+
+/** Ordered list of MEAL_PLANS filtered to those enabled on this room. */
+export function enabledMealPlansFor(room) {
+  const map = room?.mealPlans || DEFAULT_MEAL_PLANS_FOR_ROOM;
+  return MEAL_PLANS.filter((m) => (map[m.code]?.enabled !== false));
 }
 
 // Approximate inverse: given a gross amount and the current tax config, work

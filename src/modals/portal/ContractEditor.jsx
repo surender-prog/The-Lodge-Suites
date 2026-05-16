@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
 import { supabase, SUPABASE_CONFIGURED } from "../../lib/supabase.js";
-import { formatCurrency } from "../../data/store.jsx";
+import { formatCurrency, MEAL_PLANS } from "../../data/store.jsx";
 import { pushToast } from "./admin/ui.jsx";
 
 // ---------------------------------------------------------------------------
@@ -111,6 +111,11 @@ export function defaultCorporateDraft(existingIds = []) {
     monthlyRates: { studio: 0, oneBed: 0, twoBed: 0, threeBed: 0 },
     weekendUpliftPct: 0, taxIncluded: false, accommodationFee: 0,
     inclusions: { breakfast: false, lateCheckOut: false, parking: true, wifi: true, meetingRoom: false },
+    // Default meal plan applied when a booking is created on behalf of
+    // this corporate account (admin Bookings → Book on behalf). RO is
+    // the safe default; bump to BB / HB / FB when breakfast / dinner /
+    // all meals are part of the negotiated package.
+    defaultMealPlan: "ro",
     eventSupplements: [],
     cancellationPolicy: "Free cancellation up to 48h before arrival.",
     paymentTerms: "Net 30", creditLimit: 0,
@@ -133,6 +138,10 @@ export function defaultAgencyDraft(existingIds = []) {
     weekendNet: { studio: 0, oneBed: 0, twoBed: 0, threeBed: 0 },
     monthlyNet: { studio: 0, oneBed: 0, twoBed: 0, threeBed: 0 },
     weekendUpliftPct: 0, taxIncluded: false, accommodationFee: 0,
+    // Default meal plan applied when a booking is created on behalf of
+    // this agency. Agencies often quote BB nets to their leisure
+    // clients; admin can flip per-contract here.
+    defaultMealPlan: "ro",
     eventSupplements: [],
     paymentTerms: "Net 30", creditLimit: 0,
     pocName: "", pocEmail: "", pocPhone: "", notes: "",
@@ -465,6 +474,46 @@ export function ContractEditor({ open, onClose, contract, kind, onSave, onRemove
                       </button>
                     );
                   })}
+                </div>
+                {/* Default meal plan — applied to bookings created on
+                    behalf of this {kind}. The supplement (per adult per
+                    night) is read off each suite's mealPlans catalogue
+                    in Rooms & Rates. Pick RO for "no F&B negotiated". */}
+                <div className="mt-4 pt-4" style={{ borderTop: `1px solid ${p.border}` }}>
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                        Default meal plan
+                      </div>
+                      <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 4, lineHeight: 1.5 }}>
+                        Pre-filled on every booking we create on behalf of this {isCorporate ? "account" : "agency"}. Per-stay overrides remain available.
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {MEAL_PLANS.map((m) => {
+                        const sel = (draft.defaultMealPlan || "ro") === m.code;
+                        return (
+                          <button key={m.code}
+                            onClick={() => set({ defaultMealPlan: m.code })}
+                            style={{
+                              padding: "0.45rem 0.85rem",
+                              border: `1px solid ${sel ? p.accent : p.border}`,
+                              backgroundColor: sel ? `${p.accent}1F` : "transparent",
+                              color: sel ? p.accent : p.textSecondary,
+                              fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", fontWeight: 700,
+                              letterSpacing: "0.04em", cursor: "pointer",
+                              display: "inline-flex", alignItems: "center", gap: 6,
+                            }}
+                            aria-pressed={sel}
+                            title={m.label}
+                          >
+                            {sel ? <Check size={11} /> : null}
+                            {m.short}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               </CECard>
 

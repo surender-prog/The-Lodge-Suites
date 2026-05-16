@@ -1,12 +1,14 @@
 import React, { useMemo, useState } from "react";
 import {
-  Accessibility, BedDouble, Building2, Check, Coins, Edit2, Filter, Image as ImageIcon,
-  Layers, LayoutGrid, Link2, List, Plus, RotateCcw, Save, Trash2, Users, X,
+  Accessibility, BedDouble, Building2, Check, ChefHat, Coffee, Coins, Croissant,
+  Edit2, Filter, Image as ImageIcon, Layers, LayoutGrid, Link2, List, Plus,
+  RotateCcw, Save, Trash2, Users, Utensils, X,
 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT } from "../../../../i18n/LanguageContext.jsx";
 import {
   applyTaxes, ROOM_UNIT_STATUSES, ROOM_VIEWS, useData, formatCurrency,
+  MEAL_PLANS, DEFAULT_MEAL_PLANS_FOR_ROOM,
 } from "../../../../data/store.jsx";
 import {
   Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast,
@@ -460,6 +462,96 @@ function RoomTypeEditor({ room, draft, setDraft, tax, unitCount, onCancel, onSav
               />
               <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 4 }}>Per bed.</div>
             </FormGroup>
+          </div>
+        </Card>
+
+        {/* Meal plans — RO / BB / HB / FB catalogue per suite. Operator
+            picks which plans the suite offers and what the per-adult-
+            per-night supplement is. Edits here flow through to the
+            public BookingModal picker, the admin booking creator, the
+            corporate/agency rate rows, the member tier defaults, and
+            the invoice + receipt line items. */}
+        <Card title="Meal plans" className="lg:col-span-3" action={
+          <div className="flex items-center gap-2" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem" }}>
+            <Utensils size={13} style={{ color: p.accent }} />
+            <span style={{ color: p.accent, letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}>
+              {Object.values(draft.mealPlans || DEFAULT_MEAL_PLANS_FOR_ROOM).filter((m) => m?.enabled !== false).length} offered
+            </span>
+          </div>
+        }>
+          <p style={{ color: p.textSecondary, fontSize: "0.86rem", lineHeight: 1.6, marginBottom: 14 }}>
+            Each plan adds a per-adult-per-night supplement on top of the rack rate. <strong>RO</strong> (Room Only) is the rack-rate baseline. <strong>BB</strong> (Bed &amp; Breakfast), <strong>HB</strong> (Half Board) and <strong>FB</strong> (Full Board) climb from there. Turn a plan <em>off</em> to hide it from this suite's booking picker without losing the supplement value (useful for seasonal pull-downs).
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {MEAL_PLANS.map((m) => {
+              const map   = draft.mealPlans || DEFAULT_MEAL_PLANS_FOR_ROOM;
+              const entry = map[m.code] || { enabled: false, supplement: 0 };
+              const Ic    = m.icon === "ChefHat" ? ChefHat : m.icon === "Croissant" ? Croissant : m.icon === "Utensils" ? Utensils : Coffee;
+              return (
+                <div key={m.code} className="p-4" style={{
+                  backgroundColor: entry.enabled !== false ? `${p.accent}10` : p.bgPanelAlt,
+                  border: `1px solid ${entry.enabled !== false ? p.accent : p.border}`,
+                  borderInlineStart: `3px solid ${entry.enabled !== false ? p.accent : p.border}`,
+                  opacity: entry.enabled !== false ? 1 : 0.7,
+                }}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Ic size={14} style={{ color: entry.enabled !== false ? p.accent : p.textMuted }} />
+                      <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.1rem", color: p.textPrimary, fontWeight: 500 }}>
+                        {m.label}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => set({
+                        mealPlans: { ...map, [m.code]: { ...entry, enabled: entry.enabled === false } },
+                      })}
+                      style={{
+                        width: 36, height: 20, borderRadius: 999,
+                        backgroundColor: entry.enabled !== false ? p.accent : p.border,
+                        position: "relative", border: "none", cursor: m.code === "ro" ? "not-allowed" : "pointer",
+                        flexShrink: 0,
+                        opacity: m.code === "ro" ? 0.5 : 1,
+                      }}
+                      disabled={m.code === "ro"}
+                      aria-pressed={entry.enabled !== false}
+                      aria-label={`Toggle ${m.label} availability`}
+                      title={m.code === "ro" ? "RO (Room Only) is always available — it's the rack-rate baseline" : `Toggle ${m.label}`}
+                    >
+                      <span style={{
+                        position: "absolute", top: 2, left: entry.enabled !== false ? 18 : 2,
+                        width: 16, height: 16, borderRadius: "50%",
+                        backgroundColor: "#fff", transition: "left 120ms",
+                      }} />
+                    </button>
+                  </div>
+                  <div style={{ color: p.textMuted, fontSize: "0.72rem", marginTop: 4, fontFamily: "'Manrope', sans-serif", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}>
+                    {m.short} · per adult / night
+                  </div>
+                  <div className="mt-2">
+                    <FormGroup label={`${m.short} supplement`}>
+                      <TextField
+                        type="number"
+                        value={entry.supplement ?? 0}
+                        onChange={(v) => set({
+                          mealPlans: { ...map, [m.code]: { ...entry, supplement: v, enabled: m.code === "ro" ? true : entry.enabled !== false } },
+                        })}
+                        suffix="BHD"
+                      />
+                    </FormGroup>
+                  </div>
+                  <div style={{ color: p.textMuted, fontSize: "0.72rem", marginTop: 8, lineHeight: 1.5 }}>
+                    {m.blurb}
+                  </div>
+                  {/* Live "what it costs a 2-adult couple over 3 nights" preview */}
+                  {Number(entry.supplement) > 0 && entry.enabled !== false && (
+                    <div className="mt-3 p-2" style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}`, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem" }}>
+                      <span style={{ color: p.textMuted }}>2 adults · 3 nights →</span>
+                      <span style={{ color: p.accent, fontWeight: 700, marginInlineStart: 6 }}>+ {formatCurrency(Number(entry.supplement) * 2 * 3)}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </Card>
 
