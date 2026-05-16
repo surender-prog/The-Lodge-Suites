@@ -1172,7 +1172,18 @@ export const BookingModal = ({ open, onClose, initial }) => {
                       the grand total in the summary rail on the right. */}
                   {(() => {
                     const planLeadRoom = roomLines[0]?.room || leadRoom;
-                    const plans = enabledMealPlansFor(planLeadRoom);
+                    let plans = enabledMealPlansFor(planLeadRoom);
+                    // Tier-driven narrowing: if a recognised member is
+                    // booking and their tier carries an availablePlans
+                    // list, filter the picker to that subset so the
+                    // guest only sees plans their tier negotiated.
+                    if (memberTier) {
+                      const tierRec = (tiers || []).find((t) => t.id === memberTier);
+                      const allowed = Array.isArray(tierRec?.availablePlans) ? tierRec.availablePlans : null;
+                      if (allowed && allowed.length > 0) {
+                        plans = plans.filter((m) => allowed.includes(m.code));
+                      }
+                    }
                     const adults = Math.max(1, Number(data.adults) || 1);
                     return (
                       <div className="mb-2">

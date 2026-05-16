@@ -98,6 +98,56 @@ async function uploadSignedContract(file, accountKind, accountId) {
 const MAX_CONTRACT_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB — matches bucket policy
 const ALLOWED_CONTRACT_MIME = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
 
+// ─────────────────────────────────────────────────────────────────────────
+// Meal-plan helpers — back-compat with single-default contracts.
+//
+// Old contracts only carried `defaultMealPlan` (one code). New contracts
+// carry `availablePlans` (an array) PLUS `defaultMealPlan` (one of the
+// items in the array). These helpers normalise either shape so every
+// downstream consumer (matrix, document, booking creator) reads the
+// same canonical list.
+// ─────────────────────────────────────────────────────────────────────────
+const VALID_PLAN_CODES = ["ro", "bb", "hb", "fb"];
+
+export function ensurePlanList(availablePlans, defaultMealPlan) {
+  // Honour an explicit availablePlans array first.
+  if (Array.isArray(availablePlans) && availablePlans.length > 0) {
+    const cleaned = availablePlans.filter((c) => VALID_PLAN_CODES.includes(c));
+    // Always include RO — it's the rack baseline; we don't let a
+    // contract render an empty plan list.
+    if (!cleaned.includes("ro")) cleaned.unshift("ro");
+    // If a default is set but missing from the picks, include it.
+    if (defaultMealPlan && VALID_PLAN_CODES.includes(defaultMealPlan) && !cleaned.includes(defaultMealPlan)) {
+      cleaned.push(defaultMealPlan);
+    }
+    return dedupeKeepOrder(cleaned);
+  }
+  // Legacy single-plan contract — derive the list from the default.
+  if (defaultMealPlan && VALID_PLAN_CODES.includes(defaultMealPlan)) {
+    return defaultMealPlan === "ro" ? ["ro"] : ["ro", defaultMealPlan];
+  }
+  return ["ro"];
+}
+
+export function resolveDefaultPlan(availablePlans, defaultMealPlan) {
+  const list = ensurePlanList(availablePlans, defaultMealPlan);
+  if (defaultMealPlan && list.includes(defaultMealPlan)) return defaultMealPlan;
+  // Pick the highest-tier plan as a sensible fallback when the default
+  // got removed — RO → BB → HB → FB ordering. Operators rarely want
+  // RO as the booking default once they've negotiated meals.
+  for (const code of ["fb", "hb", "bb", "ro"]) {
+    if (list.includes(code)) return code;
+  }
+  return "ro";
+}
+
+function dedupeKeepOrder(arr) {
+  const seen = new Set();
+  const out  = [];
+  for (const x of arr) { if (!seen.has(x)) { seen.add(x); out.push(x); } }
+  return out;
+}
+
 // Default contract templates used when the caller passes a fresh draft.
 export function defaultCorporateDraft(existingIds = []) {
   const yr = new Date().getFullYear();
@@ -111,10 +161,13 @@ export function defaultCorporateDraft(existingIds = []) {
     monthlyRates: { studio: 0, oneBed: 0, twoBed: 0, threeBed: 0 },
     weekendUpliftPct: 0, taxIncluded: false, accommodationFee: 0,
     inclusions: { breakfast: false, lateCheckOut: false, parking: true, wifi: true, meetingRoom: false },
-    // Default meal plan applied when a booking is created on behalf of
-    // this corporate account (admin Bookings → Book on behalf). RO is
-    // the safe default; bump to BB / HB / FB when breakfast / dinner /
-    // all meals are part of the negotiated package.
+    // Meal plans negotiated under this contract. `availablePlans` is
+    // the full menu the corporate / agency can pick from at booking
+    // time (e.g. ["bb","hb"] means they can choose either BB or HB but
+    // not FB). `defaultMealPlan` is the one that pre-fills on every
+    // new booking; it must be in `availablePlans`. RO is the rack
+    // baseline and is always implicitly available.
+    availablePlans: ["ro"],
     defaultMealPlan: "ro",
     eventSupplements: [],
     cancellationPolicy: "Free cancellation up to 48h before arrival.",
@@ -138,9 +191,10 @@ export function defaultAgencyDraft(existingIds = []) {
     weekendNet: { studio: 0, oneBed: 0, twoBed: 0, threeBed: 0 },
     monthlyNet: { studio: 0, oneBed: 0, twoBed: 0, threeBed: 0 },
     weekendUpliftPct: 0, taxIncluded: false, accommodationFee: 0,
-    // Default meal plan applied when a booking is created on behalf of
-    // this agency. Agencies often quote BB nets to their leisure
-    // clients; admin can flip per-contract here.
+    // See the corporate template for the availablePlans / defaultMealPlan
+    // contract. Agencies often quote BB nets to their leisure clients;
+    // admin can flip per-contract here.
+    availablePlans: ["ro"],
     defaultMealPlan: "ro",
     eventSupplements: [],
     paymentTerms: "Net 30", creditLimit: 0,
@@ -615,58 +669,34 @@ export function ContractEditor({ open, onClose, contract, kind, onSave, onRemove
                     );
                   })}
                 </div>
-                {/* Default meal plan — applied to bookings created on
-                    behalf of this {kind}. The supplement (per adult per
-                    night) is read off each suite's mealPlans catalogue
-                    in Rooms & Rates. Pick RO for "no F&B negotiated". */}
+                {/* Meal plans — multi-select. The operator picks every
+                    plan negotiated under this {kind} (e.g. BB + HB),
+                    then chooses which one pre-fills on new bookings as
+                    the DEFAULT. RO (Room Only) is always implicitly
+                    available since it's the rack-rate baseline. */}
                 <div className="mt-4 pt-4" style={{ borderTop: `1px solid ${p.border}` }}>
-                  <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <div>
-                      <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
-                        Default meal plan
-                      </div>
-                      <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 4, lineHeight: 1.5 }}>
-                        Pre-filled on every booking we create on behalf of this {isCorporate ? "account" : "agency"}. Per-stay overrides remain available.
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {MEAL_PLANS.map((m) => {
-                        const sel = (draft.defaultMealPlan || "ro") === m.code;
-                        return (
-                          <button key={m.code}
-                            onClick={() => set({ defaultMealPlan: m.code })}
-                            style={{
-                              padding: "0.45rem 0.85rem",
-                              border: `1px solid ${sel ? p.accent : p.border}`,
-                              backgroundColor: sel ? `${p.accent}1F` : "transparent",
-                              color: sel ? p.accent : p.textSecondary,
-                              fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", fontWeight: 700,
-                              letterSpacing: "0.04em", cursor: "pointer",
-                              display: "inline-flex", alignItems: "center", gap: 6,
-                            }}
-                            aria-pressed={sel}
-                            title={m.label}
-                          >
-                            {sel ? <Check size={11} /> : null}
-                            {m.short}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                  <ContractMealPlansPicker
+                    p={p}
+                    kind={kind}
+                    availablePlans={draft.availablePlans}
+                    defaultMealPlan={draft.defaultMealPlan}
+                    onChange={(patch) => set(patch)}
+                  />
 
                   {/* Live supplement matrix — per-suite × per-plan BHD,
                       sourced from each room's `mealPlans` master in
-                      Rooms & Rates. The picked plan column is gold-tinted
-                      so the operator immediately sees what they've
-                      committed to. RO is always BHD 0. Operators can
-                      flip to inline edit mode to adjust the master
-                      rates directly from the contract (changes affect
-                      every contract / tier / booking — clearly warned). */}
+                      Rooms & Rates. Every picked plan column is
+                      gold-tinted; the default one carries a star so
+                      the operator sees the booking-creator pre-fill
+                      at a glance. Operators can flip to inline edit
+                      mode to adjust the master rates directly from
+                      the contract (changes affect every contract /
+                      tier / booking — clearly warned). */}
                   <MealPlanSupplementMatrix
                     p={p}
                     rooms={rooms}
-                    selectedPlan={draft.defaultMealPlan || "ro"}
+                    selectedPlans={ensurePlanList(draft.availablePlans, draft.defaultMealPlan)}
+                    defaultPlan={resolveDefaultPlan(draft.availablePlans, draft.defaultMealPlan)}
                     onUpdateRoom={updateRoom}
                   />
                 </div>
@@ -1268,7 +1298,170 @@ function ceTh(p) {
 //   picks a default meal plan) can reuse the exact same matrix without
 //   duplication.
 // ─────────────────────────────────────────────────────────────────────────
-export function MealPlanSupplementMatrix({ p, rooms, selectedPlan, onUpdateRoom }) {
+// ─────────────────────────────────────────────────────────────────────────
+// ContractMealPlansPicker
+//   Multi-select chip row for the meal plans negotiated under a
+//   contract / tier, plus a star toggle on each picked chip that lets
+//   the operator nominate one as the booking-creator default.
+//
+//   State protocol — emits one consolidated patch via `onChange`:
+//     onChange({ availablePlans, defaultMealPlan })
+//
+//   • Tapping an unpicked chip → adds it to availablePlans. The very
+//     first non-RO pick auto-becomes the default (saves an extra click).
+//   • Tapping the star on a picked chip → makes it the new default.
+//   • Tapping the body of a picked, non-default chip → removes it.
+//   • Tapping the body of the picked DEFAULT chip → no-op (operators
+//     must change the default first, otherwise they'd lose it
+//     accidentally).
+//   • RO is always implicitly available; the chip stays clickable so
+//     RO can be set as the default ("no F&B negotiated") without
+//     anything else picked.
+// ─────────────────────────────────────────────────────────────────────────
+function ContractMealPlansPicker({ p, kind, availablePlans, defaultMealPlan, onChange }) {
+  const isCorporate = kind === "corporate";
+  const plans       = ensurePlanList(availablePlans, defaultMealPlan);
+  const def         = resolveDefaultPlan(availablePlans, defaultMealPlan);
+
+  const isPicked  = (code) => plans.includes(code);
+  const isDefault = (code) => code === def;
+
+  const togglePlan = (code) => {
+    if (code === "ro") {
+      // RO is always available; clicking it just makes it the default
+      // (useful for "no F&B negotiated"). Other plans can stay picked.
+      onChange({ availablePlans: plans, defaultMealPlan: "ro" });
+      return;
+    }
+    if (isPicked(code)) {
+      if (isDefault(code)) {
+        // Defaults can't be removed by a single click — promote
+        // another plan first. Pick the next-highest tier as a
+        // sensible fallback, or fall back to RO.
+        const candidates = plans.filter((c) => c !== code);
+        const nextDefault = ["fb", "hb", "bb", "ro"].find((c) => candidates.includes(c)) || "ro";
+        const nextList = candidates.length > 0 ? candidates : ["ro"];
+        onChange({ availablePlans: nextList, defaultMealPlan: nextDefault });
+        return;
+      }
+      // Drop a non-default plan.
+      onChange({
+        availablePlans: plans.filter((c) => c !== code),
+        defaultMealPlan: def,
+      });
+      return;
+    }
+    // Adding a new plan. If this is the first non-RO plan picked,
+    // promote it to default automatically.
+    const nextList    = dedupeKeepOrder([...plans, code]);
+    const nextDefault = def === "ro" && code !== "ro" ? code : def;
+    onChange({ availablePlans: nextList, defaultMealPlan: nextDefault });
+  };
+
+  const makeDefault = (code) => {
+    // Star toggle — always sets the default. If the chip wasn't picked
+    // yet, add it first.
+    const nextList = isPicked(code) ? plans : dedupeKeepOrder([...plans, code]);
+    onChange({ availablePlans: nextList, defaultMealPlan: code });
+  };
+
+  return (
+    <div className="flex items-start justify-between gap-3 flex-wrap">
+      <div>
+        <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+          Meal plans negotiated
+        </div>
+        <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 4, lineHeight: 1.5, maxWidth: 380 }}>
+          Pick every plan available under this {isCorporate ? "account" : "agency"}. Tap the <strong style={{ color: p.accent }}>★</strong> on any picked plan to make it the booking-creator default (pre-fills on every reservation we create on behalf of this {isCorporate ? "account" : "agency"}). Per-stay overrides remain available.
+        </div>
+        <div className="mt-2" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", color: p.textMuted }}>
+          Picked: <strong style={{ color: p.accent }}>{plans.map((c) => c.toUpperCase()).join(" · ")}</strong>
+          {" · Default: "}<strong style={{ color: p.accent }}>{def.toUpperCase()}</strong>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {MEAL_PLANS.map((m) => {
+          const picked  = isPicked(m.code);
+          const defOne  = isDefault(m.code);
+          // Three visual states:
+          //   default-picked  — gold-filled with star
+          //   other-picked    — gold-outlined with check
+          //   unpicked        — neutral outline
+          const bg = defOne ? `${p.accent}33` : picked ? `${p.accent}10` : "transparent";
+          const fg = defOne ? p.accent       : picked ? p.accent       : p.textSecondary;
+          const bc = defOne ? p.accent       : picked ? p.accent       : p.border;
+          return (
+            <div key={m.code} className="inline-flex" style={{ position: "relative" }}>
+              <button
+                onClick={() => togglePlan(m.code)}
+                style={{
+                  padding: "0.45rem 0.85rem",
+                  paddingInlineEnd: picked ? "1.85rem" : "0.85rem",
+                  border: `1px solid ${bc}`,
+                  borderInlineEnd: picked ? "none" : `1px solid ${bc}`,
+                  backgroundColor: bg, color: fg,
+                  fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", fontWeight: 700,
+                  letterSpacing: "0.04em", cursor: "pointer",
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                }}
+                aria-pressed={picked}
+                title={
+                  defOne ? `${m.label} · current default`
+                    : picked ? `${m.label} · click to remove (or tap ★ to make default)`
+                    : `${m.label} · click to add`
+                }
+              >
+                {defOne ? "★ " : picked ? <Check size={11} /> : null}
+                {m.short}
+              </button>
+              {picked && !defOne && (
+                <button
+                  onClick={() => makeDefault(m.code)}
+                  style={{
+                    padding: "0.45rem 0.55rem",
+                    border: `1px solid ${bc}`,
+                    borderInlineStart: "none",
+                    backgroundColor: bg, color: p.textMuted,
+                    fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", fontWeight: 700,
+                    cursor: "pointer",
+                    display: "inline-flex", alignItems: "center",
+                  }}
+                  title={`Make ${m.label} the booking-creator default`}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = p.accent; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = p.textMuted; }}
+                  aria-label={`Make ${m.label} default`}
+                >
+                  ★
+                </button>
+              )}
+              {!picked && (
+                <button
+                  onClick={() => makeDefault(m.code)}
+                  style={{
+                    padding: "0.45rem 0.55rem",
+                    border: `1px solid ${bc}`,
+                    borderInlineStart: "none",
+                    backgroundColor: bg, color: p.textMuted,
+                    fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                  title={`Add ${m.label} and make it the default`}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = p.accent; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = p.textMuted; }}
+                  aria-label={`Add ${m.label} as default`}
+                >
+                  ★
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export function MealPlanSupplementMatrix({ p, rooms, selectedPlan, selectedPlans, defaultPlan, onUpdateRoom }) {
   // When `onUpdateRoom` is supplied the matrix offers an inline edit
   // mode — the operator can adjust per-suite supplements directly from
   // the contract / tier editor instead of navigating to Rooms & Rates.
@@ -1277,7 +1470,19 @@ export function MealPlanSupplementMatrix({ p, rooms, selectedPlan, onUpdateRoom 
   // Falls back to read-only mode when `onUpdateRoom` is omitted.
   const [editing, setEditing] = useState(false);
   if (!rooms || rooms.length === 0) return null;
-  const sel = selectedPlan || "ro";
+  // Backwards-compatible reading. New callers pass:
+  //   selectedPlans: ["bb","hb"]  + defaultPlan: "bb"
+  // Old callers pass:
+  //   selectedPlan: "bb"
+  // We normalise to a Set of highlighted columns + a single default
+  // code. The default gets a star + a slightly stronger tint than the
+  // other picked columns.
+  const pickedSet = new Set(
+    Array.isArray(selectedPlans) && selectedPlans.length > 0
+      ? selectedPlans
+      : selectedPlan ? [selectedPlan] : ["ro"]
+  );
+  const sel = defaultPlan || selectedPlan || (pickedSet.size > 0 ? Array.from(pickedSet)[0] : "ro");
   const canEdit = typeof onUpdateRoom === "function";
 
   const handleEdit = (room, code, value) => {
@@ -1312,7 +1517,10 @@ export function MealPlanSupplementMatrix({ p, rooms, selectedPlan, onUpdateRoom 
             padding: "2px 8px", fontFamily: "'Manrope', sans-serif",
             fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
           }}>
-            Picked: {sel.toUpperCase()}
+            {pickedSet.size > 1
+              ? <>Picked: {Array.from(pickedSet).map((c) => c.toUpperCase()).join(" · ")} · ★ {sel.toUpperCase()}</>
+              : <>Picked: {sel.toUpperCase()}</>
+            }
           </span>
           {canEdit && (
             <button
@@ -1356,19 +1564,27 @@ export function MealPlanSupplementMatrix({ p, rooms, selectedPlan, onUpdateRoom 
                 borderBottom: `1px solid ${p.border}`,
               }}>Suite</th>
               {MEAL_PLANS.map((m) => {
-                const isSel = m.code === sel;
+                const isPicked  = pickedSet.has(m.code);
+                const isDefault = m.code === sel;
+                // Layered intensity — default column gets the
+                // strongest tint, other picked columns get a softer
+                // gold wash, unpicked stays neutral.
+                const tint    = isDefault ? `${p.accent}22` : isPicked ? `${p.accent}10` : "transparent";
+                const colour  = isDefault ? p.accent       : isPicked ? p.accent       : p.textMuted;
+                const ruleStr = isDefault ? `2px solid ${p.accent}` : isPicked ? `1px solid ${p.accent}` : "none";
+                const ruleEnd = isDefault ? `2px solid ${p.accent}` : isPicked ? `1px solid ${p.accent}` : "none";
                 return (
                   <th key={m.code} style={{
                     ...ceTh(p),
-                    color: isSel ? p.accent : p.textMuted,
-                    backgroundColor: isSel ? `${p.accent}14` : "transparent",
+                    color: colour,
+                    backgroundColor: tint,
                     padding: "8px 10px",
                     textAlign: "end",
                     borderBottom: `1px solid ${p.border}`,
-                    borderInlineStart: isSel ? `2px solid ${p.accent}` : "none",
-                    borderInlineEnd:   isSel ? `2px solid ${p.accent}` : "none",
+                    borderInlineStart: ruleStr,
+                    borderInlineEnd:   ruleEnd,
                   }}>
-                    {m.short}
+                    {isDefault ? "★ " : ""}{m.short}
                     <div style={{ fontSize: "0.56rem", opacity: 0.7, marginTop: 2, letterSpacing: "0.04em" }}>
                       {m.label}
                     </div>
@@ -1391,19 +1607,25 @@ export function MealPlanSupplementMatrix({ p, rooms, selectedPlan, onUpdateRoom 
                    r.id === "three-bed"  ? "Three-Bedroom Suite" : r.id}
                 </td>
                 {MEAL_PLANS.map((m) => {
-                  const isSel = m.code === sel;
+                  const isPickedCell  = pickedSet.has(m.code);
+                  const isDefaultCell = m.code === sel;
                   const supp  = mealPlanSupplement(r, m.code);
                   const entry = (r.mealPlans || {})[m.code];
                   const disabled = entry?.enabled === false;
+                  const tint    = isDefaultCell ? `${p.accent}18` : isPickedCell ? `${p.accent}08` : "transparent";
+                  const colour  = isDefaultCell ? p.accent       : isPickedCell ? p.accent       : (supp > 0 ? p.textPrimary : p.textMuted);
+                  const weight  = isDefaultCell ? 700 : isPickedCell ? 600 : 500;
+                  const ruleStr = isDefaultCell ? `2px solid ${p.accent}` : isPickedCell ? `1px solid ${p.accent}` : "none";
+                  const ruleEnd = isDefaultCell ? `2px solid ${p.accent}` : isPickedCell ? `1px solid ${p.accent}` : "none";
                   const tdBase = {
                     padding: "8px 10px",
                     textAlign: "end",
                     fontVariantNumeric: "tabular-nums",
-                    color: isSel ? p.accent : (supp > 0 ? p.textPrimary : p.textMuted),
-                    fontWeight: isSel ? 700 : 500,
-                    backgroundColor: isSel ? `${p.accent}10` : "transparent",
-                    borderInlineStart: isSel ? `2px solid ${p.accent}` : "none",
-                    borderInlineEnd:   isSel ? `2px solid ${p.accent}` : "none",
+                    color: colour,
+                    fontWeight: weight,
+                    backgroundColor: tint,
+                    borderInlineStart: ruleStr,
+                    borderInlineEnd:   ruleEnd,
                     fontSize: "0.86rem",
                   };
                   if (editing) {
@@ -1470,7 +1692,12 @@ export function MealPlanSupplementMatrix({ p, rooms, selectedPlan, onUpdateRoom 
         </table>
       </div>
       <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", marginTop: 6, lineHeight: 1.5 }}>
-        For a 2-adult, 3-night stay this {selectedPlan === "ro" ? "default plan adds no F&B charge" : `default plan adds 2 × 3 × the supplement above per suite to the folio`}.
+        {pickedSet.size > 1
+          ? <>Multiple plans available — operators pick at booking. <strong>★ {sel.toUpperCase()}</strong> is the pre-filled default. For a 2-adult, 3-night stay each plan's supplement is its column above × 2 × 3 per suite.</>
+          : sel === "ro"
+            ? "Default plan adds no F&B charge to the folio."
+            : `Default plan adds 2 × 3 × the supplement above per suite to the folio (2 adults, 3 nights).`
+        }
       </div>
     </div>
   );

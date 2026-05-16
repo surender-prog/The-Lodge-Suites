@@ -23,10 +23,11 @@ const INITIAL_TIERS = [
     id: "silver", name: "Silver", nightsLabel: "1–9 nights",
     intro: "The first step into LS Privilege.",
     icon: "Award", color: "#A8A8A8", earnRate: 1, builtIn: true,
-    // Meal plan pre-filled on member bookings at this tier. Silver
-    // members default to RO (no perk); Gold gets BB; Platinum gets HB.
-    // Admin can edit per-tier via the Tiers section. The booking flow
-    // still lets the guest pick a different plan if they want.
+    // Meal plans available to members at this tier. `availablePlans` is
+    // the full set the guest can pick at booking; `defaultMealPlan` is
+    // the one that pre-fills. Silver = RO (no perk); Gold gets BB +
+    // RO option; Platinum gets RO + BB + HB so the member can pick.
+    availablePlans: ["ro"],
     defaultMealPlan: "ro",
     benefits: [
       { id: "s1", label: "5% member rate on every booking", on: true },
@@ -42,6 +43,7 @@ const INITIAL_TIERS = [
     id: "gold", name: "Gold", nightsLabel: "10–24 nights",
     intro: "Where the meaningful perks begin.",
     icon: "Crown", color: "#C9A961", earnRate: 1.5, builtIn: true, featured: true,
+    availablePlans: ["ro", "bb"],
     defaultMealPlan: "bb",
     benefits: [
       { id: "g1", label: "10% member rate on every booking", on: true },
@@ -57,6 +59,7 @@ const INITIAL_TIERS = [
     id: "platinum", name: "Platinum", nightsLabel: "25+ nights / year",
     intro: "Treated as residents, not guests.",
     icon: "Gem", color: "#D4B97A", earnRate: 2, builtIn: true,
+    availablePlans: ["ro", "bb", "hb"],
     defaultMealPlan: "hb",
     benefits: [
       { id: "p1", label: "15% member rate + best rate guarantee", on: true },

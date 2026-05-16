@@ -4,7 +4,7 @@ import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween } from "../../../../utils/date.js";
 import { useData, formatCurrency, MEAL_PLANS } from "../../../../data/store.jsx";
-import { MealPlanSupplementMatrix } from "../../ContractEditor.jsx";
+import { MealPlanSupplementMatrix, ensurePlanList, resolveDefaultPlan } from "../../ContractEditor.jsx";
 import { Icon } from "../../../../components/Icon.jsx";
 import { Card, Drawer, FileUpload, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 import { WalletCardDrawer } from "./WalletCard.jsx";
@@ -797,39 +797,17 @@ function TierEditor({ mode, draft: initial, onClose }) {
               <FormGroup label="Intro line (homepage tagline)">
                 <TextField value={draft.intro} onChange={(v) => set({ intro: v })} placeholder="A short, evocative line for the public site." />
               </FormGroup>
-              {/* Default meal plan — pre-fills on this tier's bookings.
-                  Silver typically RO (no perk); Gold BB; Platinum HB.
-                  Guest can still pick a different plan at checkout. The
-                  matrix below previews the per-suite supplement that
-                  flows from the room master. */}
-              <FormGroup label="Default meal plan for this tier">
-                <div className="flex flex-wrap gap-1.5">
-                  {MEAL_PLANS.map((m) => {
-                    const sel = (draft.defaultMealPlan || "ro") === m.code;
-                    return (
-                      <button key={m.code}
-                        onClick={() => set({ defaultMealPlan: m.code })}
-                        style={{
-                          padding: "0.45rem 0.85rem",
-                          border: `1px solid ${sel ? p.accent : p.border}`,
-                          backgroundColor: sel ? `${p.accent}1F` : "transparent",
-                          color: sel ? p.accent : p.textSecondary,
-                          fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", fontWeight: 700,
-                          letterSpacing: "0.04em", cursor: "pointer",
-                          display: "inline-flex", alignItems: "center", gap: 6,
-                        }}
-                        aria-pressed={sel}
-                        title={m.label}
-                      >
-                        {sel ? "✓ " : ""}{m.short}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", marginTop: 6, lineHeight: 1.55 }}>
-                  Pre-fills on bookings made by members at this tier. The per-adult-per-night supplement is sourced from the room master (Rooms &amp; Rates → Meal plans) and reflected below.
-                </div>
-              </FormGroup>
+              {/* Meal plans — multi-select with default star. Members
+                  at this tier can pick any of the picked plans at
+                  checkout; the starred one pre-fills. Silver typically
+                  RO only; Gold often offers RO + BB; Platinum offers
+                  RO + BB + HB so the member chooses on the day. */}
+              <TierMealPlansPicker
+                p={p}
+                availablePlans={draft.availablePlans}
+                defaultMealPlan={draft.defaultMealPlan}
+                onChange={(patch) => set(patch)}
+              />
               {/* Live supplement matrix — same component used in the
                   contract editor so corporate / agency / tier defaults
                   all share one source of truth. Inline edit mode lets
@@ -837,7 +815,8 @@ function TierEditor({ mode, draft: initial, onClose }) {
               <MealPlanSupplementMatrix
                 p={p}
                 rooms={rooms}
-                selectedPlan={draft.defaultMealPlan || "ro"}
+                selectedPlans={ensurePlanList(draft.availablePlans, draft.defaultMealPlan)}
+                defaultPlan={resolveDefaultPlan(draft.availablePlans, draft.defaultMealPlan)}
                 onUpdateRoom={updateRoom}
               />
               <label className="flex items-center gap-2" style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.85rem" }}>
@@ -1818,5 +1797,106 @@ function ProfileRow({ label, value, mono, color, p }) {
         wordBreak: "break-word",
       }}>{value || "—"}</div>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// TierMealPlansPicker — same protocol as the contract editor's picker:
+//   onChange({ availablePlans, defaultMealPlan })
+//
+// Lives here instead of being shared from ContractEditor because the
+// header copy is tier-specific ("members at this tier" vs. "this
+// account / agency"), but the toggle semantics are identical.
+// ─────────────────────────────────────────────────────────────────────────
+function TierMealPlansPicker({ p, availablePlans, defaultMealPlan, onChange }) {
+  const plans = ensurePlanList(availablePlans, defaultMealPlan);
+  const def   = resolveDefaultPlan(availablePlans, defaultMealPlan);
+
+  const isPicked  = (code) => plans.includes(code);
+  const isDefault = (code) => code === def;
+
+  const dedupe = (arr) => {
+    const s = new Set(); const o = [];
+    for (const x of arr) { if (!s.has(x)) { s.add(x); o.push(x); } }
+    return o;
+  };
+
+  const togglePlan = (code) => {
+    if (code === "ro") {
+      onChange({ availablePlans: plans, defaultMealPlan: "ro" });
+      return;
+    }
+    if (isPicked(code)) {
+      if (isDefault(code)) {
+        const others   = plans.filter((c) => c !== code);
+        const nextDef  = ["fb", "hb", "bb", "ro"].find((c) => others.includes(c)) || "ro";
+        const nextList = others.length > 0 ? others : ["ro"];
+        onChange({ availablePlans: nextList, defaultMealPlan: nextDef });
+        return;
+      }
+      onChange({ availablePlans: plans.filter((c) => c !== code), defaultMealPlan: def });
+      return;
+    }
+    const nextList = dedupe([...plans, code]);
+    const nextDef  = def === "ro" && code !== "ro" ? code : def;
+    onChange({ availablePlans: nextList, defaultMealPlan: nextDef });
+  };
+
+  const makeDefault = (code) => {
+    const nextList = isPicked(code) ? plans : dedupe([...plans, code]);
+    onChange({ availablePlans: nextList, defaultMealPlan: code });
+  };
+
+  return (
+    <FormGroup label="Meal plans available to this tier">
+      <div className="flex flex-wrap gap-1.5">
+        {MEAL_PLANS.map((m) => {
+          const picked = isPicked(m.code);
+          const defOne = isDefault(m.code);
+          const bg = defOne ? `${p.accent}33` : picked ? `${p.accent}10` : "transparent";
+          const fg = defOne ? p.accent       : picked ? p.accent       : p.textSecondary;
+          const bc = defOne ? p.accent       : picked ? p.accent       : p.border;
+          return (
+            <div key={m.code} className="inline-flex">
+              <button
+                onClick={() => togglePlan(m.code)}
+                style={{
+                  padding: "0.45rem 0.85rem",
+                  paddingInlineEnd: "0.65rem",
+                  border: `1px solid ${bc}`, borderInlineEnd: "none",
+                  backgroundColor: bg, color: fg,
+                  fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", fontWeight: 700,
+                  letterSpacing: "0.04em", cursor: "pointer",
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                }}
+                aria-pressed={picked}
+                title={defOne ? `${m.label} · current default` : picked ? `${m.label} · click to remove` : `${m.label} · click to add`}
+              >
+                {defOne ? "★ " : picked ? "✓ " : ""}{m.short}
+              </button>
+              <button
+                onClick={() => makeDefault(m.code)}
+                style={{
+                  padding: "0.45rem 0.55rem",
+                  border: `1px solid ${bc}`,
+                  backgroundColor: bg, color: defOne ? p.accent : p.textMuted,
+                  fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", fontWeight: 700,
+                  cursor: "pointer",
+                }}
+                title={defOne ? "Already the default" : `Make ${m.label} the default`}
+                onMouseEnter={(e) => { if (!defOne) e.currentTarget.style.color = p.accent; }}
+                onMouseLeave={(e) => { if (!defOne) e.currentTarget.style.color = p.textMuted; }}
+                aria-label={`Make ${m.label} default`}
+              >
+                ★
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", marginTop: 6, lineHeight: 1.55 }}>
+        Tap a chip to add or remove a plan. Tap the <strong style={{ color: p.accent }}>★</strong> to make it the booking-creator default for members at this tier. The supplement (per adult per night) is sourced from the room master.
+      </div>
+    </FormGroup>
   );
 }

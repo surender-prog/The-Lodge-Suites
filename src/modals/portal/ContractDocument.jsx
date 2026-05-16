@@ -2,6 +2,7 @@ import React from "react";
 import { Download, Mail, Printer, Send, X } from "lucide-react";
 import { usePalette } from "./theme.jsx";
 import { legalLine, summarizeTax, useData, formatCurrency, resolveCurrency, getCurrentCurrency, MEAL_PLANS, mealPlanLabel, mealPlanSupplement, enabledMealPlansFor } from "../../data/store.jsx";
+import { ensurePlanList, resolveDefaultPlan } from "./ContractEditor.jsx";
 
 // ---------------------------------------------------------------------------
 // ContractDocument — printable contract layout shared between Corporate and
@@ -238,54 +239,77 @@ export function ContractDocumentView({ contract, kind }) {
         </>
       )}
 
-      {/* Meal plan — only rendered when the contract specifies anything
-          other than Room Only. Documents the per-suite supplement so
-          the corporate or agent has a written record of the F&B
-          commitment they agreed to. */}
-      {contract.defaultMealPlan && contract.defaultMealPlan !== "ro" && (() => {
-        const plan = MEAL_PLANS.find((m) => m.code === contract.defaultMealPlan);
-        if (!plan) return null;
+      {/* Meal plans — rendered when the contract negotiates any plan
+          beyond RO. Documents EVERY available plan with its per-suite
+          supplement so the corporate / agent has a written record of
+          the full F&B menu they can pick from at booking. The default
+          plan (the one that pre-fills on new bookings) is starred. */}
+      {(() => {
+        const planList = ensurePlanList(contract.availablePlans, contract.defaultMealPlan)
+          .filter((c) => c !== "ro");
+        if (planList.length === 0) return null;
+        const defPlan = resolveDefaultPlan(contract.availablePlans, contract.defaultMealPlan);
+        const planObjs = planList.map((c) => MEAL_PLANS.find((m) => m.code === c)).filter(Boolean);
         const rooms = data?.rooms || [];
+        const isMulti = planList.length > 1;
         return (
           <>
             <h3 style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: "1.4rem", marginTop: 24, marginBottom: 8 }}>
-              Meal plan · {plan.label}
+              Meal plans · {planObjs.map((p) => p.short).join(" · ")}
             </h3>
             <p style={{ fontSize: "0.84rem", color: "#444", marginBottom: 8 }}>
-              All reservations under this {isCorp ? "agreement" : "contract"} are issued on the <strong>{plan.label}</strong> ({plan.short}) plan by default. {plan.blurb} Per-stay overrides remain available at booking.
+              {isMulti ? (
+                <>This {isCorp ? "agreement" : "contract"} includes <strong>{planObjs.length} meal plans</strong>: {planObjs.map((p) => p.label).join(", ")}. The booking creator can pick any of them at reservation time; <strong>{MEAL_PLANS.find((p) => p.code === defPlan)?.label} ({defPlan.toUpperCase()})</strong> pre-fills as the default. The per-suite supplements below apply per adult, per night, on top of the contracted accommodation rate.</>
+              ) : (
+                <>All reservations under this {isCorp ? "agreement" : "contract"} are issued on the <strong>{planObjs[0].label} ({planObjs[0].short})</strong> plan by default. {planObjs[0].blurb} Per-stay overrides remain available at booking.</>
+              )}
             </p>
             <table style={tblStyle} cellPadding={0}>
               <thead>
                 <tr>
                   <th style={thStyle}>Suite</th>
-                  <th style={thStyle}>Plan</th>
-                  <th style={{ ...thStyle, textAlign: "end" }}>Supplement (per adult / night)</th>
+                  {planObjs.map((pl) => (
+                    <th key={pl.code} style={{
+                      ...thStyle, textAlign: "end",
+                      backgroundColor: pl.code === defPlan ? "rgba(201,169,97,0.22)" : "rgba(201,169,97,0.08)",
+                    }}>
+                      {pl.code === defPlan ? "★ " : ""}{pl.short}
+                      <div style={{ fontSize: "0.56rem", opacity: 0.7, marginTop: 2, letterSpacing: "0.04em" }}>
+                        {pl.label}
+                      </div>
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {rooms.map((rm) => {
-                  const supp = mealPlanSupplement(rm, plan.code);
-                  return (
-                    <tr key={rm.id}>
-                      <td style={tdStyle}>
-                        <strong>
-                          {rm.id === "studio"    ? "Lodge Studio" :
-                           rm.id === "one-bed"   ? "One-Bedroom Suite" :
-                           rm.id === "two-bed"   ? "Two-Bedroom Suite" :
-                           rm.id === "three-bed" ? "Three-Bedroom Suite" : rm.id}
-                        </strong>
-                      </td>
-                      <td style={tdStyle}>{plan.short} · {plan.label}</td>
-                      <td style={tdNumStyle}>
-                        {supp > 0 ? `+ ${formatCurrency(supp)}` : "Included"}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {rooms.map((rm) => (
+                  <tr key={rm.id}>
+                    <td style={tdStyle}>
+                      <strong>
+                        {rm.id === "studio"    ? "Lodge Studio" :
+                         rm.id === "one-bed"   ? "One-Bedroom Suite" :
+                         rm.id === "two-bed"   ? "Two-Bedroom Suite" :
+                         rm.id === "three-bed" ? "Three-Bedroom Suite" : rm.id}
+                      </strong>
+                    </td>
+                    {planObjs.map((pl) => {
+                      const supp = mealPlanSupplement(rm, pl.code);
+                      return (
+                        <td key={pl.code} style={{
+                          ...tdNumStyle,
+                          backgroundColor: pl.code === defPlan ? "rgba(201,169,97,0.10)" : "transparent",
+                          fontWeight: pl.code === defPlan ? 700 : 600,
+                        }}>
+                          {supp > 0 ? `+ ${formatCurrency(supp)}` : "Included"}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
               </tbody>
             </table>
             <p style={{ fontSize: "0.78rem", color: "#666", marginTop: 8, lineHeight: 1.6 }}>
-              Supplements are levied per occupying adult per night, in addition to the contracted accommodation rate. Children under 12 dine complimentary from the children's menu under any plan. Plans may be substituted on request subject to the F&amp;B team's confirmation at least 24 hours prior to arrival.
+              Supplements are levied per occupying adult per night, in addition to the contracted accommodation rate. Children under 12 dine complimentary from the children's menu under any plan. {isMulti ? "Plans can be mixed across stays for the same guest; reservations confirm one plan per stay." : "Plans may be substituted on request subject to the F&B team's confirmation at least 24 hours prior to arrival."}
             </p>
           </>
         );
@@ -551,29 +575,47 @@ export function buildContractHtml(contract, kind, { hotel, tax, rooms } = {}) {
   ${incl.length > 0 ? `<h3>Inclusions</h3><ul>${incl.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul>` : ""}
 
   ${(() => {
-    // Meal plan section — only when the contract has agreed an
-    // included plan (anything other than RO). Documents the per-suite
-    // supplement so accounts has the F&B commitment on paper.
-    if (!contract.defaultMealPlan || contract.defaultMealPlan === "ro") return "";
-    const plan = MEAL_PLANS.find((m) => m.code === contract.defaultMealPlan);
-    if (!plan) return "";
-    const roomList = (rooms || []).map((rm) => {
-      const supp = mealPlanSupplement(rm, plan.code);
+    // Meal plans section — every available plan (RO is the rack
+    // baseline, omitted). Default plan is starred and gold-tinted.
+    const planList = ensurePlanList(contract.availablePlans, contract.defaultMealPlan).filter((c) => c !== "ro");
+    if (planList.length === 0) return "";
+    const defPlan  = resolveDefaultPlan(contract.availablePlans, contract.defaultMealPlan);
+    const planObjs = planList.map((c) => MEAL_PLANS.find((m) => m.code === c)).filter(Boolean);
+    const isMulti  = planObjs.length > 1;
+
+    const headerCells = planObjs.map((pl) => {
+      const isDef = pl.code === defPlan;
+      const bg = isDef ? "rgba(201,169,97,0.22)" : "rgba(201,169,97,0.08)";
+      return `<th class="num" style="background:${bg};">${isDef ? "★ " : ""}${escapeHtml(pl.short)}<div style="font-size:0.56rem;opacity:0.7;margin-top:2px;letter-spacing:0.04em;">${escapeHtml(pl.label)}</div></th>`;
+    }).join("");
+
+    const roomRows = (rooms || []).map((rm) => {
       const name = rm.id === "studio"    ? "Lodge Studio"
                 : rm.id === "one-bed"   ? "One-Bedroom Suite"
                 : rm.id === "two-bed"   ? "Two-Bedroom Suite"
                 : rm.id === "three-bed" ? "Three-Bedroom Suite" : rm.id;
-      return `<tr>
-        <td><strong>${escapeHtml(name)}</strong></td>
-        <td>${escapeHtml(plan.short)} · ${escapeHtml(plan.label)}</td>
-        <td class="num">${supp > 0 ? `+ ${escapeHtml(formatCurrency(supp))}` : "Included"}</td>
-      </tr>`;
+      const cells = planObjs.map((pl) => {
+        const supp = mealPlanSupplement(rm, pl.code);
+        const isDef = pl.code === defPlan;
+        const bg = isDef ? "background:rgba(201,169,97,0.10);" : "";
+        return `<td class="num" style="${bg}font-weight:${isDef ? 700 : 600};">${supp > 0 ? `+ ${escapeHtml(formatCurrency(supp))}` : "Included"}</td>`;
+      }).join("");
+      return `<tr><td><strong>${escapeHtml(name)}</strong></td>${cells}</tr>`;
     }).join("");
-    return `<h3>Meal plan · ${escapeHtml(plan.label)}</h3>
-      <p class="muted" style="font-size:0.84rem; margin-bottom:8px;">All reservations under this ${isCorp ? "agreement" : "contract"} are issued on the <strong>${escapeHtml(plan.label)}</strong> (${escapeHtml(plan.short)}) plan by default. ${escapeHtml(plan.blurb)} Per-stay overrides remain available at booking.</p>
-      <table><thead><tr><th>Suite</th><th>Plan</th><th>Supplement (per adult / night)</th></tr></thead><tbody>${roomList}</tbody></table>
+
+    const intro = isMulti
+      ? `This ${isCorp ? "agreement" : "contract"} includes <strong>${planObjs.length} meal plans</strong>: ${planObjs.map((pl) => escapeHtml(pl.label)).join(", ")}. The booking creator can pick any of them at reservation time; <strong>${escapeHtml(MEAL_PLANS.find((p) => p.code === defPlan)?.label || "")} (${escapeHtml(defPlan.toUpperCase())})</strong> pre-fills as the default. The per-suite supplements below apply per adult, per night, on top of the contracted accommodation rate.`
+      : `All reservations under this ${isCorp ? "agreement" : "contract"} are issued on the <strong>${escapeHtml(planObjs[0].label)} (${escapeHtml(planObjs[0].short)})</strong> plan by default. ${escapeHtml(planObjs[0].blurb)} Per-stay overrides remain available at booking.`;
+
+    const footer = isMulti
+      ? "Plans can be mixed across stays for the same guest; reservations confirm one plan per stay."
+      : "Plans may be substituted on request subject to the F&amp;B team's confirmation at least 24 hours prior to arrival.";
+
+    return `<h3>Meal plans · ${escapeHtml(planObjs.map((pl) => pl.short).join(" · "))}</h3>
+      <p class="muted" style="font-size:0.84rem; margin-bottom:8px;">${intro}</p>
+      <table><thead><tr><th>Suite</th>${headerCells}</tr></thead><tbody>${roomRows}</tbody></table>
       <p style="font-size:0.78rem; color:#666; margin-top:8px; line-height:1.6;">
-        Supplements are levied per occupying adult per night, in addition to the contracted accommodation rate. Children under 12 dine complimentary from the children's menu under any plan. Plans may be substituted on request subject to the F&amp;B team's confirmation at least 24 hours prior to arrival.
+        Supplements are levied per occupying adult per night, in addition to the contracted accommodation rate. Children under 12 dine complimentary from the children's menu under any plan. ${footer}
       </p>`;
   })()}
 
