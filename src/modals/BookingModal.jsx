@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowRight, Check, Lock, Minus, Plus, Sparkles, Tag, X } from "lucide-react";
 import { C } from "../data/tokens.js";
 import { Icon } from "../components/Icon.jsx";
@@ -142,6 +142,31 @@ export const BookingModal = ({ open, onClose, initial }) => {
     setFieldErr(errs);
     if (Object.keys(errs).length === 0) setConfirmError("");
   }, [data.name, data.country, data.email, data.phone]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Tier-driven default meal plan. When a recognised member's email is
+  // entered AND the guest hasn't explicitly picked a plan, we apply the
+  // tier's `defaultMealPlan` so Gold lands on BB / Platinum on HB out
+  // of the box. The guest can still override on Step 3.
+  //
+  // Lives ABOVE the `if (!open) return null` early return so React
+  // sees a consistent hook count across closed and open renders. The
+  // dependencies (`data.email`, `members`, `tiers`, `data.member`) are
+  // all available state at this point.
+  const tierMealDefault = useMemo(() => {
+    const m = (data.email || "").trim()
+      ? (members || []).find((x) => (x.email || "").toLowerCase() === data.email.trim().toLowerCase())
+      : null;
+    const tierId = m ? (m.tier || "silver").toLowerCase() : (data.member ? "silver" : null);
+    if (!tierId) return null;
+    const tierRec = (tiers || []).find((x) => x.id === tierId);
+    return tierRec?.defaultMealPlan || null;
+  }, [data.email, data.member, members, tiers]);
+  useEffect(() => {
+    if (!tierMealDefault) return;
+    if (data.mealPlan && data.mealPlan !== "ro") return; // operator/guest already picked
+    setData((d) => ({ ...d, mealPlan: tierMealDefault }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tierMealDefault]);
 
   // ─ Gift card handlers ──────────────────────────────────────────────
   // applyGiftCard runs when the guest clicks "Apply". We look up the
@@ -378,21 +403,6 @@ export const BookingModal = ({ open, onClose, initial }) => {
   const memberPct = memberTier ? (TIER_DISCOUNT[memberTier] || 0) : 0;
   const memberDiscount = memberPct && !pkg ? Math.round(roomTotal * (memberPct / 100)) : 0;
 
-  // Tier-driven default meal plan. When a recognised member's email is
-  // entered AND the guest hasn't explicitly picked a plan, we apply the
-  // tier's `defaultMealPlan` so Gold lands on BB / Platinum on HB out
-  // of the box. The guest can still override on Step 3.
-  const tierMealDefault = useMemo(() => {
-    if (!memberTier) return null;
-    const t = (tiers || []).find((x) => x.id === memberTier);
-    return t?.defaultMealPlan || null;
-  }, [memberTier, tiers]);
-  useEffect(() => {
-    if (!tierMealDefault) return;
-    if (data.mealPlan && data.mealPlan !== "ro") return; // operator/guest already picked
-    setData((d) => ({ ...d, mealPlan: tierMealDefault }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tierMealDefault]);
   // Suite line in the summary — package charge (per the chosen pricing
   // rule) replaces the per-night rack rate when an offer is applied. Tax
   // + add-ons still pile on top.
