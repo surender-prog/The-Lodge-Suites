@@ -1,8 +1,8 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import {
   Accessibility, BedDouble, Building2, Check, ChefHat, Coffee, Coins, Croissant,
-  Edit2, Filter, Image as ImageIcon, Layers, LayoutGrid, Link2, List, Plus,
-  RotateCcw, Save, Trash2, Users, Utensils, X,
+  Edit2, ExternalLink, Filter, Image as ImageIcon, Layers, LayoutGrid, Link2,
+  List, Loader2, Plus, RotateCcw, Save, Trash2, Upload, Users, Utensils, X,
 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT } from "../../../../i18n/LanguageContext.jsx";
@@ -14,6 +14,7 @@ import {
   Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast,
   SelectField, Stat, TableShell, Td, Th, TextField,
 } from "../ui.jsx";
+import { uploadRoomImage } from "../../../../lib/rooms.js";
 
 // ---------------------------------------------------------------------------
 // Rooms & Rates
@@ -37,6 +38,7 @@ export const RoomsRates = () => {
   const startEdit = (room) => {
     setEditingRate(room.id);
     setDraft({
+      image:        room.image ?? null,
       price:        room.price,
       // Weekend rate falls back to the weekday rate when the room has
       // never been edited — gives the operator a sensible default to
@@ -56,6 +58,10 @@ export const RoomsRates = () => {
   const save = () => {
     const safe = (n) => Math.max(0, Number(n) || 0);
     updateRoom(editingRate, {
+      // Hero image — null when the operator detached it, otherwise
+      // the public storage URL produced by uploadRoomImage. The DB
+      // column is `image_url` (snake_case); persistRoomPatch maps it.
+      image: draft.image ?? null,
       price:        safe(draft.price),
       priceWeekend: safe(draft.priceWeekend),
       sqm:         safe(draft.sqm),
@@ -282,16 +288,21 @@ function RoomTypeEditor({ room, draft, setDraft, tax, unitCount, onCancel, onSav
       }
     >
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        {/* Identity card — read-only context, with the suite hero image */}
+        {/* Identity card — hero image uploader + read-only context.
+            The uploader writes to the draft's `image` field which the
+            parent save handler is responsible for persisting (we treat
+            image as a regular updatable field via updateRoom). */}
         <Card title="Identity" className="lg:col-span-1">
-          {room.image && (
-            <div style={{
-              width: "100%", aspectRatio: "16/10",
-              backgroundImage: `url(${room.image})`,
-              backgroundSize: "cover", backgroundPosition: "center",
-              border: `1px solid ${p.border}`,
-            }} />
-          )}
+          <FormGroup label="Hero photo">
+            <RoomImageUploader
+              value={draft.image ?? room.image}
+              roomId={room.id}
+              onChange={(url) => set({ image: url })}
+            />
+            <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", marginTop: 6, lineHeight: 1.55 }}>
+              Used as the suite's hero on the public booking flow + the homepage room cards. Recommended landscape, 1600×1000 or larger.
+            </div>
+          </FormGroup>
           <div className="mt-4 space-y-2" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem" }}>
             <Detail label="Type id"  value={room.id} mono p={p} />
             <Detail label="Inventory" value={`${unitCount} unit${unitCount === 1 ? "" : "s"}`} p={p} />
@@ -623,7 +634,7 @@ function RoomTypeEditor({ room, draft, setDraft, tax, unitCount, onCancel, onSav
             How this suite will appear in step 2 of the public booking flow with current values.
           </p>
           <div className="flex gap-4 p-3" style={{ border: `1px solid ${p.border}`, backgroundColor: p.bgPanelAlt }}>
-            {room.image && <div style={{ width: 130, height: 100, backgroundImage: `url(${room.image})`, backgroundSize: "cover", backgroundPosition: "center", flexShrink: 0 }} />}
+            {(draft.image ?? room.image) && <div style={{ width: 130, height: 100, backgroundImage: `url(${draft.image ?? room.image})`, backgroundSize: "cover", backgroundPosition: "center", flexShrink: 0 }} />}
             <div className="flex-1 min-w-0">
               <div className="flex items-baseline justify-between gap-2 flex-wrap">
                 <h4 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: p.textPrimary, fontWeight: 500 }}>
@@ -1610,6 +1621,16 @@ function RoomTypeCreator({ existingIds, tax, onCancel, onCreate }) {
         {/* Identity */}
         <Card title="Identity" className="lg:col-span-1">
           <div className="space-y-4">
+            <FormGroup label="Hero photo">
+              <RoomImageUploader
+                value={draft.image}
+                roomId={draft.id}
+                onChange={(url) => set({ image: url })}
+              />
+              <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", marginTop: 6, lineHeight: 1.55 }}>
+                Used as the suite's hero on the public booking flow + the homepage room cards. Recommended landscape, 1600×1000 or larger.
+              </div>
+            </FormGroup>
             <FormGroup label="Public name">
               <TextField
                 value={draft.publicName}
@@ -1917,16 +1938,24 @@ function RoomTypeCreator({ existingIds, tax, onCancel, onCreate }) {
             How this suite will appear in step 2 of the public booking flow with current values.
           </p>
           <div className="flex gap-4 p-3" style={{ border: `1px solid ${p.border}`, backgroundColor: p.bgPanelAlt }}>
-            <div style={{
-              width: 130, height: 100, flexShrink: 0,
-              backgroundColor: p.bgPanel,
-              border: `1px dashed ${p.border}`,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              color: p.textMuted, fontSize: "0.66rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
-              fontFamily: "'Manrope', sans-serif", textAlign: "center", padding: 8,
-            }}>
-              Photo<br/>after save
-            </div>
+            {draft.image ? (
+              <div style={{
+                width: 130, height: 100, flexShrink: 0,
+                backgroundImage: `url(${draft.image})`,
+                backgroundSize: "cover", backgroundPosition: "center",
+              }} />
+            ) : (
+              <div style={{
+                width: 130, height: 100, flexShrink: 0,
+                backgroundColor: p.bgPanel,
+                border: `1px dashed ${p.border}`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: p.textMuted, fontSize: "0.66rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                fontFamily: "'Manrope', sans-serif", textAlign: "center", padding: 8,
+              }}>
+                No photo<br/>uploaded
+              </div>
+            )}
             <div className="flex-1 min-w-0">
               <div className="flex items-baseline justify-between gap-2 flex-wrap">
                 <h4 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: p.textPrimary, fontWeight: 500 }}>
@@ -1976,5 +2005,170 @@ function RoomTypeCreator({ existingIds, tax, onCancel, onCreate }) {
         )}
       </div>
     </Drawer>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// RoomImageUploader — reusable hero-image upload for a room type. Used
+// by both RoomTypeEditor (existing room, has an id) and RoomTypeCreator
+// (new room, id may still be a draft slug). When `roomId` is empty the
+// uploader shows a "Save the room first" hint instead of an upload
+// button — we need a stable id for the storage path.
+//
+// Props:
+//   value       — current image URL (or null)
+//   roomId      — the room's slug; required for upload
+//   onChange    — called with the new URL on upload, or null on remove
+//   compact     — when true, renders a smaller hero (used inline in
+//                 the Identity card preview block)
+// ─────────────────────────────────────────────────────────────────────────
+function RoomImageUploader({ value, roomId, onChange, compact = false }) {
+  const p = usePalette();
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+
+  const handleFiles = async (files) => {
+    const file = files?.[0];
+    if (!file) return;
+    if (!roomId) {
+      pushToast({ message: "Pick a type id first — uploads need a stable path.", kind: "warn" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await uploadRoomImage(file, roomId);
+      if (res.skipped) {
+        pushToast({ message: "Supabase isn't configured — image uploads are disabled in this environment.", kind: "warn" });
+        return;
+      }
+      if (!res.ok) {
+        pushToast({ message: `Upload failed · ${res.error || "unknown error"}`, kind: "error" });
+        return;
+      }
+      onChange(res.url);
+      pushToast({ message: `Photo uploaded · ${file.name}` });
+    } finally {
+      setBusy(false);
+      // Reset so re-picking the same file still fires onChange
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  };
+
+  const remove = () => {
+    if (!confirm("Remove this photo from the room type? The image file in storage will be left in place.")) return;
+    onChange(null);
+    pushToast({ message: "Photo detached. Remember to save." });
+  };
+
+  const heroWidth  = compact ? "100%" : "100%";
+  const heroAspect = compact ? "16/10" : "16/10";
+
+  const hasImage = !!value;
+  const idMissing = !roomId;
+
+  return (
+    <div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/avif"
+        className="hidden"
+        onChange={(e) => handleFiles(e.target.files)}
+      />
+      {hasImage ? (
+        <>
+          <div style={{
+            width: heroWidth, aspectRatio: heroAspect,
+            backgroundImage: `url(${value})`,
+            backgroundSize: "cover", backgroundPosition: "center",
+            border: `1px solid ${p.border}`,
+          }} />
+          <div className="mt-3 flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => inputRef.current?.click()}
+              disabled={busy || idMissing}
+              className="inline-flex items-center gap-1.5"
+              style={{
+                padding: "0.4rem 0.85rem", border: `1px solid ${p.border}`, color: p.textSecondary,
+                backgroundColor: "transparent",
+                fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+                letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                cursor: busy || idMissing ? "wait" : "pointer", opacity: busy || idMissing ? 0.6 : 1,
+              }}
+              onMouseEnter={(e) => { if (!busy && !idMissing) { e.currentTarget.style.color = p.accent; e.currentTarget.style.borderColor = p.accent; } }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = p.textSecondary; e.currentTarget.style.borderColor = p.border; }}
+              title="Replace with a different photo"
+            >
+              {busy ? <Loader2 size={11} className="animate-spin" /> : <Upload size={11} />} Replace
+            </button>
+            <a
+              href={value}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5"
+              style={{
+                padding: "0.4rem 0.85rem", border: `1px solid ${p.border}`, color: p.textSecondary,
+                fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+                letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                textDecoration: "none",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = p.accent; e.currentTarget.style.borderColor = p.accent; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = p.textSecondary; e.currentTarget.style.borderColor = p.border; }}
+              title="Open the image in a new tab"
+            >
+              <ExternalLink size={11} /> View
+            </a>
+            <button
+              onClick={remove}
+              disabled={busy}
+              title="Detach this photo"
+              className="inline-flex items-center"
+              style={{
+                padding: "0.4rem 0.55rem", border: `1px solid ${p.border}`, color: p.danger,
+                backgroundColor: "transparent",
+                cursor: busy ? "wait" : "pointer", opacity: busy ? 0.6 : 1,
+              }}
+              onMouseEnter={(e) => { if (!busy) e.currentTarget.style.borderColor = p.danger; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = p.border; }}
+            >
+              <Trash2 size={11} />
+            </button>
+          </div>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={busy || idMissing}
+          className="w-full flex flex-col items-center justify-center gap-2"
+          style={{
+            width: heroWidth, aspectRatio: heroAspect,
+            backgroundColor: p.bgPanelAlt,
+            border: `1.5px dashed ${idMissing ? p.border : p.border}`,
+            cursor: busy ? "wait" : idMissing ? "not-allowed" : "pointer",
+            opacity: busy ? 0.7 : 1,
+            fontFamily: "'Manrope', sans-serif",
+            color: p.textMuted,
+            padding: 12,
+          }}
+          onMouseEnter={(e) => { if (!busy && !idMissing) e.currentTarget.style.borderColor = p.accent; }}
+          onMouseLeave={(e) => { e.currentTarget.style.borderColor = p.border; }}
+          title={idMissing ? "Pick a type id first" : "Upload a hero photo for this suite"}
+        >
+          {busy ? <Loader2 size={22} className="animate-spin" style={{ color: p.accent }} />
+            : <ImageIcon size={22} style={{ color: idMissing ? p.textMuted : p.accent }} />}
+          <div className="text-center">
+            <div style={{ color: idMissing ? p.textMuted : p.textPrimary, fontSize: "0.86rem", fontWeight: 700 }}>
+              {busy ? "Uploading…" : idMissing ? "Type id needed" : "Upload hero photo"}
+            </div>
+            <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>
+              {idMissing
+                ? "Fill in the slug above first"
+                : "JPEG / PNG / WebP / AVIF · max 10 MB"}
+            </div>
+          </div>
+        </button>
+      )}
+    </div>
   );
 }

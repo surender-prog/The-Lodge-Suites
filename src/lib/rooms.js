@@ -165,6 +165,56 @@ export async function persistRoomInsert(room) {
 }
 
 /**
+ * Upload a hero image for a room type to the public `rooms` Supabase
+ * Storage bucket and return its public URL. Caller is responsible for
+ * setting that URL on `room.image` via persistRoomPatch / addRoom.
+ *
+ *   uploadRoomImage(file, roomId) → { ok, url?, filename?, path?, error? }
+ *
+ * The path layout keeps every uploaded photo discoverable per room:
+ *   rooms/<roomId>/hero-<timestamp>.<ext>
+ *
+ * Skips when Supabase isn't configured (offline / demo / CI).
+ */
+const ROOM_IMAGE_MAX_BYTES = 10 * 1024 * 1024; // 10 MB (matches bucket policy)
+const ROOM_IMAGE_ALLOWED   = ["image/jpeg", "image/png", "image/webp", "image/avif"];
+
+export async function uploadRoomImage(file, roomId) {
+  if (!SUPABASE_CONFIGURED) return { ok: false, skipped: true };
+  if (!file) return { ok: false, error: "no file" };
+  if (!roomId) return { ok: false, error: "missing roomId" };
+  if (file.size > ROOM_IMAGE_MAX_BYTES) {
+    return { ok: false, error: `File too large. Max ${Math.round(ROOM_IMAGE_MAX_BYTES / 1024 / 1024)} MB.` };
+  }
+  if (file.type && !ROOM_IMAGE_ALLOWED.includes(file.type)) {
+    return { ok: false, error: "Unsupported image type. Use JPEG, PNG, WebP, or AVIF." };
+  }
+  const ext = (file.name.match(/\.[a-z0-9]+$/i)?.[0] || "").toLowerCase();
+  const path = `${roomId}/hero-${Date.now()}${ext}`;
+  try {
+    const { error: uploadErr } = await supabase.storage
+      .from("rooms")
+      .upload(path, file, { upsert: true, cacheControl: "3600" });
+    if (uploadErr) {
+      // eslint-disable-next-line no-console
+      console.warn("[rooms] image upload failed for", roomId, "—", uploadErr.message);
+      return { ok: false, error: uploadErr.message };
+    }
+    const { data } = supabase.storage.from("rooms").getPublicUrl(path);
+    return {
+      ok: true,
+      url: data?.publicUrl || null,
+      filename: file.name,
+      path,
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[rooms] image upload threw for", roomId, "—", err?.message || err);
+    return { ok: false, error: err?.message || String(err) };
+  }
+}
+
+/**
  * Delete a room type. Returns { ok, error, skipped }. The caller is
  * responsible for refusing the call when any room_units / bookings
  * still reference the type — there's no DB cascade on this table.
