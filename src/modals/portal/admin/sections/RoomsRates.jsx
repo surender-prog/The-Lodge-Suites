@@ -27,9 +27,10 @@ const VIEW_BY_ID   = Object.fromEntries(ROOM_VIEWS.map((v) => [v.id, v]));
 export const RoomsRates = () => {
   const t = useT();
   const p = usePalette();
-  const { rooms, updateRoom, tax, roomUnits } = useData();
+  const { rooms, updateRoom, addRoom, removeRoom, tax, roomUnits, bookings } = useData();
   const [editingRate, setEditingRate] = useState(null);
   const [draft, setDraft] = useState({});
+  const [creating, setCreating] = useState(false);
 
   // Open the editor with a full snapshot of the room — every field the
   // editor shows must be in the draft so unsaved edits stay reactive.
@@ -97,6 +98,11 @@ export const RoomsRates = () => {
       <PageHeader
         title="Rooms & Rates"
         intro="Public-facing room types, rack rates, and the canonical list of every physical suite. Room numbers created here propagate to bookings, calendar overrides and maintenance jobs."
+        action={
+          <PrimaryBtn small onClick={() => setCreating(true)}>
+            <Plus size={12} /> Add room type
+          </PrimaryBtn>
+        }
       />
 
       {/* ── Top KPIs ─────────────────────────────────────────────────── */}
@@ -141,10 +147,53 @@ export const RoomsRates = () => {
                   }}>Live</span>
                 </Td>
                 <Td align="end">
-                  <button onClick={() => startEdit(r)} className="inline-flex items-center gap-1.5"
-                    style={{ color: p.accent, fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
-                    <Edit2 size={11} /> Edit
-                  </button>
+                  <div className="inline-flex items-center gap-3">
+                    <button onClick={() => startEdit(r)} className="inline-flex items-center gap-1.5"
+                      style={{ color: p.accent, fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, backgroundColor: "transparent", border: "none", cursor: "pointer" }}>
+                      <Edit2 size={11} /> Edit
+                    </button>
+                    {(() => {
+                      // Remove is gated on: (a) at least one room type
+                      // left after removal, (b) no physical units of
+                      // this type, (c) no bookings still referencing
+                      // the type. The check guards against orphaning
+                      // bookings or letting the calendar render an
+                      // empty inventory list.
+                      const unitsForType    = (roomUnits || []).filter((u) => u.roomTypeId === r.id).length;
+                      const bookingsForType = (bookings  || []).filter((b) => b.roomId === r.id).length;
+                      const isLast          = rooms.length <= 1;
+                      const disabled        = isLast || unitsForType > 0 || bookingsForType > 0;
+                      const reason = isLast
+                        ? "At least one room type must remain"
+                        : unitsForType > 0
+                          ? `${unitsForType} physical unit${unitsForType === 1 ? "" : "s"} of this type — remove them first`
+                          : bookingsForType > 0
+                            ? `${bookingsForType} booking${bookingsForType === 1 ? "" : "s"} still reference this type`
+                            : "Permanently remove this room type";
+                      return (
+                        <button
+                          onClick={() => {
+                            if (disabled) { pushToast({ message: reason, kind: "warn" }); return; }
+                            if (!confirm(`Remove "${t(`rooms.${r.id}.name`) || r.id}" room type? This cannot be undone.`)) return;
+                            removeRoom(r.id);
+                            pushToast({ message: `Removed · ${t(`rooms.${r.id}.name`) || r.id}` });
+                          }}
+                          title={reason}
+                          disabled={disabled}
+                          className="inline-flex items-center gap-1.5"
+                          style={{
+                            color: disabled ? p.textDim : p.danger,
+                            fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+                            backgroundColor: "transparent", border: "none",
+                            cursor: disabled ? "not-allowed" : "pointer",
+                            opacity: disabled ? 0.5 : 1,
+                          }}
+                        >
+                          <Trash2 size={11} /> Remove
+                        </button>
+                      );
+                    })()}
+                  </div>
                 </Td>
               </tr>
             ))}
@@ -171,6 +220,19 @@ export const RoomsRates = () => {
           unitCount={unitCountByType[editingRoom.id] || 0}
           onCancel={() => setEditingRate(null)}
           onSave={save}
+        />
+      )}
+
+      {creating && (
+        <RoomTypeCreator
+          existingIds={rooms.map((r) => r.id)}
+          tax={tax}
+          onCancel={() => setCreating(false)}
+          onCreate={(payload) => {
+            addRoom(payload);
+            setCreating(false);
+            pushToast({ message: `Created · ${payload.publicName || payload.id}. Add the translation string in Site Content → Rooms to set the public name.` });
+          }}
         />
       )}
     </div>
@@ -1379,4 +1441,303 @@ function iconBtn(p) {
     width: 26, height: 26, display: "inline-flex", alignItems: "center", justifyContent: "center",
     color: p.textMuted, border: `1px solid ${p.border}`, backgroundColor: "transparent", cursor: "pointer",
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// RoomTypeCreator — full-page form for adding a brand-new room type.
+//
+// Captures the minimum set of fields the rest of the system relies on:
+//   • id (slug, lowercase-hyphen, unique)
+//   • publicName (display label until a translation string is added)
+//   • description (optional)
+//   • sqm
+//   • occupancy + maxAdults + maxChildren
+//   • weekday + weekend rack rates
+//   • extra-bed config
+//   • meal-plan supplements (seeded with the property defaults)
+//
+// On Save the operator gets a single insert that lands in both the
+// local rooms slice and the Supabase rooms table. After save we
+// remind the operator to add a translation string in Site Content →
+// Rooms so the public name renders correctly on the marketing site;
+// until then the `publicName` field is used by the booking flow.
+// ─────────────────────────────────────────────────────────────────────────
+function RoomTypeCreator({ existingIds, tax, onCancel, onCreate }) {
+  const p = usePalette();
+  const [draft, setDraft] = useState({
+    id: "",
+    publicName: "",
+    description: "",
+    sqm: 60,
+    occupancy: 2,
+    maxAdults: 2,
+    maxChildren: 1,
+    price: 50,
+    priceWeekend: 60,
+    extraBedAvailable: false,
+    maxExtraBeds: 0,
+    extraBedFee: 0,
+    extraBedAddsAdults: 0,
+    extraBedAddsChildren: 0,
+    // Meal plans seeded with the same defaults the master uses, so a
+    // brand-new room type behaves identically to the bundled suites
+    // for any booking flow that reads `room.mealPlans`. The operator
+    // can dial the per-plan supplement individually after creating.
+    mealPlans: { ...DEFAULT_MEAL_PLANS_FOR_ROOM },
+  });
+  const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
+
+  // Auto-derive the id from the public name as the operator types,
+  // unless they've manually edited the id field. We track the manual
+  // override with a separate flag so once a custom slug is set, the
+  // auto-derive stops.
+  const [idTouched, setIdTouched] = useState(false);
+  const slugify = (s) => String(s || "")
+    .toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  React.useEffect(() => {
+    if (idTouched) return;
+    if (!draft.publicName) return;
+    const next = slugify(draft.publicName);
+    setDraft((d) => ({ ...d, id: next }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.publicName, idTouched]);
+
+  // Validation — each rule has a key (for highlight) + a message
+  // (rendered in the validation panel at the bottom).
+  const errors = useMemo(() => {
+    const out = [];
+    if (!draft.publicName?.trim()) out.push({ key: "publicName", msg: "Public name is required." });
+    if (!draft.id?.trim())         out.push({ key: "id",          msg: "Type id is required." });
+    else if (!/^[a-z0-9][a-z0-9-]*$/.test(draft.id)) out.push({ key: "id", msg: "Type id must be lowercase, digits, and hyphens only (e.g. studio-deluxe)." });
+    else if (existingIds.includes(draft.id))         out.push({ key: "id", msg: `"${draft.id}" already exists — pick another slug.` });
+    if (!(Number(draft.price)        >= 0)) out.push({ key: "price",        msg: "Weekday rate must be ≥ 0." });
+    if (!(Number(draft.priceWeekend) >= 0)) out.push({ key: "priceWeekend", msg: "Weekend rate must be ≥ 0." });
+    if (!(Number(draft.occupancy)    >= 1)) out.push({ key: "occupancy",    msg: "Occupancy must be at least 1." });
+    if (!(Number(draft.sqm)          >= 1)) out.push({ key: "sqm",          msg: "Size must be at least 1 m²." });
+    return out;
+  }, [draft, existingIds]);
+
+  const canSave = errors.length === 0;
+
+  const handleCreate = () => {
+    if (!canSave) {
+      pushToast({ message: `Fix the ${errors.length} highlighted issue${errors.length === 1 ? "" : "s"} before saving.`, kind: "warn" });
+      return;
+    }
+    const safe = (n) => Math.max(0, Number(n) || 0);
+    const room = {
+      id: draft.id.trim(),
+      publicName: draft.publicName.trim(),
+      description: draft.description?.trim() || "",
+      sqm: safe(draft.sqm),
+      occupancy: safe(draft.occupancy),
+      maxAdults: safe(draft.maxAdults),
+      maxChildren: safe(draft.maxChildren),
+      price: safe(draft.price),
+      priceWeekend: safe(draft.priceWeekend),
+      extraBedAvailable: !!draft.extraBedAvailable,
+      maxExtraBeds: draft.extraBedAvailable ? safe(draft.maxExtraBeds) : 0,
+      extraBedFee:  draft.extraBedAvailable ? safe(draft.extraBedFee)  : 0,
+      extraBedAdds: {
+        adults:   draft.extraBedAvailable ? safe(draft.extraBedAddsAdults)   : 0,
+        children: draft.extraBedAvailable ? safe(draft.extraBedAddsChildren) : 0,
+      },
+      mealPlans: draft.mealPlans || { ...DEFAULT_MEAL_PLANS_FOR_ROOM },
+      isActive: true,
+      displayOrder: existingIds.length + 1, // append to the end
+      // image stays unset — operator uploads a hero in Site Content
+      // once the new type is published.
+      image: null,
+    };
+    onCreate(room);
+  };
+
+  // Live derived figures so the operator sees the impact of every
+  // pricing edit without committing.
+  const rate         = Number(draft.price) || 0;
+  const rateWeekend  = Number(draft.priceWeekend) || 0;
+  const grossPN      = Math.round(applyTaxes(rate, tax, 1).gross);
+  const grossWeekend = Math.round(applyTaxes(rateWeekend, tax, 1).gross);
+
+  return (
+    <Drawer
+      open={true}
+      onClose={onCancel}
+      eyebrow="New room type"
+      title={draft.publicName || "Untitled suite"}
+      fullPage
+      contentMaxWidth="max-w-5xl"
+      footer={
+        <>
+          <GhostBtn small onClick={onCancel}>Cancel</GhostBtn>
+          <div className="flex-1" />
+          {canSave ? (
+            <PrimaryBtn small onClick={handleCreate}>
+              <Save size={11} /> Create room type
+            </PrimaryBtn>
+          ) : (
+            <button
+              onClick={handleCreate}
+              style={{
+                backgroundColor: p.bgPanelAlt, color: p.textMuted,
+                border: `1px solid ${p.border}`, padding: "0.45rem 0.95rem",
+                fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem",
+                fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase",
+                cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 8,
+                opacity: 0.7,
+              }}
+              title={`${errors.length} issue${errors.length === 1 ? "" : "s"} to fix`}
+            >
+              <Save size={11} /> Create room type
+            </button>
+          )}
+        </>
+      }
+    >
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* Identity */}
+        <Card title="Identity" className="lg:col-span-1">
+          <div className="space-y-4">
+            <FormGroup label="Public name">
+              <TextField
+                value={draft.publicName}
+                onChange={(v) => set({ publicName: v })}
+                placeholder="e.g. Garden View Studio"
+              />
+              <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", marginTop: 6, lineHeight: 1.55 }}>
+                Used on the booking flow + every printable document until a translation string is added in <strong>Site Content → Rooms</strong>.
+              </div>
+            </FormGroup>
+            <FormGroup label="Type id (slug)">
+              <TextField
+                value={draft.id}
+                onChange={(v) => { setIdTouched(true); set({ id: slugify(v) }); }}
+                placeholder="garden-view-studio"
+              />
+              <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", marginTop: 6, lineHeight: 1.55 }}>
+                Lowercase letters, digits, and hyphens only. Stamped on every booking, calendar override, and maintenance job — cannot be changed after creation.
+              </div>
+            </FormGroup>
+            <FormGroup label="Description (optional)">
+              <textarea
+                value={draft.description}
+                onChange={(e) => set({ description: e.target.value })}
+                rows={3}
+                placeholder="A short marketing blurb."
+                className="w-full outline-none"
+                style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.55rem 0.7rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem", resize: "vertical" }}
+              />
+            </FormGroup>
+          </div>
+        </Card>
+
+        {/* Pricing + size */}
+        <Card title="Pricing & size" className="lg:col-span-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <FormGroup label="Weekday rate (BHD / night, excl. tax)">
+              <TextField type="number" value={draft.price} onChange={(v) => set({ price: v })} suffix="BHD" />
+            </FormGroup>
+            <FormGroup label="Weekend rate (BHD / night, excl. tax)">
+              <TextField type="number" value={draft.priceWeekend} onChange={(v) => set({ priceWeekend: v })} suffix="BHD" />
+            </FormGroup>
+            <FormGroup label="Size">
+              <TextField type="number" value={draft.sqm} onChange={(v) => set({ sqm: v })} suffix="m²" />
+            </FormGroup>
+          </div>
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="p-4" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
+              <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, fontFamily: "'Manrope', sans-serif" }}>Weekday gross</div>
+              <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.accent, fontWeight: 600, lineHeight: 1.05, marginTop: 4 }}>
+                {formatCurrency(grossPN)}
+              </div>
+              <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>incl. VAT / service / tourism levy</div>
+            </div>
+            <div className="p-4" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
+              <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, fontFamily: "'Manrope', sans-serif" }}>Weekend gross</div>
+              <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.7rem", color: p.accent, fontWeight: 600, lineHeight: 1.05, marginTop: 4 }}>
+                {formatCurrency(grossWeekend)}
+              </div>
+              <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>incl. taxes</div>
+            </div>
+          </div>
+        </Card>
+
+        {/* Capacity */}
+        <Card title="Capacity" className="lg:col-span-3">
+          <p style={{ color: p.textSecondary, fontSize: "0.86rem", lineHeight: 1.6, marginBottom: 14 }}>
+            <strong>Total occupancy</strong> is the hard ceiling on adults + children. <strong>Max adults</strong> and <strong>Max children</strong> are optional sub-caps; set them equal to occupancy for "no restriction", or dial down to forbid specific combinations.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <FormGroup label="Total occupancy">
+              <TextField type="number" value={draft.occupancy} onChange={(v) => set({ occupancy: v })} />
+            </FormGroup>
+            <FormGroup label="Max adults">
+              <TextField type="number" value={draft.maxAdults} onChange={(v) => set({ maxAdults: v })} />
+            </FormGroup>
+            <FormGroup label="Max children">
+              <TextField type="number" value={draft.maxChildren} onChange={(v) => set({ maxChildren: v })} />
+            </FormGroup>
+          </div>
+        </Card>
+
+        {/* Extra-bed */}
+        <Card title="Extra-bed configuration" className="lg:col-span-3" action={
+          <button
+            onClick={() => set({ extraBedAvailable: !draft.extraBedAvailable })}
+            style={{
+              width: 44, height: 24, borderRadius: 999,
+              backgroundColor: draft.extraBedAvailable ? p.accent : p.border,
+              position: "relative", border: "none", cursor: "pointer",
+            }}
+            aria-pressed={draft.extraBedAvailable}
+            aria-label="Toggle extra bed availability"
+          >
+            <span style={{
+              position: "absolute", top: 2, left: draft.extraBedAvailable ? 22 : 2,
+              width: 20, height: 20, borderRadius: "50%",
+              backgroundColor: "#fff", transition: "left 120ms",
+            }} />
+          </button>
+        }>
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4" style={{ opacity: draft.extraBedAvailable ? 1 : 0.45 }}>
+            <FormGroup label="Max extra beds">
+              <TextField type="number" value={draft.maxExtraBeds} onChange={(v) => set({ maxExtraBeds: v })} />
+            </FormGroup>
+            <FormGroup label="Fee (BHD / night)">
+              <TextField type="number" value={draft.extraBedFee} onChange={(v) => set({ extraBedFee: v })} suffix="BHD" />
+            </FormGroup>
+            <FormGroup label="Adds adult sleeper">
+              <TextField type="number" value={draft.extraBedAddsAdults} onChange={(v) => set({ extraBedAddsAdults: v })} />
+            </FormGroup>
+            <FormGroup label="Adds child sleeper">
+              <TextField type="number" value={draft.extraBedAddsChildren} onChange={(v) => set({ extraBedAddsChildren: v })} />
+            </FormGroup>
+          </div>
+          <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", marginTop: 10, lineHeight: 1.55 }}>
+            Toggle on to allow guests to add rollaways to this suite during the booking flow. Defaults are sensible — operators can tweak per-suite later from the Edit room type drawer.
+          </p>
+        </Card>
+
+        {/* Validation panel */}
+        {errors.length > 0 && (
+          <Card className="lg:col-span-3" padded>
+            <div className="flex items-start gap-2" style={{ color: p.danger, fontFamily: "'Manrope', sans-serif", fontSize: "0.82rem", lineHeight: 1.55 }}>
+              <div style={{ width: 4, alignSelf: "stretch", backgroundColor: p.danger }} />
+              <div>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                  {errors.length} issue{errors.length === 1 ? "" : "s"} to fix before saving:
+                </div>
+                <ul style={{ margin: 0, paddingInlineStart: 18, lineHeight: 1.65 }}>
+                  {errors.map((e, i) => <li key={i}>{e.msg}</li>)}
+                </ul>
+              </div>
+            </div>
+          </Card>
+        )}
+      </div>
+    </Drawer>
+  );
 }

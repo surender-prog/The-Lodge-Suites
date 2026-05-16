@@ -130,3 +130,59 @@ export async function persistRoomPatch(id, patch) {
     return { ok: false, error: err?.message || String(err) };
   }
 }
+
+/**
+ * Insert a brand-new room type. Returns { ok, error, skipped }. The
+ * `room` argument is the same camelCase shape we use everywhere else
+ * (id, price, priceWeekend, occupancy, mealPlans, …) — we convert to
+ * the snake_case row layout here.
+ *
+ * RLS: the staff-only INSERT policy on public.rooms means anon callers
+ * silently no-op (returns skipped); store.jsx still updates the local
+ * slice optimistically so the new type appears in the editor even
+ * when offline.
+ */
+export async function persistRoomInsert(room) {
+  if (!SUPABASE_CONFIGURED) return { ok: false, skipped: true };
+  if (!room || !room.id) return { ok: false, error: "missing id" };
+  const dbRow = {
+    id: room.id,
+    ...clientPatchToDb(room),
+  };
+  try {
+    const { error } = await supabase.from("rooms").insert(dbRow);
+    if (error) {
+      // eslint-disable-next-line no-console
+      console.warn("[rooms] insert failed for", room.id, "—", error.message);
+      return { ok: false, error: error.message };
+    }
+    return { ok: true };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[rooms] insert threw for", room.id, "—", err?.message || err);
+    return { ok: false, error: err?.message || String(err) };
+  }
+}
+
+/**
+ * Delete a room type. Returns { ok, error, skipped }. The caller is
+ * responsible for refusing the call when any room_units / bookings
+ * still reference the type — there's no DB cascade on this table.
+ */
+export async function persistRoomRemove(id) {
+  if (!SUPABASE_CONFIGURED) return { ok: false, skipped: true };
+  if (!id) return { ok: false, error: "missing id" };
+  try {
+    const { error } = await supabase.from("rooms").delete().eq("id", id);
+    if (error) {
+      // eslint-disable-next-line no-console
+      console.warn("[rooms] delete failed for", id, "—", error.message);
+      return { ok: false, error: error.message };
+    }
+    return { ok: true };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[rooms] delete threw for", id, "—", err?.message || err);
+    return { ok: false, error: err?.message || String(err) };
+  }
+}
