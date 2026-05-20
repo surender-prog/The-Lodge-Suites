@@ -75,15 +75,30 @@ export function GiftCardDocView({ card, kind }) {
     discountPct: card.discountPct,
     ratePerNight: card.ratePerNight,
   });
-  const isInvoice = kind === "invoice";
-  const isReceipt = kind === "receipt";
+  // Three flavours of the same document:
+  //   • invoice     — accounting; what the buyer owes (line items + total)
+  //   • receipt     — accounting; what was captured (payment line + net)
+  //   • certificate — the GIFT itself; nights × suite, sender, bearer,
+  //                   redemption instructions. NO payment information.
+  //
+  // The certificate is what members hand to their guest. Payment details
+  // would expose what the buyer paid and the bulk-discount they got —
+  // both of which the bearer shouldn't see. The receipt lives separately
+  // in the buyer's Receipts tab.
+  const isInvoice     = kind === "invoice";
+  const isReceipt     = kind === "receipt";
+  const isCertificate = kind === "certificate";
   const docNo = isReceipt
     ? (payment?.id ? payment.id : `RCP-GC-${card.code}`)
-    : (invoice?.id ? invoice.id : `INV-GC-${card.code}`);
-  const title = isReceipt ? "Payment Receipt" : "Invoice";
+    : isCertificate
+      ? card.code
+      : (invoice?.id ? invoice.id : `INV-GC-${card.code}`);
+  const title = isReceipt ? "Payment Receipt" : isCertificate ? "Gift Certificate" : "Invoice";
   const issuedDate = isReceipt
     ? (payment?.ts ? fmtTs(payment.ts) : todayLong())
-    : (invoice?.issued ? fmtDate(invoice.issued) : todayLong());
+    : isCertificate
+      ? fmtDate(card.purchaseDate)
+      : (invoice?.issued ? fmtDate(invoice.issued) : todayLong());
 
   return (
     <div style={{
@@ -103,12 +118,36 @@ export function GiftCardDocView({ card, kind }) {
         <div style={{ textAlign: "right" }}>
           <div style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: "1.7rem", letterSpacing: "0.05em" }}>{title}</div>
           <div style={{ marginTop: 4, fontSize: "0.74rem", color: "#444" }}>#{docNo} · {issuedDate}</div>
-          <span style={{
-            display: "inline-block", marginTop: 8,
-            fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
-            padding: "3px 9px",
-            color: "#15803D", border: `1px solid #15803D`,
-          }}>Paid</span>
+          {/* "Paid" badge only on accounting docs. Certificates use a
+              status badge based on remaining nights so the bearer can
+              tell at a glance whether the card is still redeemable. */}
+          {isCertificate ? (
+            (() => {
+              const remaining = (card.totalNights || 0) - (card.nightsUsed || 0);
+              const badgeColor = card.status === "cancelled" ? "#DC2626"
+                : remaining === 0 ? "#8A7A4F"
+                : "#C9A961";
+              const label = card.status === "cancelled" ? "Cancelled"
+                : remaining === 0 ? "Fully redeemed"
+                : remaining === card.totalNights ? "Unused"
+                : `${remaining} nights left`;
+              return (
+                <span style={{
+                  display: "inline-block", marginTop: 8,
+                  fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+                  padding: "3px 9px",
+                  color: badgeColor, border: `1px solid ${badgeColor}`,
+                }}>{label}</span>
+              );
+            })()
+          ) : (
+            <span style={{
+              display: "inline-block", marginTop: 8,
+              fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+              padding: "3px 9px",
+              color: "#15803D", border: `1px solid #15803D`,
+            }}>Paid</span>
+          )}
         </div>
       </div>
 
@@ -131,7 +170,7 @@ export function GiftCardDocView({ card, kind }) {
             {card.code}
           </div>
           <div style={{ color: "#555", fontSize: "0.78rem", marginTop: 4 }}>
-            Recipient: <strong style={{ color: "#15161A" }}>{card.recipientName || "—"}</strong>
+            Member of record: <strong style={{ color: "#15161A" }}>{card.recipientName || "—"}</strong>
           </div>
           <div style={{ color: "#555", fontSize: "0.78rem", marginTop: 2 }}>
             Valid until: <strong style={{ color: "#15161A" }}>{fmtDate(card.validUntil)}</strong>
@@ -139,12 +178,110 @@ export function GiftCardDocView({ card, kind }) {
         </div>
       </div>
 
-      <h3 style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: "1.4rem", marginTop: 28, marginBottom: 8 }}>
-        {isReceipt ? "Payment details" : "Line items"}
-      </h3>
+      {/* Transferred-to block — only renders once the member has shared
+          the card with a guest. The block is the verification anchor:
+          the front desk checks the guest's ID, email, and phone against
+          what's printed here, so it sits ABOVE the line items where
+          it's hard to miss. */}
+      {card.transferredTo && (
+        <div style={{
+          marginTop: 18,
+          padding: "14px 18px",
+          backgroundColor: "rgba(201,169,97,0.08)",
+          border: "1px solid #C9A961",
+          borderInlineStart: "4px solid #8A7A4F",
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 18 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "#8A7A4F", fontWeight: 700 }}>
+                Bearer · verify at check-in
+              </div>
+              <div style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: "1.55rem", fontWeight: 600, marginTop: 4, lineHeight: 1.1 }}>
+                {card.transferredTo.name}
+              </div>
+              <div style={{ color: "#15161A", fontSize: "0.84rem", marginTop: 6 }}>
+                Email: <strong>{card.transferredTo.email}</strong>
+              </div>
+              <div style={{ color: "#15161A", fontSize: "0.84rem", marginTop: 2 }}>
+                Mobile: <strong>{card.transferredTo.phone}</strong>
+              </div>
+            </div>
+            <div style={{ textAlign: "right", color: "#555", fontSize: "0.74rem", fontFamily: "'Manrope', sans-serif", whiteSpace: "nowrap" }}>
+              <div>Transferred</div>
+              <div style={{ color: "#15161A", fontWeight: 700, marginTop: 2 }}>{fmtDate(card.transferredTo.transferredAt)}</div>
+              <div style={{ marginTop: 6 }}>by {card.recipientName || "the original member"}</div>
+            </div>
+          </div>
+          <div style={{
+            marginTop: 12, paddingTop: 10,
+            borderTop: "1px dashed #C9A961",
+            color: "#444", fontSize: "0.72rem", lineHeight: 1.55,
+          }}>
+            <strong style={{ color: "#15161A" }}>Verification required:</strong> the front desk must match the bearer's photo ID and contact details to the name, email, and mobile printed above before redeeming any nights against this card. The original member retains a copy of this certificate for re-verification.
+          </div>
+        </div>
+      )}
 
-      {isReceipt ? (
-        // Receipt — payment line(s)
+      {isCertificate ? (
+        // Gift certificate — the document the bearer presents. Deliberately
+        // shows only what's being GIVEN (nights × suite, validity, sender)
+        // and how to redeem it. Payment figures are intentionally absent
+        // so the bearer never sees what the buyer paid — the discount and
+        // line-item breakdown belong on the buyer's receipt.
+        <>
+          <div style={{
+            marginTop: 28,
+            padding: "28px 32px",
+            backgroundColor: "rgba(201,169,97,0.10)",
+            border: "1.5px solid #C9A961",
+            textAlign: "center",
+          }}>
+            <div style={{ color: "#8A7A4F", fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.32em", textTransform: "uppercase", fontWeight: 700 }}>
+              The gift
+            </div>
+            <div style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontSize: "3rem", fontWeight: 500, marginTop: 6, lineHeight: 1.05, color: "#15161A" }}>
+              {nightsInWords(card.totalNights)} {card.totalNights === 1 ? "Night" : "Nights"}
+            </div>
+            <div style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: "1.5rem", fontWeight: 500, marginTop: 4, color: "#15161A" }}>
+              at the {ROOM_LABEL_FULL[card.roomId] || card.roomId}
+            </div>
+            <div style={{ marginTop: 14, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", color: "#444", letterSpacing: "0.04em" }}>
+              {(card.totalNights || 0) - (card.nightsUsed || 0)} of {card.totalNights} nights remaining ·
+              valid until <strong style={{ color: "#15161A" }}>{fmtDate(card.validUntil)}</strong>
+            </div>
+            {card.message && (
+              <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px dashed #C9A961", fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontSize: "1.15rem", color: "#222", maxWidth: 520, margin: "18px auto 0" }}>
+                "{card.message}"
+              </div>
+            )}
+            <div style={{ marginTop: card.message ? 12 : 18, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", color: "#555", letterSpacing: "0.05em" }}>
+              From <strong style={{ color: "#15161A" }}>{card.senderName}</strong>
+            </div>
+          </div>
+
+          <h3 style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: "1.4rem", marginTop: 28, marginBottom: 8 }}>
+            How to redeem
+          </h3>
+          <div style={{ fontSize: "0.86rem", lineHeight: 1.7, color: "#222" }}>
+            <p style={{ margin: 0 }}>
+              Present this certificate at check-in along with photo ID matching the bearer details above. Nights apply automatically against the <strong>{ROOM_LABEL_FULL[card.roomId] || card.roomId}</strong> up to the remaining balance.
+            </p>
+            <ul style={{ marginTop: 10, paddingInlineStart: 20, listStyle: "disc", color: "#222" }}>
+              <li>At check-in — show the certificate to the front-desk team.</li>
+              <li>By email — forward to <strong>{HOTEL.email}</strong> with your preferred dates.</li>
+              <li>By WhatsApp — <strong>{HOTEL.phone}</strong>.</li>
+              <li>Online — quote code <strong style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>{card.code}</strong> during booking.</li>
+            </ul>
+            <p style={{ marginTop: 12 }}>
+              Gift cards are non-refundable but transferable until first redemption; the full balance carries over across multiple stays within the validity window. The hotel will verify the bearer's identity before applying any nights.
+            </p>
+          </div>
+        </>
+      ) : isReceipt ? (
+        <>
+        <h3 style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: "1.4rem", marginTop: 28, marginBottom: 8 }}>
+          Payment details
+        </h3>
         <table style={tblStyle}>
           <thead>
             <tr>
@@ -182,8 +319,13 @@ export function GiftCardDocView({ card, kind }) {
             </tr>
           </tbody>
         </table>
+        </>
       ) : (
         // Invoice — nights × rate, less discount, equals net
+        <>
+        <h3 style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: "1.4rem", marginTop: 28, marginBottom: 8 }}>
+          Line items
+        </h3>
         <table style={tblStyle}>
           <thead>
             <tr>
@@ -232,35 +374,53 @@ export function GiftCardDocView({ card, kind }) {
             </tr>
           </tbody>
         </table>
+        </>
       )}
 
-      <div style={{ marginTop: 24, fontSize: "0.84rem", lineHeight: 1.7, color: "#222" }}>
-        <p>
-          All amounts are in <strong>{getCurrentCurrency().code}</strong>. Gift cards are non-refundable
-          but transferable until first redemption; full balance carries over across multiple stays
-          within the validity window.
-        </p>
-        <p style={{ marginTop: 8 }}>
-          <strong>Redemption:</strong> the recipient enters the code <strong style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>{card.code}</strong>
-          {" "}during booking. Prepaid nights apply automatically against the {ROOM_LABEL_FULL[card.roomId] || card.roomId}
-          {" "}up to the remaining balance ({(card.totalNights || 0) - (card.nightsUsed || 0)} of {card.totalNights} nights).
-        </p>
-        {card.message && (
-          <p style={{ marginTop: 8 }}>
-            <strong>Personal message on file:</strong> {card.message}
-          </p>
-        )}
-      </div>
+      {/* Accounting fine-print only shown on invoice/receipt; the
+          certificate has its own redemption paragraph above. */}
+      {!isCertificate && (
+        <>
+          <div style={{ marginTop: 24, fontSize: "0.84rem", lineHeight: 1.7, color: "#222" }}>
+            <p>
+              All amounts are in <strong>{getCurrentCurrency().code}</strong>. Gift cards are non-refundable
+              but transferable until first redemption; full balance carries over across multiple stays
+              within the validity window.
+            </p>
+            <p style={{ marginTop: 8 }}>
+              <strong>Redemption:</strong> the recipient enters the code <strong style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>{card.code}</strong>
+              {" "}during booking. Prepaid nights apply automatically against the {ROOM_LABEL_FULL[card.roomId] || card.roomId}
+              {" "}up to the remaining balance ({(card.totalNights || 0) - (card.nightsUsed || 0)} of {card.totalNights} nights).
+            </p>
+            {card.message && (
+              <p style={{ marginTop: 8 }}>
+                <strong>Personal message on file:</strong> {card.message}
+              </p>
+            )}
+          </div>
 
-      <p style={{ marginTop: 22, fontSize: "0.86rem", lineHeight: 1.7 }}>
-        For any queries about this {isReceipt ? "receipt" : "invoice"}, please contact <strong>{HOTEL.emailAccounts}</strong> or call <strong>{HOTEL.phone}</strong>.
-      </p>
+          <p style={{ marginTop: 22, fontSize: "0.86rem", lineHeight: 1.7 }}>
+            For any queries about this {isReceipt ? "receipt" : "invoice"}, please contact <strong>{HOTEL.emailAccounts}</strong> or call <strong>{HOTEL.phone}</strong>.
+          </p>
+        </>
+      )}
 
       <div style={{ marginTop: 28, paddingTop: 14, borderTop: "1px solid #C9A961", fontSize: "0.7rem", color: "#666", textAlign: "center", letterSpacing: "0.05em" }}>
         {HOTEL.legal} · {HOTEL.address}, {HOTEL.area} · {HOTEL.country} · {HOTEL.phone} · {HOTEL.email} · {HOTEL.website}
       </div>
     </div>
   );
+}
+
+// "Five" reads warmer than "5" on a gift voucher hero; falls back to the
+// numeral for >12 to avoid awkward "twenty-five" wraparound.
+function nightsInWords(n) {
+  const words = [
+    "Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven",
+    "Eight", "Nine", "Ten", "Eleven", "Twelve",
+  ];
+  if (n >= 0 && n < words.length) return words[n];
+  return String(n);
 }
 
 const tblStyle  = { width: "100%", borderCollapse: "collapse", fontSize: "0.84rem", marginTop: 4 };
@@ -283,15 +443,33 @@ export function buildGiftCardDocHtml(card, kind, { hotel, invoice, payment, tier
     discountPct: card.discountPct,
     ratePerNight: card.ratePerNight,
   });
-  const isReceipt = kind === "receipt";
+  const isReceipt     = kind === "receipt";
+  const isCertificate = kind === "certificate";
   const docNo = isReceipt
     ? (payment?.id ? payment.id : `RCP-GC-${card.code}`)
-    : (invoice?.id ? invoice.id : `INV-GC-${card.code}`);
-  const title = isReceipt ? "Payment Receipt" : "Invoice";
+    : isCertificate
+      ? card.code
+      : (invoice?.id ? invoice.id : `INV-GC-${card.code}`);
+  const title = isReceipt ? "Payment Receipt" : isCertificate ? "Gift Certificate" : "Invoice";
   const issuedDate = isReceipt
     ? (payment?.ts ? fmtTs(payment.ts) : todayLong())
-    : (invoice?.issued ? fmtDate(invoice.issued) : todayLong());
+    : isCertificate
+      ? fmtDate(card.purchaseDate)
+      : (invoice?.issued ? fmtDate(invoice.issued) : todayLong());
   const ccy = getCurrentCurrency().code;
+  const remainingNights = (card.totalNights || 0) - (card.nightsUsed || 0);
+  const certBadgeColor = card.status === "cancelled" ? "#DC2626"
+    : remainingNights === 0 ? "#8A7A4F"
+    : "#C9A961";
+  const certBadgeLabel = card.status === "cancelled" ? "Cancelled"
+    : remainingNights === 0 ? "Fully redeemed"
+    : remainingNights === card.totalNights ? "Unused"
+    : `${remainingNights} nights left`;
+  const wordNights = (() => {
+    const w = ["Zero","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","Ten","Eleven","Twelve"];
+    const n = card.totalNights;
+    return (n >= 0 && n < w.length) ? w[n] : String(n);
+  })();
 
   return `<!DOCTYPE html>
 <html lang="en"><head>
@@ -329,7 +507,9 @@ export function buildGiftCardDocHtml(card, kind, { hotel, invoice, payment, tier
     <div style="text-align:right;">
       <h2>${escapeHtml(title)}</h2>
       <div class="muted" style="font-size:11px;margin-top:4px;">#${escapeHtml(docNo)} · ${escapeHtml(issuedDate)}</div>
-      <span style="display:inline-block;margin-top:8px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;padding:3px 9px;color:#15803D;border:1px solid #15803D;">Paid</span>
+      ${isCertificate
+        ? `<span style="display:inline-block;margin-top:8px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;padding:3px 9px;color:${certBadgeColor};border:1px solid ${certBadgeColor};">${escapeHtml(certBadgeLabel)}</span>`
+        : `<span style="display:inline-block;margin-top:8px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;padding:3px 9px;color:#15803D;border:1px solid #15803D;">Paid</span>`}
     </div>
   </div>
 
@@ -342,11 +522,52 @@ export function buildGiftCardDocHtml(card, kind, { hotel, invoice, payment, tier
     <div>
       <div class="eyebrow">Gift card reference</div>
       <div class="code" style="font-size:1rem;font-weight:600;margin-top:4px;">${escapeHtml(card.code)}</div>
-      <div class="muted" style="font-size:12px;margin-top:4px;">Recipient: <strong style="color:#15161A;">${escapeHtml(card.recipientName || "—")}</strong></div>
+      <div class="muted" style="font-size:12px;margin-top:4px;">Member of record: <strong style="color:#15161A;">${escapeHtml(card.recipientName || "—")}</strong></div>
       <div class="muted" style="font-size:12px;margin-top:2px;">Valid until: <strong style="color:#15161A;">${escapeHtml(fmtDate(card.validUntil))}</strong></div>
     </div>
   </div>
+  ${card.transferredTo ? `
+  <div style="margin-top:18px;padding:14px 18px;background:rgba(201,169,97,0.08);border:1px solid #C9A961;border-inline-start:4px solid #8A7A4F;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:18px;">
+      <div style="min-width:0;">
+        <div class="eyebrow">Bearer · verify at check-in</div>
+        <div style="font-family:'Cormorant Garamond',Georgia,serif;font-size:1.55rem;font-weight:600;margin-top:4px;line-height:1.1;">${escapeHtml(card.transferredTo.name)}</div>
+        <div style="color:#15161A;font-size:13px;margin-top:6px;">Email: <strong>${escapeHtml(card.transferredTo.email)}</strong></div>
+        <div style="color:#15161A;font-size:13px;margin-top:2px;">Mobile: <strong>${escapeHtml(card.transferredTo.phone)}</strong></div>
+      </div>
+      <div style="text-align:right;color:#555;font-size:11.5px;white-space:nowrap;">
+        <div>Transferred</div>
+        <div style="color:#15161A;font-weight:700;margin-top:2px;">${escapeHtml(fmtDate(card.transferredTo.transferredAt))}</div>
+        <div style="margin-top:6px;">by ${escapeHtml(card.recipientName || "the original member")}</div>
+      </div>
+    </div>
+    <div style="margin-top:12px;padding-top:10px;border-top:1px dashed #C9A961;color:#444;font-size:11px;line-height:1.55;">
+      <strong style="color:#15161A;">Verification required:</strong> the front desk must match the bearer's photo ID and contact details to the name, email, and mobile printed above before redeeming any nights against this card. The original member retains a copy of this certificate for re-verification.
+    </div>
+  </div>` : ""}
 
+  ${isCertificate ? `
+    <div style="margin-top:28px;padding:28px 32px;background:rgba(201,169,97,0.10);border:1.5px solid #C9A961;text-align:center;">
+      <div class="eyebrow">The gift</div>
+      <div style="font-family:'Cormorant Garamond',Georgia,serif;font-style:italic;font-size:3rem;font-weight:500;margin-top:6px;line-height:1.05;color:#15161A;">${escapeHtml(wordNights)} ${card.totalNights === 1 ? "Night" : "Nights"}</div>
+      <div style="font-family:'Cormorant Garamond',Georgia,serif;font-size:1.5rem;font-weight:500;margin-top:4px;color:#15161A;">at the ${escapeHtml(ROOM_LABEL_FULL[card.roomId] || card.roomId)}</div>
+      <div style="margin-top:14px;font-size:12px;color:#444;letter-spacing:0.04em;">${remainingNights} of ${card.totalNights} nights remaining · valid until <strong style="color:#15161A;">${escapeHtml(fmtDate(card.validUntil))}</strong></div>
+      ${card.message ? `<div style="margin-top:18px;padding-top:14px;border-top:1px dashed #C9A961;font-family:'Cormorant Garamond',Georgia,serif;font-style:italic;font-size:1.15rem;color:#222;max-width:520px;margin:18px auto 0;">"${escapeHtml(card.message)}"</div>` : ""}
+      <div style="margin-top:${card.message ? 12 : 18}px;font-size:11.5px;color:#555;letter-spacing:0.05em;">From <strong style="color:#15161A;">${escapeHtml(card.senderName || "—")}</strong></div>
+    </div>
+
+    <h3>How to redeem</h3>
+    <div style="font-size:13px;line-height:1.7;color:#222;">
+      <p style="margin:0;">Present this certificate at check-in along with photo ID matching the bearer details above. Nights apply automatically against the <strong>${escapeHtml(ROOM_LABEL_FULL[card.roomId] || card.roomId)}</strong> up to the remaining balance.</p>
+      <ul style="margin-top:10px;padding-inline-start:20px;list-style:disc;color:#222;">
+        <li>At check-in — show the certificate to the front-desk team.</li>
+        <li>By email — forward to <strong>${escapeHtml(HOTEL.email)}</strong> with your preferred dates.</li>
+        <li>By WhatsApp — <strong>${escapeHtml(HOTEL.phone)}</strong>.</li>
+        <li>Online — quote code <strong class="code">${escapeHtml(card.code)}</strong> during booking.</li>
+      </ul>
+      <p style="margin-top:12px;">Gift cards are non-refundable but transferable until first redemption; the full balance carries over across multiple stays within the validity window. The hotel will verify the bearer's identity before applying any nights.</p>
+    </div>
+  ` : `
   <h3>${isReceipt ? "Payment details" : "Line items"}</h3>
 
   ${isReceipt ? `
@@ -400,6 +621,7 @@ export function buildGiftCardDocHtml(card, kind, { hotel, invoice, payment, tier
   <p style="margin-top:22px;font-size:13px;line-height:1.7;">
     For any queries about this ${isReceipt ? "receipt" : "invoice"}, please contact <strong>${escapeHtml(HOTEL.emailAccounts)}</strong> or call <strong>${escapeHtml(HOTEL.phone)}</strong>.
   </p>
+  `}
 
   <div class="footer">
     ${escapeHtml(HOTEL.legal)} · ${escapeHtml(HOTEL.address)}, ${escapeHtml(HOTEL.area)} · ${escapeHtml(HOTEL.country)} · ${escapeHtml(HOTEL.phone)} · ${escapeHtml(HOTEL.email)} · ${escapeHtml(HOTEL.website)}
@@ -442,13 +664,18 @@ export function printGiftCardDoc(card, kind, opts = {}) {
 
 export function emailGiftCardDoc(card, kind, hotel) {
   const HOTEL = hotel || FALLBACK_HOTEL;
-  const isReceipt = kind === "receipt";
-  const subject = isReceipt
-    ? `${HOTEL.name} · Payment receipt · ${card.code}`
-    : `${HOTEL.name} · Invoice · ${card.code}`;
-  const intro = isReceipt
-    ? `Thank you for your payment. Please find your receipt for gift card ${card.code} below.`
-    : `Please find your invoice for gift card ${card.code} below.`;
+  const isReceipt     = kind === "receipt";
+  const isCertificate = kind === "certificate";
+  const subject = isCertificate
+    ? `${HOTEL.name} · Gift certificate · ${card.code}`
+    : isReceipt
+      ? `${HOTEL.name} · Payment receipt · ${card.code}`
+      : `${HOTEL.name} · Invoice · ${card.code}`;
+  const intro = isCertificate
+    ? `Please find your gift certificate for ${card.code} below — present it at check-in along with photo ID.`
+    : isReceipt
+      ? `Thank you for your payment. Please find your receipt for gift card ${card.code} below.`
+      : `Please find your invoice for gift card ${card.code} below.`;
   const lines = [
     `Dear ${card.senderName || "Customer"},`,
     "",

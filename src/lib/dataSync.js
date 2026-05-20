@@ -260,43 +260,465 @@ export async function upsertSingleton(key, value) {
 // enough that the operator never feels staleness, while keeping the
 // request rate sensible.
 
-function shallowDiff(prev, next) {
-  // Quick equality so we don't fire a network call when the slice is
-  // re-rendered without actually changing. References-only — JSONB diffs
-  // are best done server-side anyway.
-  if (prev === next) return false;
-  if (Array.isArray(prev) && Array.isArray(next) && prev.length !== next.length) return true;
-  return true;
+// Content-aware diff via JSON.stringify. We need this (not just reference
+// equality) so that state updates produced by inbound realtime events —
+// which always create a new array reference even when the payload is
+// identical to what we already had — don't trigger an echo write back to
+// Supabase. For the slice sizes we deal with (≤ a few hundred rows of
+// small JSON objects) stringify is cheap and avoids per-field deep-equal.
+function serialize(value) {
+  try { return JSON.stringify(value); } catch { return null; }
 }
 
-export function useSlicePersistence(table, value, hydratedRef) {
-  const timeoutRef = useRef(null);
-  const lastRef    = useRef(value);
+// `hydrated` is a BOOLEAN piece of state (not a ref). Passing state means
+// this effect re-evaluates when hydration flips true — which closes a
+// race where fetchAll resolves AFTER the first value-change effect fires:
+//
+//   1. effect runs with value=initial, hydrated=false  → skipped
+//   2. fetchAll resolves → setValue(dbRows). effect runs with hydrated
+//      still false → skipped. lastSerialized stays null.
+//   3. Promise.all().finally() flips hydrated → true. effect re-runs
+//      with the latest value and now hydrated=true → records baseline.
+//   4. Owner edits → effect runs → diff vs. baseline → WRITES.
+//
+// Before this fix `hydrated` was a ref, so step 3 never re-ran the
+// effect and the owner's first edit was silently absorbed as the
+// baseline — meaning their first save never reached the database.
+export function useSlicePersistence(table, value, hydrated) {
+  const timeoutRef         = useRef(null);
+  const lastSerializedRef  = useRef(null);
   useEffect(() => {
-    if (!hydratedRef?.current) return;
-    if (!shallowDiff(lastRef.current, value)) return;
-    lastRef.current = value;
+    if (!hydrated) return;
+    const next = serialize(value);
+    if (next === null) return;          // value is non-serialisable; skip
+    if (lastSerializedRef.current === null) {
+      // First post-hydration observation: record the baseline silently
+      // so we don't immediately echo whatever fetchAll just loaded back
+      // into the DB. Real edits (or inbound realtime updates) bump the
+      // serialised content past this baseline on the next pass.
+      lastSerializedRef.current = next;
+      return;
+    }
+    if (next === lastSerializedRef.current) return;  // unchanged content
+    lastSerializedRef.current = next;
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     timeoutRef.current = setTimeout(() => {
       bulkReplace(table, Array.isArray(value) ? value : []);
     }, 600);
     return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
+  }, [value, hydrated]);
 }
 
-export function useSingletonPersistence(key, value, hydratedRef) {
-  const timeoutRef = useRef(null);
-  const lastRef    = useRef(value);
+// ─── Real-time slice sync ─────────────────────────────────────────────────
+//
+// useRealtimeSlice(table, setValue, hydratedRef, options?)
+//
+// Subscribes to postgres_changes on a JSONB-entity table (id text PK +
+// data jsonb shape). Every INSERT / UPDATE / DELETE event from Supabase
+// is folded into the local React state via `setValue`. Together with
+// the content-aware `useSlicePersistence` above this gives a tight
+// "any tab edits → all tabs see it" loop without an echo storm:
+//
+//   Tab A: addAdminUser()  → local setAdminUsers([...prev, x])
+//                           → useSlicePersistence fires bulkReplace
+//                           → Supabase INSERT lands in admin_users
+//                           → realtime broadcasts INSERT to all tabs
+//   Tab A: realtime callback updates state with identical content
+//                           → useSlicePersistence sees stringify match,
+//                             skips a redundant write
+//   Tab B: realtime callback updates state with new content
+//                           → useSlicePersistence first sees new content,
+//                             schedules a write — but the JSON in DB is
+//                             already correct, so bulkReplace upserts the
+//                             same rows. Supabase MAY emit a no-op
+//                             notification; even if it does, the next
+//                             pass sees no content change and bails.
+//
+// Caveat: the realtime payload's `data` column is JSON — we map back to
+// the slice's React shape by reading `row.data`. The id key collisions
+// across tabs are inherently impossible because Supabase enforces the
+// primary key on the server.
+//
+// Options:
+//   • onConflict(localItem, incoming) — optional resolver for the rare
+//     case where the local item has been edited but not yet persisted.
+//     Defaults to "remote wins" which is the right call for shared
+//     operational data (admin users, calendar overrides, bookings…).
+//
+// Returns nothing. The channel is torn down automatically on unmount.
+export function useRealtimeSlice(table, setValue, hydrated, options = {}) {
+  const { onConflict } = options;
+  // Mirror the latest `hydrated` boolean into a ref so the postgres
+  // callback can read it without re-subscribing on every flip. The
+  // channel lifecycle stays tied to `table`.
+  const hydratedRef = useRef(hydrated);
+  useEffect(() => { hydratedRef.current = hydrated; }, [hydrated]);
+
   useEffect(() => {
-    if (!hydratedRef?.current) return;
-    if (lastRef.current === value) return;
-    lastRef.current = value;
+    if (!SUPABASE_CONFIGURED) return undefined;
+    let cancelled = false;
+
+    // Build the channel inside the effect so React's strict-mode double-
+    // mount in development doesn't leave a dangling subscription.
+    const channel = supabase
+      .channel(`realtime:public:${table}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table },
+        (payload) => {
+          if (cancelled) return;
+          // Hydration must complete before we touch state — otherwise a
+          // burst of seed events on first connect would race with the
+          // initial fetchAll and we'd end up showing partial data.
+          if (!hydratedRef.current) return;
+
+          const eventType = payload.eventType || payload.type;
+          if (eventType === "INSERT" || eventType === "UPDATE") {
+            const incoming = payload.new?.data;
+            if (!incoming || incoming.id === undefined) return;
+            setValue((cur) => {
+              const list = Array.isArray(cur) ? cur : [];
+              const idx = list.findIndex((x) => x && x.id === incoming.id);
+              if (idx === -1) return [...list, incoming];
+              // Optional conflict resolution; remote-wins by default.
+              const resolved = typeof onConflict === "function"
+                ? onConflict(list[idx], incoming)
+                : incoming;
+              const out = list.slice();
+              out[idx] = resolved;
+              return out;
+            });
+          } else if (eventType === "DELETE") {
+            // payload.old.id is the row PK, which equals item.id.
+            const removedId = payload.old?.id;
+            if (removedId === undefined || removedId === null) return;
+            setValue((cur) => {
+              const list = Array.isArray(cur) ? cur : [];
+              return list.filter((x) => x && String(x.id) !== String(removedId));
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      try { supabase.removeChannel(channel); } catch (_) { /* noop */ }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [table]);
+}
+
+// Content-aware singleton persistence. Same reasoning as the slice
+// variant: inbound realtime events produce identical-content state
+// updates that we must not re-upsert, and the first post-hydration
+// observation is the baseline (not a change worth pushing back).
+// `hydrated` is a BOOLEAN state (not a ref) so this effect re-runs
+// when hydration flips true and correctly records the baseline at
+// that moment — see the long comment on useSlicePersistence for why.
+export function useSingletonPersistence(key, value, hydrated) {
+  const timeoutRef        = useRef(null);
+  const lastSerializedRef = useRef(null);
+  useEffect(() => {
+    if (!hydrated) return;
+    const next = serialize(value);
+    if (next === null) return;
+    if (lastSerializedRef.current === null) {
+      lastSerializedRef.current = next;
+      return;
+    }
+    if (next === lastSerializedRef.current) return;
+    lastSerializedRef.current = next;
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     timeoutRef.current = setTimeout(() => {
       upsertSingleton(key, value);
     }, 600);
     return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
+  }, [value, hydrated]);
+}
+
+// ─── Real-time singleton sync ─────────────────────────────────────────────
+//
+// useRealtimeSingleton(key, setValue, hydratedRef)
+//
+// Subscribes to postgres_changes on `public.singletons` filtered by the
+// row's key. The payload shape is { key, value, updated_at, ... }; we
+// hand value through to setValue. Inserts and updates both apply; a
+// delete reverts to null so the consumer can decide whether to fall
+// back to its bundled default.
+//
+// One channel per singleton key — keeps the WebSocket filter granular
+// so a flurry of hotel_info edits doesn't wake up every component that
+// also reads `tiers` or `tax`.
+export function useRealtimeSingleton(key, setValue, hydrated) {
+  // Same ref-mirror pattern as useRealtimeSlice so the channel
+  // subscribes once per key and the callback reads the live `hydrated`.
+  const hydratedRef = useRef(hydrated);
+  useEffect(() => { hydratedRef.current = hydrated; }, [hydrated]);
+
+  useEffect(() => {
+    if (!SUPABASE_CONFIGURED) return undefined;
+    let cancelled = false;
+    const channel = supabase
+      .channel(`realtime:public:singletons:${key}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "singletons",
+          filter: `key=eq.${key}`,
+        },
+        (payload) => {
+          if (cancelled) return;
+          if (!hydratedRef.current) return;
+          const eventType = payload.eventType || payload.type;
+          if (eventType === "INSERT" || eventType === "UPDATE") {
+            const incoming = payload.new?.value;
+            if (incoming === undefined) return;
+            setValue(incoming);
+          } else if (eventType === "DELETE") {
+            setValue(null);
+          }
+        }
+      )
+      .subscribe();
+    return () => {
+      cancelled = true;
+      try { supabase.removeChannel(channel); } catch (_) { /* noop */ }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+}
+
+// ─── Real-time sync for non-JSONB tables ──────────────────────────────────
+//
+// useRealtimeTable(table, setValue, hydratedRef, { rowToClient, getId })
+//
+// For tables that pre-date the JSONB-entity pattern (currently just
+// `rooms`, which has its own columnar schema with snake_case columns
+// and a dbRoomToClient mapper). The hook is shape-agnostic — pass in
+// a rowToClient function that converts a Supabase row into the React-
+// shape the slice expects, and a getId helper that pulls the id off
+// the row (defaults to `row.id`).
+//
+// INSERT / UPDATE — apply rowToClient(payload.new) and upsert into the
+// slice array by id.
+// DELETE        — filter the slice by id.
+export function useRealtimeTable(table, setValue, hydrated, options = {}) {
+  const { rowToClient = (row) => row, getId = (row) => row?.id } = options;
+  // Mirror hydrated boolean → ref so the channel doesn't re-subscribe.
+  const hydratedRef = useRef(hydrated);
+  useEffect(() => { hydratedRef.current = hydrated; }, [hydrated]);
+
+  useEffect(() => {
+    if (!SUPABASE_CONFIGURED) return undefined;
+    let cancelled = false;
+    const channel = supabase
+      .channel(`realtime:public:${table}:rows`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table },
+        (payload) => {
+          if (cancelled) return;
+          if (!hydratedRef.current) return;
+          const eventType = payload.eventType || payload.type;
+          if (eventType === "INSERT" || eventType === "UPDATE") {
+            const incoming = rowToClient(payload.new);
+            const id = getId(payload.new) ?? incoming?.id;
+            if (id === undefined || id === null) return;
+            setValue((cur) => {
+              const list = Array.isArray(cur) ? cur : [];
+              const idx = list.findIndex((x) => x && getId(x) === id || x?.id === id);
+              if (idx === -1) return [...list, incoming];
+              const out = list.slice();
+              out[idx] = incoming;
+              return out;
+            });
+          } else if (eventType === "DELETE") {
+            const id = getId(payload.old);
+            if (id === undefined || id === null) return;
+            setValue((cur) => {
+              const list = Array.isArray(cur) ? cur : [];
+              return list.filter((x) => x && (getId(x) !== id) && (x.id !== id));
+            });
+          }
+        }
+      )
+      .subscribe();
+    return () => {
+      cancelled = true;
+      try { supabase.removeChannel(channel); } catch (_) { /* noop */ }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [table]);
+}
+
+// ─── Object-map slice helpers ──────────────────────────────────────────
+//
+// Some slices are stored in React state as a key → value object map
+// (e.g. calendar_overrides keyed by `${roomId}|${YYYY-MM-DD}`) rather
+// than an array of records. The array-shape helpers above silently
+// break those slices: fetchAll throws away the row id, bulkReplace
+// coerces to an empty array, and the realtime listener clobbers the
+// map with an array. The three helpers below close that gap.
+//
+//   fetchEntityMap(table)        — returns { [row.id]: row.data } | null
+//   useObjectSlicePersistence    — diff & upsert/delete by key
+//   useObjectRealtimeSlice       — apply INSERT/UPDATE/DELETE to the map
+//
+// The DB row layout is identical to the array variant: `(id text, data
+// jsonb)`. The only difference is what the React state looks like.
+
+/** Fetch every row in a JSONB-entity table as a key → data map. */
+export async function fetchEntityMap(table) {
+  if (!SUPABASE_CONFIGURED) return null;
+  try {
+    const { data, error } = await supabase
+      .from(table)
+      .select("id, data");
+    if (error) {
+      // eslint-disable-next-line no-console
+      console.warn(`[${table}] fetch (as map) failed:`, error.message);
+      return null;
+    }
+    const map = {};
+    (data || []).forEach((r) => {
+      if (r && r.id !== undefined && r.id !== null && r.data) {
+        map[String(r.id)] = r.data;
+      }
+    });
+    return map;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(`[${table}] fetch (as map) threw:`, err?.message || err);
+    return null;
+  }
+}
+
+/**
+ * Diff-based persistence for object-map slices. On every change we
+ * compute additions / updates / deletions against the last-known map,
+ * then push only the diff to Supabase. Same content-aware + hydration-
+ * race-safe semantics as useSlicePersistence — see its header for the
+ * full rationale on why `hydrated` is state, not a ref.
+ */
+export function useObjectSlicePersistence(table, valueMap, hydrated) {
+  const timeoutRef        = useRef(null);
+  const lastMapRef        = useRef(null);   // snapshot of the previous content
+  const lastSerializedRef = useRef(null);   // for fast diff detection
+  useEffect(() => {
+    if (!hydrated) return;
+    const next = serialize(valueMap || {});
+    if (next === null) return;
+    if (lastSerializedRef.current === null) {
+      // First post-hydration observation — record the baseline silently
+      // so we don't echo whatever fetchEntityMap just loaded.
+      lastSerializedRef.current = next;
+      lastMapRef.current = { ...(valueMap || {}) };
+      return;
+    }
+    if (next === lastSerializedRef.current) return;
+    const prev = lastMapRef.current || {};
+    const curr = valueMap || {};
+    lastSerializedRef.current = next;
+    lastMapRef.current = { ...curr };
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(async () => {
+      // Skip when there's no auth — RLS would reject writes anyway.
+      if (!hasSupabaseSession()) {
+        warnSkipOnce(table);
+        return;
+      }
+      // Build the diff
+      const prevKeys = new Set(Object.keys(prev));
+      const currKeys = new Set(Object.keys(curr));
+      const toUpsert = [];
+      const toDelete = [];
+      currKeys.forEach((k) => {
+        if (!prevKeys.has(k) || serialize(prev[k]) !== serialize(curr[k])) {
+          toUpsert.push({ id: k, data: curr[k] });
+        }
+      });
+      prevKeys.forEach((k) => {
+        if (!currKeys.has(k)) toDelete.push(k);
+      });
+      try {
+        if (toUpsert.length > 0) {
+          const CHUNK = 500;
+          for (let i = 0; i < toUpsert.length; i += CHUNK) {
+            const slice = toUpsert.slice(i, i + CHUNK);
+            const { error } = await supabase
+              .from(table)
+              .upsert(slice, { onConflict: "id" });
+            if (error) {
+              // eslint-disable-next-line no-console
+              console.warn(`[${table}] map upsert failed:`, error.message);
+              return;
+            }
+          }
+        }
+        if (toDelete.length > 0) {
+          const { error } = await supabase.from(table).delete().in("id", toDelete);
+          if (error) {
+            // eslint-disable-next-line no-console
+            console.warn(`[${table}] map delete-stale failed:`, error.message);
+          }
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(`[${table}] map persistence threw:`, err?.message || err);
+      }
+    }, 600);
+    return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [valueMap, hydrated]);
+}
+
+/**
+ * Real-time sync for object-map slices. Each INSERT / UPDATE writes the
+ * row's `data` value at the row's `id` key; DELETE removes the key.
+ */
+export function useObjectRealtimeSlice(table, setValueMap, hydrated) {
+  const hydratedRef = useRef(hydrated);
+  useEffect(() => { hydratedRef.current = hydrated; }, [hydrated]);
+
+  useEffect(() => {
+    if (!SUPABASE_CONFIGURED) return undefined;
+    let cancelled = false;
+    const channel = supabase
+      .channel(`realtime:public:${table}:map`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table },
+        (payload) => {
+          if (cancelled) return;
+          if (!hydratedRef.current) return;
+          const eventType = payload.eventType || payload.type;
+          if (eventType === "INSERT" || eventType === "UPDATE") {
+            const id = payload.new?.id;
+            const data = payload.new?.data;
+            if (id === undefined || id === null || data === undefined) return;
+            setValueMap((cur) => ({ ...(cur || {}), [String(id)]: data }));
+          } else if (eventType === "DELETE") {
+            const id = payload.old?.id;
+            if (id === undefined || id === null) return;
+            setValueMap((cur) => {
+              if (!cur || !(String(id) in cur)) return cur;
+              const out = { ...cur };
+              delete out[String(id)];
+              return out;
+            });
+          }
+        }
+      )
+      .subscribe();
+    return () => {
+      cancelled = true;
+      try { supabase.removeChannel(channel); } catch (_) { /* noop */ }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [table]);
 }

@@ -876,7 +876,7 @@ function RailRow({ p, label, value, bold = false, accent, muted = false }) {
 // cancel/expire if needed, copy the code to share.
 // ─────────────────────────────────────────────────────────────────────────
 function GiftCardDetail({ p, card, onClose, onUpdate, onRemove }) {
-  const { invoices, payments, hotelInfo, members, giftCardTiers } = useData();
+  const { invoices, payments, hotelInfo, members, giftCardTiers, verifyGiftCardTransfer, staffSession } = useData();
   const [draft, setDraft] = useState(card);
   // Which doc to preview — null hides the modal, "invoice" / "receipt"
   // pops the matching GiftCardDocPreviewModal.
@@ -1155,6 +1155,143 @@ function GiftCardDetail({ p, card, onClose, onUpdate, onRemove }) {
           />
         </div>
       </Card>
+
+      {/* Guest transfer + verification — only when the member has shared
+          the card with a non-member guest. Front desk uses this card to
+          verify the bearer's ID, then marks the transfer "verified" so
+          subsequent redemptions land cleanly. The history table shows
+          every previous transfer so a card that's been re-assigned has
+          a full audit trail. */}
+      {card.transferredTo && (
+        <Card
+          title="Bearer · transfer + verification"
+          className="mt-5"
+          action={
+            <span style={{ color: p.textMuted, fontSize: "0.66rem", letterSpacing: "0.05em", fontFamily: "'Manrope', sans-serif" }}>
+              {(card.transferHistory && card.transferHistory[card.transferHistory.length - 1]?.verifiedAt)
+                ? "Verified"
+                : "Awaiting front-desk verification"}
+            </span>
+          }
+        >
+          <p style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem", lineHeight: 1.55 }}>
+            <strong style={{ color: p.textPrimary }}>{card.recipientName}</strong> transferred this card to a non-member guest. The bearer must present matching photo ID before any nights are redeemed. The original member retains a copy of the certificate.
+          </p>
+
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-px" style={{ backgroundColor: p.border, border: `1px solid ${p.border}` }}>
+            <div style={{ backgroundColor: p.bgPanel, padding: "12px 14px" }}>
+              <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, fontFamily: "'Manrope', sans-serif" }}>
+                Bearer name
+              </div>
+              <div style={{ color: p.textPrimary, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", fontWeight: 600, marginTop: 4 }}>
+                {card.transferredTo.name}
+              </div>
+            </div>
+            <div style={{ backgroundColor: p.bgPanel, padding: "12px 14px" }}>
+              <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, fontFamily: "'Manrope', sans-serif" }}>
+                Email
+              </div>
+              <div style={{ color: p.textPrimary, fontSize: "0.94rem", marginTop: 4, wordBreak: "break-all" }}>
+                {card.transferredTo.email}
+              </div>
+            </div>
+            <div style={{ backgroundColor: p.bgPanel, padding: "12px 14px" }}>
+              <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, fontFamily: "'Manrope', sans-serif" }}>
+                Mobile
+              </div>
+              <div style={{ color: p.textPrimary, fontSize: "0.94rem", marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
+                {card.transferredTo.phone}
+              </div>
+            </div>
+          </div>
+
+          {/* Verification action */}
+          {(() => {
+            const last = (card.transferHistory && card.transferHistory.length > 0)
+              ? card.transferHistory[card.transferHistory.length - 1]
+              : null;
+            const verified = last && last.verifiedAt;
+            return (
+              <div className="mt-4 p-3 flex items-center justify-between gap-3 flex-wrap" style={{
+                backgroundColor: verified ? `${p.success}10` : `${p.warn}10`,
+                border: `1px solid ${verified ? p.success : p.warn}55`,
+                borderInlineStart: `4px solid ${verified ? p.success : p.warn}`,
+              }}>
+                <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem", color: p.textPrimary, lineHeight: 1.45 }}>
+                  {verified ? (
+                    <>
+                      Verified by <strong>{last.verifiedBy?.name || "front desk"}</strong> on <strong>{fmtDateTime(last.verifiedAt)}</strong> — bearer details on file match the presented ID. Card is now redeemable.
+                    </>
+                  ) : (
+                    <>
+                      <strong style={{ color: p.warn }}>Action required:</strong> verify the bearer's photo ID matches the name, email, and mobile above. Without verification, redemption attempts should be refused.
+                    </>
+                  )}
+                </div>
+                {!verified && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!confirm(`Confirm bearer ID for ${card.transferredTo.name}? This stamps you as the verifier and unlocks redemption.`)) return;
+                      const actor = staffSession
+                        ? { id: staffSession.id, name: staffSession.name }
+                        : { id: "system", name: "System" };
+                      const saved = verifyGiftCardTransfer({ id: card.id, verifiedBy: actor });
+                      if (saved) {
+                        pushToast({ message: `Bearer verified — ${card.transferredTo.name}` });
+                      }
+                    }}
+                    style={{
+                      backgroundColor: p.accent,
+                      color: p.theme === "light" ? "#FFFFFF" : "#15161A",
+                      padding: "0.5rem 0.95rem",
+                      border: `1px solid ${p.accent}`,
+                      fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+                      letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Verify bearer ID
+                  </button>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Transfer history — every previous hand-off, oldest first. */}
+          {Array.isArray(card.transferHistory) && card.transferHistory.length > 1 && (
+            <div className="mt-4">
+              <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, fontFamily: "'Manrope', sans-serif", marginBottom: 6 }}>
+                Transfer history · {card.transferHistory.length}
+              </div>
+              <TableShell>
+                <thead>
+                  <tr>
+                    <Th>Bearer</Th>
+                    <Th>Contact</Th>
+                    <Th>Transferred</Th>
+                    <Th>Verified</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {card.transferHistory.map((h, i) => (
+                    <tr key={i} style={{ borderTop: `1px solid ${p.border}` }}>
+                      <Td><strong style={{ color: p.textPrimary }}>{h.name}</strong></Td>
+                      <Td muted><div>{h.email}</div><div style={{ fontVariantNumeric: "tabular-nums" }}>{h.phone}</div></Td>
+                      <Td muted>{fmtDateTime(h.transferredAt)}<div style={{ fontSize: "0.7rem" }}>by {h.transferredBy?.name || "—"}</div></Td>
+                      <Td muted>
+                        {h.verifiedAt
+                          ? <><span style={{ color: p.success }}>{fmtDateTime(h.verifiedAt)}</span><div style={{ fontSize: "0.7rem" }}>{h.verifiedBy?.name || "—"}</div></>
+                          : <span style={{ color: p.warn, fontWeight: 700 }}>Not verified</span>}
+                      </Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </TableShell>
+            </div>
+          )}
+        </Card>
+      )}
 
       <Card title={`Redemption history · ${history.length}`} padded={false} className="mt-5">
         {history.length === 0 ? (

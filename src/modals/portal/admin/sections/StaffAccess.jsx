@@ -5,7 +5,7 @@ import {
   Sparkles, Trash2, UserCheck, UserPlus, Users, X,
 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
-import { ADMIN_ROLES, PERMISSIONS, useData } from "../../../../data/store.jsx";
+import { ADMIN_ROLES, PERMISSIONS, useData, hasPermission } from "../../../../data/store.jsx";
 import {
   Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast,
   SelectField, Stat, TableShell, Td, Th, TextField,
@@ -61,6 +61,26 @@ function permsSummary(perms) {
 // Section root
 // ---------------------------------------------------------------------------
 export const StaffAccess = () => {
+  const p = usePalette();
+  const { staffSession } = useData();
+
+  // Defensive access gate. The Hotel Admin sub-nav hides this entry
+  // when the operator doesn't carry the `admin_users` permission, so
+  // anyone landing here did so through a deep link, an old saved tab,
+  // or a role downgrade mid-session. We render a refusal panel
+  // instead of the editor.
+  //
+  // The actual editor lives in `StaffAccessBody` so React's rules-of-
+  // hooks aren't violated by an early return — the body component
+  // mounts on permission grant and unmounts on revocation cleanly,
+  // and its hook count never varies inside its own lifetime.
+  if (!hasPermission(staffSession, "admin_users")) {
+    return <AccessDeniedPanel staffSession={staffSession} p={p} />;
+  }
+  return <StaffAccessBody />;
+};
+
+const StaffAccessBody = () => {
   const p = usePalette();
   const { adminUsers, staffSession, staffImpersonation, startStaffImpersonation } = useData();
 
@@ -574,6 +594,92 @@ function ImpersonateDrawer({ owner, onClose }) {
         })}
       </div>
     </Drawer>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AccessDeniedPanel — shown when a non-Owner role somehow lands on the
+// Staff & Access section (deep-link, saved tab, role downgrade). The Hotel
+// Admin sub-nav already hides the entry, but this guard makes the refusal
+// explicit so the operator isn't left wondering whether they hit a broken
+// link. Includes a contact-the-Owner CTA so the request has a clear next
+// step.
+// ---------------------------------------------------------------------------
+function AccessDeniedPanel({ staffSession, p }) {
+  const name = staffSession?.name || "Operator";
+  const role = staffSession?.role || "unknown";
+  return (
+    <div>
+      <PageHeader
+        title="Staff & Access"
+        intro="Operator users, roles and permissions."
+      />
+      <Card>
+        <div className="p-6 flex flex-col items-start gap-4" style={{ maxWidth: 640 }}>
+          <div className="flex items-center gap-3">
+            <div style={{
+              width: 44, height: 44,
+              backgroundColor: `${p.danger}1A`,
+              border: `1px solid ${p.danger}55`,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              borderRadius: 4,
+            }}>
+              <ShieldOff size={20} style={{ color: p.danger }} />
+            </div>
+            <div>
+              <div style={{
+                color: p.danger,
+                fontFamily: "'Manrope', sans-serif",
+                fontSize: "0.62rem", letterSpacing: "0.24em",
+                textTransform: "uppercase", fontWeight: 700,
+              }}>
+                Access denied
+              </div>
+              <div style={{
+                color: p.textPrimary,
+                fontFamily: "'Cormorant Garamond', serif",
+                fontSize: "1.6rem", lineHeight: 1.1, marginTop: 2,
+              }}>
+                You don't have permission to manage staff accounts.
+              </div>
+            </div>
+          </div>
+          <p style={{
+            color: p.textSecondary,
+            fontFamily: "'Manrope', sans-serif",
+            fontSize: "0.92rem", lineHeight: 1.55, margin: 0,
+          }}>
+            <strong>{name}</strong> (role: <code style={{ color: p.accent }}>{role}</code>) doesn't carry the{" "}
+            <code style={{ color: p.accent }}>admin_users</code> permission. Staff &amp; Access is reserved for
+            Owners — the editor here lets someone reset passwords, change roles, and grant new admin scopes, so
+            it's locked down to a single trusted role.
+          </p>
+          <p style={{
+            color: p.textMuted,
+            fontFamily: "'Manrope', sans-serif",
+            fontSize: "0.84rem", lineHeight: 1.55, margin: 0,
+          }}>
+            Need a teammate added, a password reset, or a role changed? Email the Owner directly — they're the
+            only operator with this permission by default.
+          </p>
+          <a
+            href="mailto:surender@exploremena.com?subject=Staff%20%26%20Access%20request"
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 8,
+              backgroundColor: p.accent,
+              color: p.theme === "light" ? "#FFFFFF" : "#15161A",
+              padding: "0.55rem 1.1rem",
+              fontFamily: "'Manrope', sans-serif",
+              fontSize: "0.66rem", letterSpacing: "0.22em",
+              textTransform: "uppercase", fontWeight: 700,
+              textDecoration: "none",
+            }}
+          >
+            <Mail size={12} /> Email the Owner
+          </a>
+        </div>
+      </Card>
+    </div>
   );
 }
 

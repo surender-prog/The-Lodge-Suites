@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import {
   AlertCircle, ArrowRight, BedDouble, Calendar as CalendarIcon, ChartPie,
   Coins, FileText, Hotel, LogIn, LogOut, Mail, Sparkles, TrendingUp, Users,
@@ -6,43 +6,129 @@ import {
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate } from "../../../../utils/date.js";
-import { useData, formatCurrency } from "../../../../data/store.jsx";
+import { useData, formatCurrency, effectiveSellLimit } from "../../../../data/store.jsx";
 import { Card, PageHeader, Stat } from "../ui.jsx";
 
-// ---------------------------------------------------------------------------
-// Channel mix — links each channel to a meaningful destination. Most channel
-// rows route to Hotel Admin → Stop-Sale & OTA where the channel manager
-// status, rate-push, and stop-sale tools live; the Direct row routes to the
-// Bookings tab so the operator can see who came in directly.
-// ---------------------------------------------------------------------------
-function makeChannelMix(p) {
-  return [
-    { id: "direct",     label: "Direct",       pct: 38, color: p.accent,        nav: { tab: "bookings" } },
-    { id: "booking",    label: "Booking.com",  pct: 22, color: p.accentBright,  nav: { tab: "admin", sub: "stopsale" } },
-    { id: "almosafer",  label: "Almosafer",    pct: 14, color: p.accentDeep,    nav: { tab: "admin", sub: "stopsale" } },
-    { id: "expedia",    label: "Expedia",      pct: 11, color: p.success,       nav: { tab: "admin", sub: "stopsale" } },
-    { id: "agoda",      label: "Agoda",        pct:  8, color: p.warn,          nav: { tab: "admin", sub: "stopsale" } },
-    { id: "corporate",  label: "Corporate",    pct:  7, color: p.textMuted,     nav: { tab: "corporate" } },
-  ];
+// ─────────────────────────────────────────────────────────────────────────
+// Date helpers used by every dashboard computation. Everything works in
+// local time so a booking with checkIn = today renders as "arriving
+// today" rather than "tomorrow" because of a UTC offset.
+// ─────────────────────────────────────────────────────────────────────────
+function toLocalISO(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function startOfToday() {
+  const d = new Date(); d.setHours(0, 0, 0, 0); return d;
+}
+function startOfMonth(d = new Date()) {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+function daysBetween(a, b) {
+  return Math.max(0, Math.round((b.getTime() - a.getTime()) / 86400000));
+}
+// A booking is "in-house tonight" when today falls in [checkIn, checkOut).
+// Status filter keeps cancelled / pending stays out. Pending isn't
+// occupying a room yet so we exclude it too.
+function isInHouseOn(booking, dateISO) {
+  if (!booking?.checkIn || !booking?.checkOut) return false;
+  if (["cancelled", "no-show"].includes(booking.status)) return false;
+  return dateISO >= booking.checkIn && dateISO < booking.checkOut;
+}
+function nightsInRange(booking, fromISO, toExclusiveISO) {
+  if (!booking?.checkIn || !booking?.checkOut) return 0;
+  if (["cancelled", "no-show"].includes(booking.status)) return 0;
+  const lo = booking.checkIn > fromISO ? booking.checkIn : fromISO;
+  const hi = booking.checkOut < toExclusiveISO ? booking.checkOut : toExclusiveISO;
+  if (lo >= hi) return 0;
+  const a = new Date(lo); a.setHours(0, 0, 0, 0);
+  const b = new Date(hi); b.setHours(0, 0, 0, 0);
+  return Math.max(0, Math.round((b.getTime() - a.getTime()) / 86400000));
 }
 
-function makeHeatmap(rooms) {
-  const days = 14;
-  const today = new Date();
-  const rows = rooms.map((r, ri) => {
-    const cells = Array.from({ length: days }, (_, di) => {
-      const seed = (ri + 1) * 31 + di * 17 + r.price;
-      const occ = ((Math.sin(seed) + 1) / 2);
-      const stop = (ri === 2 && di >= 3 && di <= 5);
-      const sold = !stop && occ > 0.85;
-      return { occ, stop, sold };
-    });
-    return { roomId: r.id, cells };
+// ---------------------------------------------------------------------------
+// Channel mix — counts bookings from the last 30 days (by check-in date) and
+// groups them by their `source` field (direct / ota / corporate / agent /
+// member). We surface only buckets that have at least one booking so the
+// donut doesn't have hairline slices for empty segments. Each row links to a
+// section that gives the operator more context for that channel.
+// ---------------------------------------------------------------------------
+function buildChannelMix({ bookings, p, todayISO }) {
+  const cutoffISO = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return toLocalISO(d);
+  })();
+  const buckets = { direct: 0, ota: 0, corporate: 0, agent: 0, member: 0 };
+  (bookings || []).forEach((b) => {
+    if (!b?.checkIn || b.checkIn < cutoffISO || b.checkIn > todayISO) return;
+    if (["cancelled", "no-show"].includes(b.status)) return;
+    const src = b.source || "direct";
+    if (buckets[src] !== undefined) buckets[src] += 1;
   });
+  const total = Object.values(buckets).reduce((s, n) => s + n, 0);
+  // Display order — Direct first (it's the most valuable channel for the
+  // hotel), member next (loyalty), then OTAs and partner accounts.
+  const rows = [
+    { id: "direct",    label: "Direct",       count: buckets.direct,    color: p.accent,        nav: { tab: "bookings" } },
+    { id: "member",    label: "LS Privilege", count: buckets.member,    color: p.warn,          nav: { tab: "admin", sub: "loyalty" } },
+    { id: "ota",       label: "OTA channels", count: buckets.ota,       color: p.accentBright,  nav: { tab: "admin", sub: "stopsale" } },
+    { id: "corporate", label: "Corporate",    count: buckets.corporate, color: p.accentDeep,    nav: { tab: "corporate" } },
+    { id: "agent",     label: "Travel agent", count: buckets.agent,     color: p.success,       nav: { tab: "agent" } },
+  ];
+  // Compute percentages; when total is zero the donut renders as a hairline
+  // empty ring (each row gets an equal share so the SVG still draws something
+  // meaningful instead of NaN paths).
+  if (total === 0) {
+    return { rows: rows.map((r) => ({ ...r, pct: 0 })), total };
+  }
+  return {
+    rows: rows.map((r) => ({ ...r, pct: Math.round((r.count / total) * 100) })),
+    total,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Heatmap data — one row per room TYPE, 14 columns starting today.
+//   • inventory per type = the effective sell limit (master admin cap, or
+//     active room_units count when no override is set). Lets the operator
+//     hold inventory back / overbook from one place without touching the
+//     room_units registry.
+//   • sold-on-day = bookings whose roomId matches the type and the day falls
+//     within [checkIn, checkOut). Cancelled / no-show stays are excluded.
+//   • stop-sale = any calendar override for this type-day with stopSale=true.
+//   • occ fraction = clamped (sold / inventory) so a fully-booked type still
+//     renders as the strong "sold-out" cell even if our sample bookings
+//     temporarily over-count a type because the seed data isn't unit-aware.
+// ---------------------------------------------------------------------------
+function makeHeatmap({ rooms, bookings, roomUnits, calendar }) {
+  const days = 14;
+  const today = startOfToday();
   const dates = Array.from({ length: days }, (_, i) => {
     const d = new Date(today);
     d.setDate(d.getDate() + i);
     return d;
+  });
+  const rows = (rooms || []).map((r) => {
+    // effectiveSellLimit applies the admin's master cap. Clamp to 1 so
+    // a newly-created type with no inventory yet still renders a cell.
+    const inventory = Math.max(effectiveSellLimit(r, roomUnits || []), 1);
+    const cells = dates.map((d) => {
+      const dateISO = toLocalISO(d);
+      // Sold count — every active booking that overlaps this date for this type
+      const sold = (bookings || []).reduce((n, b) => {
+        if (b.roomId !== r.id) return n;
+        return n + (isInHouseOn(b, dateISO) ? 1 : 0);
+      }, 0);
+      const key = `${r.id}|${dateISO}`;
+      const stop = !!(calendar && calendar[key] && calendar[key].stopSale);
+      const occ = Math.min(1, sold / inventory);
+      const soldOut = !stop && occ >= 1;
+      return { occ, stop, sold: soldOut, count: sold, inventory };
+    });
+    return { roomId: r.id, cells };
   });
   return { rows, dates };
 }
@@ -60,10 +146,125 @@ export const Dashboard = ({ onNavigate }) => {
   const t = useT();
   const p = usePalette();
   const { lang } = useLang();
-  const { rooms, bookings, expiringContracts } = useData();
+  const {
+    rooms, bookings, expiringContracts,
+    roomUnits, calendar, members,
+  } = useData();
 
-  const tonightSold = bookings.filter(b => b.status === "in-house").length + 56;
-  const occPct = Math.round(tonightSold / 72 * 100);
+  // ─────────────────────────────────────────────────────────────────
+  // Live operational metrics — every tile on this dashboard reads
+  // from a single useMemo so a state change (new booking, new stop-
+  // sale, member upgrade) refreshes the cards without re-rendering
+  // the whole tree. todayISO is captured once per render so all the
+  // memos compare against the same date boundary.
+  // ─────────────────────────────────────────────────────────────────
+  const todayISO = toLocalISO(new Date());
+
+  // Sellable inventory — sum of each type's effective sell limit. The
+  // limit defaults to active room_units count but is overridable per
+  // type in Rooms & Rates → Room editor → "Max units released for
+  // sale". Falls back to the legacy 72 only when both rooms and
+  // room_units are empty (very early hydration).
+  const sellableInventory = useMemo(() => {
+    if (!rooms || rooms.length === 0) return (roomUnits || []).length || 72;
+    return rooms.reduce(
+      (sum, r) => sum + effectiveSellLimit(r, roomUnits || []),
+      0
+    );
+  }, [rooms, roomUnits]);
+
+  // Tonight occupancy — count bookings that are in-house on today.
+  // We treat any booking that straddles today as in-house, regardless
+  // of its `status` field, so the dashboard agrees with the calendar
+  // even when the front desk hasn't manually flipped a booking to
+  // in-house yet (e.g. early-morning arrivals).
+  const tonightStats = useMemo(() => {
+    const sold = (bookings || []).filter((b) => isInHouseOn(b, todayISO)).length;
+    const pct = sellableInventory > 0
+      ? Math.round((sold / sellableInventory) * 100)
+      : 0;
+    return { sold, pct, inventory: sellableInventory };
+  }, [bookings, sellableInventory, todayISO]);
+
+  // Active stop-sales — count distinct *type-days* in the future (or
+  // today) that carry a stopSale flag. Past stop-sales aren't actionable
+  // any more, so they're excluded from the headline number.
+  const stopSaleCount = useMemo(() => {
+    if (!calendar) return 0;
+    let n = 0;
+    Object.entries(calendar).forEach(([key, v]) => {
+      if (!v?.stopSale) return;
+      const parts = key.split("|");
+      const dateISO = parts[1];
+      if (!dateISO) return;
+      if (dateISO >= todayISO) n += 1;
+    });
+    return n;
+  }, [calendar, todayISO]);
+
+  // ADR + RevPAR (MTD) — month-to-date. We compute revenue as the room
+  // rate × nights-in-MTD for every booking that overlaps the MTD window
+  // and isn't cancelled. Falls back to `total / nights` if `rate` is
+  // missing on a record. Available room-nights = inventory × days-elapsed.
+  const mtdStats = useMemo(() => {
+    const monthStart = startOfMonth();
+    const tomorrow = new Date(); tomorrow.setHours(0,0,0,0); tomorrow.setDate(tomorrow.getDate() + 1);
+    const fromISO = toLocalISO(monthStart);
+    const toExclusiveISO = toLocalISO(tomorrow);
+    let revenue = 0;
+    let nightsSold = 0;
+    (bookings || []).forEach((b) => {
+      const n = nightsInRange(b, fromISO, toExclusiveISO);
+      if (n <= 0) return;
+      const perNight = Number(b.rate)
+        || (b.total && b.nights ? Number(b.total) / Number(b.nights) : 0)
+        || 0;
+      nightsSold += n;
+      revenue += perNight * n;
+    });
+    const daysElapsed = daysBetween(monthStart, tomorrow); // inclusive of today
+    const availableNights = Math.max(1, sellableInventory * daysElapsed);
+    return {
+      adr: nightsSold > 0 ? revenue / nightsSold : 0,
+      revpar: availableNights > 0 ? revenue / availableNights : 0,
+      revenue, nightsSold, availableNights,
+    };
+  }, [bookings, sellableInventory]);
+
+  // Today snapshot — arrivals (checkIn === today), departures
+  // (checkOut === today), in-house (overlaps tonight) and VIPs
+  // (in-house guests who are platinum LS Privilege members). Matching
+  // a member uses the booking email since bookings don't carry a
+  // memberId yet.
+  const todayStats = useMemo(() => {
+    const live = (b) => !["cancelled", "no-show"].includes(b?.status);
+    const arrivals   = (bookings || []).filter((b) => live(b) && b.checkIn  === todayISO).length;
+    const departures = (bookings || []).filter((b) => live(b) && b.checkOut === todayISO).length;
+    const inHouse    = (bookings || []).filter((b) => isInHouseOn(b, todayISO)).length;
+    const platinumEmails = new Set(
+      (members || [])
+        .filter((m) => (m.tier || "").toLowerCase() === "platinum")
+        .map((m) => (m.email || "").toLowerCase())
+        .filter(Boolean)
+    );
+    const vip = (bookings || []).filter((b) =>
+      isInHouseOn(b, todayISO) && platinumEmails.has((b.email || "").toLowerCase())
+    ).length;
+    return { arrivals, departures, inHouse, vip };
+  }, [bookings, members, todayISO]);
+
+  // Channel mix — recomputed when bookings or palette change.
+  const channelMix = useMemo(
+    () => buildChannelMix({ bookings, p, todayISO }),
+    [bookings, p, todayISO]
+  );
+
+  // MTD revenue formatted — used as a sub-label so the operator sees
+  // the absolute number behind ADR/RevPAR without opening Reports.
+  const mtdRevenueFmt = useMemo(
+    () => formatCurrency(Math.round(mtdStats.revenue)),
+    [mtdStats.revenue]
+  );
 
   // Safe wrapper — falls back to a no-op if the parent didn't supply a nav
   // handler (e.g. when the Dashboard is rendered standalone in tests).
@@ -85,31 +286,31 @@ export const Dashboard = ({ onNavigate }) => {
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Stat
           label="Tonight"
-          value={`${tonightSold}/72`}
-          hint={`${occPct}% occ.`}
-          color={occPct >= 80 ? p.success : occPct >= 60 ? p.warn : p.danger}
+          value={`${tonightStats.sold}/${tonightStats.inventory}`}
+          hint={`${tonightStats.pct}% occ.`}
+          color={tonightStats.pct >= 80 ? p.success : tonightStats.pct >= 60 ? p.warn : p.danger}
           onClick={() => go("admin", "calendar")}
           ctaLabel="Open calendar"
         />
         <Stat
           label="Active Stop-Sales"
-          value="1"
-          hint="Action needed"
-          color={p.warn}
+          value={String(stopSaleCount)}
+          hint={stopSaleCount > 0 ? "Action needed" : "All channels open"}
+          color={stopSaleCount > 0 ? p.warn : p.success}
           onClick={() => go("admin", "stopsale")}
           ctaLabel="Manage stop-sale"
         />
         <Stat
           label="ADR (MTD)"
-          value={formatCurrency(64)}
-          hint={`+${formatCurrency(4)} vs LY`}
+          value={formatCurrency(mtdStats.adr)}
+          hint={`${mtdStats.nightsSold} room-night${mtdStats.nightsSold === 1 ? "" : "s"} sold`}
           onClick={() => go("admin", "calendar")}
           ctaLabel="Open rates"
         />
         <Stat
           label="RevPAR (MTD)"
-          value={formatCurrency(51)}
-          hint="+12% YoY"
+          value={formatCurrency(mtdStats.revpar)}
+          hint={`Revenue ${mtdRevenueFmt}`}
           onClick={() => go("admin", "calendar")}
           ctaLabel="Open rates"
         />
@@ -120,10 +321,10 @@ export const Dashboard = ({ onNavigate }) => {
         <Card title="Today" action={<span style={{ color: p.textMuted, fontSize: "0.72rem", fontFamily: "'Manrope', sans-serif" }}>{fmtDate(new Date().toISOString().slice(0,10), lang)}</span>} padded={false} className="lg:col-span-2">
           <div className="grid grid-cols-2 md:grid-cols-4">
             {[
-              { id: "arrivals",   label: "Arrivals",     value: 14, icon: LogIn,    color: p.success,     onClick: () => go("bookings"),       cta: "View bookings" },
-              { id: "departures", label: "Departures",   value: 11, icon: LogOut,   color: p.warn,        onClick: () => go("bookings"),       cta: "View bookings" },
-              { id: "inHouse",    label: "In-house",     value: 58, icon: Users,    color: p.textPrimary, onClick: () => go("bookings"),       cta: "View bookings" },
-              { id: "vip",        label: "VIPs",         value:  3, icon: Sparkles, color: p.accent,      onClick: () => go("admin", "loyalty"), cta: "Open LS Privilege" },
+              { id: "arrivals",   label: "Arrivals",     value: todayStats.arrivals,   icon: LogIn,    color: p.success,     onClick: () => go("bookings"),       cta: "View bookings" },
+              { id: "departures", label: "Departures",   value: todayStats.departures, icon: LogOut,   color: p.warn,        onClick: () => go("bookings"),       cta: "View bookings" },
+              { id: "inHouse",    label: "In-house",     value: todayStats.inHouse,    icon: Users,    color: p.textPrimary, onClick: () => go("bookings"),       cta: "View bookings" },
+              { id: "vip",        label: "VIPs",         value: todayStats.vip,        icon: Sparkles, color: p.accent,      onClick: () => go("admin", "loyalty"), cta: "Open LS Privilege" },
             ].map((m, i, all) => {
               const Ic = m.icon;
               return (
@@ -167,9 +368,14 @@ export const Dashboard = ({ onNavigate }) => {
           }
         >
           <div className="p-5 flex items-center gap-5">
-            <ChannelDonut data={makeChannelMix(p)} size={120} />
+            <ChannelDonut data={channelMix.rows} size={120} empty={channelMix.total === 0} p={p} />
             <div className="flex-1 min-w-0 space-y-0.5" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem" }}>
-              {makeChannelMix(p).map((c) => (
+              {channelMix.total === 0 && (
+                <div style={{ color: p.textMuted, fontSize: "0.72rem", padding: "0.25rem 0.5rem" }}>
+                  No bookings in the last 30 days.
+                </div>
+              )}
+              {channelMix.rows.map((c) => (
                 <button
                   key={c.id}
                   onClick={() => go(c.nav.tab, c.nav.sub)}
@@ -177,11 +383,13 @@ export const Dashboard = ({ onNavigate }) => {
                   style={{ backgroundColor: "transparent", cursor: "pointer", textAlign: "start" }}
                   onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = p.bgHover; }}
                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
-                  title={c.nav.tab === "admin" ? "Open Stop-Sale & OTA" : c.nav.tab === "bookings" ? "View bookings" : "Open Corporate Accounts"}
+                  title={c.nav.tab === "admin" ? "Open Stop-Sale & OTA" : c.nav.tab === "bookings" ? "View bookings" : c.nav.tab === "corporate" ? "Open Corporate Accounts" : c.nav.tab === "agent" ? "Open Travel Agencies" : "Open LS Privilege"}
                 >
                   <span style={{ width: 8, height: 8, backgroundColor: c.color, flexShrink: 0 }} />
                   <span style={{ color: p.textSecondary, flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.label}</span>
-                  <span style={{ color: p.accent, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{c.pct}%</span>
+                  <span style={{ color: p.accent, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                    {channelMix.total === 0 ? "—" : `${c.pct}%`}
+                  </span>
                 </button>
               ))}
             </div>
@@ -201,7 +409,13 @@ export const Dashboard = ({ onNavigate }) => {
       </div>
 
       {/* 14-day heat-map */}
-      <Heatmap rooms={rooms} onCellClick={() => go("admin", "calendar")} />
+      <Heatmap
+        rooms={rooms}
+        bookings={bookings}
+        roomUnits={roomUnits}
+        calendar={calendar}
+        onCellClick={() => go("admin", "calendar")}
+      />
     </div>
   );
 };
@@ -298,14 +512,24 @@ function Shortcut({ label, icon: Icon, onClick, danger, p }) {
   );
 }
 
-function ChannelDonut({ data, size = 120 }) {
+function ChannelDonut({ data, size = 120, empty = false, p }) {
   const r = size / 2;
   const inner = r * 0.62;
-  const total = data.reduce((s, d) => s + d.pct, 0) || 100;
+  // Empty state — render a single ring outline so the card still has visual
+  // presence when there are zero recent bookings.
+  if (empty) {
+    return (
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ flexShrink: 0 }}>
+        <circle cx={r} cy={r} r={r - 1} fill="none" stroke={p ? p.border : "#d4cdb6"} strokeWidth="1" />
+        <circle cx={r} cy={r} r={inner + 1} fill="none" stroke={p ? p.border : "#d4cdb6"} strokeWidth="1" />
+      </svg>
+    );
+  }
+  const total = data.reduce((s, d) => s + (d.pct || 0), 0) || 100;
   let acc = 0;
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ flexShrink: 0 }}>
-      {data.map((d, i) => {
+      {data.filter((d) => d.pct > 0).map((d, i) => {
         const start = (acc / total) * Math.PI * 2 - Math.PI / 2;
         acc += d.pct;
         const end = (acc / total) * Math.PI * 2 - Math.PI / 2;
@@ -321,13 +545,16 @@ function ChannelDonut({ data, size = 120 }) {
   );
 }
 
-function Heatmap({ rooms, onCellClick }) {
+function Heatmap({ rooms, bookings, roomUnits, calendar, onCellClick }) {
   const t = useT();
   const { lang } = useLang();
   const p = usePalette();
-  const { rows, dates } = React.useMemo(() => makeHeatmap(rooms), [rooms]);
+  const { rows, dates } = React.useMemo(
+    () => makeHeatmap({ rooms, bookings, roomUnits, calendar }),
+    [rooms, bookings, roomUnits, calendar]
+  );
   const dayLabel = (d) => d.toLocaleDateString(lang === "ar" ? "ar-BH" : "en-GB", { day: "numeric", month: "short" });
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayKey = toLocalISO(new Date());
 
   return (
     <Card
@@ -359,7 +586,7 @@ function Heatmap({ rooms, onCellClick }) {
         <div style={{ display: "grid", gridTemplateColumns: `minmax(140px, 1fr) repeat(${dates.length}, minmax(34px, 1fr))`, gap: 4, fontFamily: "'Manrope', sans-serif" }}>
           <div />
           {dates.map((d) => {
-            const isToday = d.toISOString().slice(0, 10) === todayKey;
+            const isToday = toLocalISO(d) === todayKey;
             return (
               <div key={d.toISOString()} className="text-center" style={{
                 fontSize: "0.6rem", color: isToday ? p.accent : p.textMuted, letterSpacing: "0.04em",
@@ -381,11 +608,16 @@ function Heatmap({ rooms, onCellClick }) {
               </div>
               {row.cells.map((cell, di) => {
                 const occPct = Math.round(cell.occ * 100);
+                const tooltipStatus = cell.stop
+                  ? "Stop-sale"
+                  : cell.sold
+                    ? `Sold out · ${cell.count}/${cell.inventory}`
+                    : `${occPct}% · ${cell.count}/${cell.inventory} sold`;
                 return (
                   <button
                     key={di}
                     onClick={onCellClick}
-                    title={`${dayLabel(dates[di])} · ${cell.stop ? "Stop-sale" : cell.sold ? "Sold out" : `${occPct}%`} · click to open calendar`}
+                    title={`${dayLabel(dates[di])} · ${tooltipStatus} · click to open calendar`}
                     style={{
                       backgroundColor: cellColor(p, cell),
                       height: 26,

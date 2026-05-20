@@ -1,13 +1,14 @@
 import React, { useMemo, useState } from "react";
 import {
   AlertTriangle, ArrowLeft, BedDouble, Briefcase, CalendarDays, Check, ChevronLeft,
-  ChevronRight, ChevronsLeft, ChevronsRight, Coffee, Lock, Moon, RotateCcw, Save, Sparkles,
+  ChevronRight, ChevronsLeft, ChevronsRight, Coffee, Lock, Moon, Pencil, Plus, RotateCcw, Save, Sparkles,
   Sun, Trash2, TrendingUp, Users, Utensils, Wrench, X,
 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import {
   useData, formatCurrency, MEAL_PLANS, applyTaxes, mealPlanLabel, mealPlanSupplement,
+  effectiveSellLimit,
 } from "../../../../data/store.jsx";
 import {
   Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, SelectField, Stat, TableShell,
@@ -29,8 +30,23 @@ function buildRange(start, count) {
   return out;
 }
 
-function cellState(room, override) {
-  const rate = override?.rate ?? room.price;
+// Resolve the effective state of a calendar cell.
+//
+//   • rate     — explicit override wins; otherwise pick the weekend
+//                rack rate when `isWeekend` is true (with a graceful
+//                fallback to room.price if no weekend rate is set),
+//                else the weekday rack rate. Earlier versions ignored
+//                `isWeekend` entirely, which is why the weekend column
+//                values entered via PriceInline never showed up on the
+//                grid — only the weekday rate did.
+//   • stopSale — boolean stop-sale flag from the override
+//   • blocked  — number of units blocked off-market on this cell
+//   • reason   — free-form note (group block, F1 weekend, …)
+function cellState(room, override, isWeekend = false) {
+  const baseRate = isWeekend
+    ? (room?.priceWeekend ?? room?.price ?? 0)
+    : (room?.price ?? 0);
+  const rate = override?.rate ?? baseRate;
   const stopSale = !!override?.stopSale;
   const blocked = override?.blocked ?? 0;
   return { rate, stopSale, blocked, reason: override?.reason || "" };
@@ -52,7 +68,7 @@ export const CalendarView = ({ onNavigate }) => {
   const t = useT();
   const p = usePalette();
   const { lang } = useLang();
-  const { rooms, calendar, setCalendarCell, bookings, hotelInfo } = useData();
+  const { rooms, calendar, setCalendarCell, bookings, roomUnits, hotelInfo, updateRoom } = useData();
 
   // Weekend-day set sourced from Property Info → Weekend days. Falls back
   // to Bahrain's Fri/Sat default while the singleton is hydrating.
@@ -72,7 +88,27 @@ export const CalendarView = ({ onNavigate }) => {
   const dates = useMemo(() => buildRange(anchor, dayCount), [anchor, dayCount]);
   const isToday = isoDay(anchor) === isoDay(new Date());
 
+  // View mode — "price" shows the per-night rate (default) and "inventory"
+  // flips every cell to the number of bookable units remaining that night.
+  // Both modes share the same heat-map / weekend / stop-sale background
+  // logic so the operator's spatial memory carries across the toggle.
+  const [viewMode, setViewMode] = useState("price"); // "price" | "inventory"
+
   const [selected, setSelected] = useState(null); // { roomId, dateISO }
+
+  // Inline sell-limit editor — when truthy, identifies which room type
+  // is currently being edited from the row label. Clicking the units
+  // hint on a calendar row opens this; the popover renders inside the
+  // row label cell. Updates flow through updateRoom({ sellLimit }) and
+  // cascade across every visible cell (and every future date) because
+  // the inventory math reads room.sellLimit dynamically.
+  const [editingSellLimitFor, setEditingSellLimitFor] = useState(null); // roomTypeId | null
+
+  // Inline price editor — same pattern as the sell-limit one, but for
+  // Price view's "BHD 25 base" sub-label. Saves room.price (weekday) and
+  // room.priceWeekend; per-date overrides remain editable via the cell
+  // editor or the Bulk-edit drawer.
+  const [editingPriceFor, setEditingPriceFor] = useState(null); // roomTypeId | null
 
   // Bulk editor state — supports MULTIPLE simultaneous date ranges and
   // multi-suite scope. Each range is { id, from, to, label } so an
@@ -94,6 +130,20 @@ export const CalendarView = ({ onNavigate }) => {
     }
     return m;
   }, [bookings]);
+
+  // Sellable inventory per room type — honours the admin's master sell-limit
+  // (set in Rooms & Rates → Room editor → "Max units released for sale").
+  // Falls back to the active room_units count when no override is set. This
+  // lets the operator hold inventory back (corporate allocation, owner
+  // blocks, walk-in stock) or release more than physical (controlled
+  // overbooking) without touching the room_units registry.
+  const inventoryByType = useMemo(() => {
+    const m = {};
+    (rooms || []).forEach((r) => {
+      m[r.id] = effectiveSellLimit(r, roomUnits || []);
+    });
+    return m;
+  }, [rooms, roomUnits]);
 
   // Anchor mutator — bulk-editor defaults derive from the live window
   // anyway, so this just normalises the date and updates the anchor.
@@ -189,15 +239,51 @@ export const CalendarView = ({ onNavigate }) => {
     let total = 0;
     for (const date of dates) {
       const k = isoDay(date);
+      const wknd = isWeekendDate(date);
       for (const r of rooms) {
         const ov = calendar[`${r.id}|${k}`];
-        const { rate, stopSale } = cellState(r, ov);
+        // Weekend-aware rack rate so the forecast picks up the higher
+        // weekend rate when no per-date override is set.
+        const { rate, stopSale } = cellState(r, ov, wknd);
         const occ = occMap[`${r.id}|${k}`] || 0;
         if (!stopSale) total += rate * occ;
       }
     }
     return total;
-  }, [dates, rooms, calendar, occMap]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dates, rooms, calendar, occMap, weekendDays]);
+
+  // Inventory-mode summary: how many units are bookable tonight across
+  // the whole property (after subtracting bookings + blocked + stop-sale).
+  // We sum NET availability so overbooked types pull the total down —
+  // an operator looking at the headline gets the full picture, not a
+  // clamped-at-zero half-truth. `overbooked` counts how many types are
+  // currently negative so the hint can warn explicitly.
+  const availableTonight = useMemo(() => {
+    const todayDate = new Date();
+    const todayISO = isoDay(todayDate);
+    const todayIsWeekend = isWeekendDate(todayDate);
+    let total = 0;
+    let sold = 0;
+    let available = 0;
+    let overbooked = 0;
+    rooms.forEach((r) => {
+      const ov = calendar[`${r.id}|${todayISO}`];
+      // Pass isWeekend even though this code path only reads stopSale +
+      // blocked today — keeps the call shape consistent so a future
+      // addition (e.g. "tonight revenue") picks up the right rate.
+      const { stopSale, blocked } = cellState(r, ov, todayIsWeekend);
+      const typeInv = inventoryByType[r.id] || 0;
+      const occ = occMap[`${r.id}|${todayISO}`] || 0;
+      total += typeInv;
+      sold += occ;
+      if (stopSale) return;
+      const net = typeInv - occ - (Number(blocked) || 0);
+      available += net;
+      if (net < 0) overbooked += 1;
+    });
+    return { total, sold, available, overbooked };
+  }, [rooms, calendar, occMap, inventoryByType]);
 
   const stopSaleCount = Object.values(calendar).filter(v => v.stopSale).length;
 
@@ -210,6 +296,7 @@ export const CalendarView = ({ onNavigate }) => {
         intro={`Manage rates, availability, stop-sales and room blocks across all suites starting today (${rangeLabel}). Pan back or forward by day, week, or month, or jump to any date.`}
         action={
           <div className="flex items-center gap-2 flex-wrap">
+            <ViewModeToggle value={viewMode} onChange={setViewMode} p={p} />
             <SelectField value={dayCount} onChange={(v) => setDayCount(Number(v))} options={[
               { value:  7, label: "7 days"  },
               { value: 14, label: "14 days" },
@@ -225,7 +312,27 @@ export const CalendarView = ({ onNavigate }) => {
 
       <div className="grid sm:grid-cols-3 gap-4 mb-6">
         <Stat label="Window" value={`${dayCount} days`} hint={rangeLabel} />
-        <Stat label="Forecast revenue" value={formatCurrency(revenueWindow)} hint="Based on current bookings × rates" color={p.success} />
+        {viewMode === "price" ? (
+          <Stat label="Forecast revenue" value={formatCurrency(revenueWindow)} hint="Based on current bookings × rates" color={p.success} />
+        ) : (
+          <Stat
+            label="Available tonight"
+            value={availableTonight.available < 0
+              ? `−${Math.abs(availableTonight.available)}`
+              : String(availableTonight.available)}
+            hint={
+              availableTonight.overbooked > 0
+                ? `${availableTonight.overbooked} type${availableTonight.overbooked === 1 ? "" : "s"} overbooked · ${availableTonight.sold}/${availableTonight.total} on the books`
+                : `${availableTonight.sold}/${availableTonight.total} sold across all suites`
+            }
+            color={
+              availableTonight.available < 0 ? p.danger
+              : availableTonight.available === 0 ? p.danger
+              : availableTonight.available <= 5 ? p.warn
+              : p.success
+            }
+          />
+        )}
         <Stat label="Stop-sale dates" value={stopSaleCount} hint={stopSaleCount === 0 ? "All open" : "Across all rooms"} color={stopSaleCount > 0 ? p.warn : p.success} />
       </div>
 
@@ -292,8 +399,17 @@ export const CalendarView = ({ onNavigate }) => {
             <LegendChip p={p} swatch={p.accent + "22"} border={p.accent + "55"} label={`Weekend (${weekendDays.map((d) => DOW[d]?.short).filter(Boolean).join(" / ")})`} />
             <LegendChip p={p} swatch={p.accent} border={p.accent} label="Today" textColor={p.theme === "light" ? "#FFFFFF" : "#15161A"} />
             <LegendChip p={p} swatch={p.danger} border={p.danger} label="Stop-sale" textColor="#FFFFFF" />
-            <LegendChip p={p} swatch={p.theme === "light" ? "rgba(154,126,64,0.18)" : "rgba(201,169,97,0.18)"} border={p.accent + "55"} label="Override" />
-            <LegendChip p={p} swatch={p.theme === "light" ? "rgba(92,138,78,0.18)" : "rgba(127,169,112,0.18)"} border={p.success + "55"} label="High occupancy" />
+            {viewMode === "price" ? (
+              <>
+                <LegendChip p={p} swatch={p.theme === "light" ? "rgba(154,126,64,0.18)" : "rgba(201,169,97,0.18)"} border={p.accent + "55"} label="Override" />
+                <LegendChip p={p} swatch={p.theme === "light" ? "rgba(92,138,78,0.18)" : "rgba(127,169,112,0.18)"} border={p.success + "55"} label="High occupancy" />
+              </>
+            ) : (
+              <>
+                <LegendChip p={p} swatch={p.theme === "light" ? "rgba(201,123,55,0.18)" : "rgba(217,139,71,0.20)"} border={p.warn + "66"} label="Low availability (≤2)" />
+                <LegendChip p={p} swatch={p.theme === "light" ? "rgba(186,72,72,0.22)" : "rgba(217,89,89,0.25)"} border={p.danger + "66"} label="Sold out" />
+              </>
+            )}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: `minmax(160px, 1fr) repeat(${dates.length}, minmax(56px, 1fr))`, gap: 2, fontFamily: "'Manrope', sans-serif" }}>
             <div />
@@ -324,40 +440,135 @@ export const CalendarView = ({ onNavigate }) => {
               );
             })}
 
-            {rooms.map((r) => (
+            {rooms.map((r) => {
+              const typeUnits = inventoryByType[r.id] || 0;
+              const physicalUnits = (roomUnits || []).filter(
+                (u) => u.roomTypeId === r.id && u.status !== "out-of-order"
+              ).length;
+              return (
               <React.Fragment key={r.id}>
-                <div className="flex flex-col justify-center" style={{
+                <div className="flex flex-col justify-center relative" style={{
                   fontFamily: "'Cormorant Garamond', serif", fontSize: "1rem", color: p.textPrimary,
                   paddingInlineEnd: 8, whiteSpace: "nowrap",
                 }}>
                   {t(`rooms.${r.id}.name`)}
-                  <span style={{ color: p.textMuted, fontSize: "0.66rem", letterSpacing: "0.05em", fontFamily: "'Manrope', sans-serif" }}>
-                    {t("common.bhd")} {r.price} base
-                  </span>
+                  {viewMode === "inventory" ? (
+                    <SellLimitInline
+                      room={r}
+                      typeUnits={typeUnits}
+                      physicalUnits={physicalUnits}
+                      editing={editingSellLimitFor === r.id}
+                      onOpen={() => setEditingSellLimitFor(r.id)}
+                      onClose={() => setEditingSellLimitFor(null)}
+                      onSave={(value) => {
+                        updateRoom(r.id, { sellLimit: value });
+                        setEditingSellLimitFor(null);
+                      }}
+                      onOpenBulk={() => {
+                        setEditingSellLimitFor(null);
+                        setBulkOpen(true);
+                      }}
+                      p={p}
+                    />
+                  ) : (
+                    <PriceInline
+                      room={r}
+                      editing={editingPriceFor === r.id}
+                      onOpen={() => setEditingPriceFor(r.id)}
+                      onClose={() => setEditingPriceFor(null)}
+                      onSave={(patch) => {
+                        updateRoom(r.id, patch);
+                        setEditingPriceFor(null);
+                      }}
+                      onOpenBulk={() => {
+                        setEditingPriceFor(null);
+                        setBulkOpen(true);
+                      }}
+                      p={p}
+                      t={t}
+                    />
+                  )}
                 </div>
                 {dates.map((d) => {
                   const k = isoDay(d);
                   const ov = calendar[`${r.id}|${k}`];
-                  const { rate, stopSale, blocked } = cellState(r, ov);
+                  const isWeekend = isWeekendDate(d);
+                  // cellState needs isWeekend so an un-overridden cell on
+                  // a Fri/Sat (or whichever days the property has tagged
+                  // as weekend) picks up room.priceWeekend instead of
+                  // silently falling back to the weekday rate.
+                  const { rate, stopSale, blocked } = cellState(r, ov, isWeekend);
                   const occCount = occMap[`${r.id}|${k}`] || 0;
                   const overridden = !!ov;
                   const occHigh = occCount > 1;
-                  const isWeekend = isWeekendDate(d);
-                  // Layered background — stop-sale > override > high-occ >
-                  // weekend tint > base. Weekend is the bottom of the
-                  // stack so it never masks a more important signal but
-                  // still reads on otherwise-blank cells.
+                  // Inventory math — used in both the "inventory" view AND in
+                  // the cell tooltip so the operator can hover any cell to
+                  // sanity-check availability without switching modes.
+                  //
+                  // NOTE: `unitsAvailable` is allowed to go NEGATIVE here.
+                  // A negative value means the suite type is overbooked —
+                  // more bookings on file than the sell-limit allows — and
+                  // the cell paints in red with the magnitude so the front
+                  // desk can see at a glance how many walks to expect.
+                  // Earlier versions clamped at 0, which silently hid the
+                  // problem.
+                  const typeInventory = Math.max(0, inventoryByType[r.id] || 0);
+                  const unitsAvailable = typeInventory - occCount - (Number(blocked) || 0);
+                  const overbooked = typeInventory > 0 && unitsAvailable < 0;
+                  const soldOut = typeInventory > 0 && unitsAvailable === 0;
+                  const lowAvail = !soldOut && !overbooked && typeInventory > 0 && unitsAvailable <= 2;
+                  // Layered background — stop-sale > overbooked > sold-out >
+                  // override > low-avail > high-occ > weekend tint > base.
+                  // Inventory-mode cues (sold-out / low-avail / overbooked)
+                  // only paint when we're in inventory mode so price-view
+                  // colours don't shift under the operator unexpectedly.
                   let bg = p.cellBase;
                   if (isWeekend) bg = p.theme === "light" ? "rgba(201,169,97,0.10)" : "rgba(201,169,97,0.08)";
                   if (occHigh && !overridden && !stopSale) bg = p.theme === "light" ? "rgba(92,138,78,0.18)" : "rgba(127,169,112,0.18)";
-                  if (overridden && !stopSale) bg = p.theme === "light" ? "rgba(154,126,64,0.18)" : "rgba(201,169,97,0.18)";
+                  if (viewMode === "inventory" && lowAvail && !stopSale) {
+                    bg = p.theme === "light" ? "rgba(201,123,55,0.18)" : "rgba(217,139,71,0.20)";
+                  }
+                  if (viewMode === "inventory" && soldOut && !stopSale) {
+                    bg = p.theme === "light" ? "rgba(186,72,72,0.22)" : "rgba(217,89,89,0.25)";
+                  }
+                  if (viewMode === "inventory" && overbooked && !stopSale) {
+                    // Stronger red — overbook is a more urgent signal than
+                    // sold-out (which just means full; overbook means we'll
+                    // owe a walk).
+                    bg = p.theme === "light" ? "rgba(186,72,72,0.34)" : "rgba(217,89,89,0.40)";
+                  }
+                  if (overridden && !stopSale && viewMode === "price") bg = p.theme === "light" ? "rgba(154,126,64,0.18)" : "rgba(201,169,97,0.18)";
                   if (stopSale) bg = p.danger;
-                  const fg = stopSale ? "#FFFFFF" : p.textPrimary;
+                  const fg = stopSale ? "#FFFFFF" : overbooked && viewMode === "inventory" ? p.danger : p.textPrimary;
+                  // Cell content — the big number flips with viewMode, but
+                  // the tooltip stays comprehensive so the operator never
+                  // loses context. Overbook formats with a leading sign so
+                  // "−3" reads unambiguously next to a positive count.
+                  const isInventoryView = viewMode === "inventory";
+                  const headline = stopSale
+                    ? "—"
+                    : isInventoryView
+                      ? (unitsAvailable < 0 ? `−${Math.abs(unitsAvailable)}` : String(unitsAvailable))
+                      : String(rate);
+                  const subline = stopSale
+                    ? "STOP"
+                    : isInventoryView
+                      ? (typeInventory > 0
+                          ? (overbooked
+                              ? `Overbooked ${Math.abs(unitsAvailable)}`
+                              : `${unitsAvailable}/${typeInventory}`)
+                          : "·")
+                      : (blocked > 0 ? `${blocked}B` : occCount > 0 ? `${occCount}♦` : "·");
+                  const tooltipDetail = stopSale
+                    ? "Stop-sale"
+                    : overbooked
+                      ? `Overbooked by ${Math.abs(unitsAvailable)} · ${occCount} booked vs ${typeInventory} max${blocked > 0 ? ` · ${blocked} blocked` : ""} · ${formatCurrency(rate)}`
+                      : `${unitsAvailable}/${typeInventory} avail · ${occCount} booked${blocked > 0 ? ` · ${blocked} blocked` : ""} · ${formatCurrency(rate)}`;
                   return (
                     <button
                       key={k}
                       onClick={() => setSelected({ roomId: r.id, dateISO: k })}
-                      title={`${dayLabel(d)}${isWeekend ? " · weekend" : ""} · ${stopSale ? "Stop-sale" : `${occCount} booked`}`}
+                      title={`${dayLabel(d)}${isWeekend ? " · weekend" : ""} · ${tooltipDetail}`}
                       style={{
                         backgroundColor: bg,
                         color: fg,
@@ -378,15 +589,16 @@ export const CalendarView = ({ onNavigate }) => {
                         gap: 2,
                       }}
                     >
-                      <span style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{rate}</span>
+                      <span style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{headline}</span>
                       <span style={{ fontSize: "0.58rem", opacity: 0.75 }}>
-                        {stopSale ? "STOP" : blocked > 0 ? `${blocked}B` : occCount > 0 ? `${occCount}♦` : "·"}
+                        {subline}
                       </span>
                     </button>
                   );
                 })}
               </React.Fragment>
-            ))}
+              );
+            })}
           </div>
         </div>
       </Card>
@@ -469,7 +681,19 @@ function CellEditor({ selected, onClose, occMap, onNavigate }) {
   const { rooms, calendar, setCalendarCell, bookings, roomUnits, hotelInfo, tax } = useData();
   const room = rooms.find(r => r.id === selected?.roomId);
   const ov = selected ? calendar[`${selected.roomId}|${selected.dateISO}`] : null;
-  const initial = room && selected ? cellState(room, ov) : null;
+  // Weekend awareness for the seed state — when the operator opens a
+  // Fri/Sat cell on a suite that has a separate weekend rate, the rate
+  // input should pre-fill with the WEEKEND rack rate, not the weekday.
+  // The full weekendDays list is loaded again further down for other
+  // derived values; we just need a quick flag here for cellState.
+  const initialIsWeekend = (() => {
+    if (!selected?.dateISO) return false;
+    const wkDays = (hotelInfo?.weekendDays && hotelInfo.weekendDays.length > 0)
+      ? hotelInfo.weekendDays
+      : DEFAULT_WEEKEND_DAYS;
+    return wkDays.includes(new Date(selected.dateISO).getDay());
+  })();
+  const initial = room && selected ? cellState(room, ov, initialIsWeekend) : null;
 
   const [rate, setRate] = useState(initial?.rate ?? "");
   const [stopSale, setStopSale] = useState(initial?.stopSale ?? false);
@@ -490,12 +714,14 @@ function CellEditor({ selected, onClose, occMap, onNavigate }) {
   // Inventory + occupancy maths — all derived inside the hooks-stable
   // section so we can show "X of Y units booked" instead of just a
   // bookings count. Falls back to 0 when room_units hasn't been
-  // populated yet (early hydration).
+  // populated yet (early hydration). The "effective sell limit" honours
+  // the admin's master cap (Rooms & Rates → Sell limit) so the cell
+  // editor matches the calendar grid's inventory denominator.
   const occCount  = occMap[`${selected?.roomId}|${selected?.dateISO}`] || 0;
   const inventory = useMemo(() => {
-    if (!selected || !roomUnits) return 0;
-    return roomUnits.filter((u) => u.roomTypeId === selected.roomId && u.status !== "out-of-order").length;
-  }, [roomUnits, selected]);
+    if (!selected || !room) return 0;
+    return effectiveSellLimit(room, roomUnits || []);
+  }, [room, roomUnits, selected]);
   // Bookings touching this night — pull the actual reservation records so
   // the right-rail list can show the affected guests.
   const tonightsBookings = useMemo(() => {
@@ -1041,6 +1267,486 @@ function LegendChip({ p, swatch, border, label, textColor }) {
       letterSpacing: "0.16em", textTransform: "uppercase", fontWeight: 700,
     }}>
       {label}
+    </span>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ViewModeToggle — segmented control for switching the calendar grid
+// between "Price" (per-night rate) and "Inventory" (units available)
+// readouts. Looks consistent with the SelectField + PrimaryBtn buttons
+// that sit beside it in the page header.
+// ─────────────────────────────────────────────────────────────────────────
+function ViewModeToggle({ value, onChange, p }) {
+  const options = [
+    { id: "price",     label: "Price"     },
+    { id: "inventory", label: "Inventory" },
+  ];
+  return (
+    <div
+      role="tablist"
+      aria-label="Calendar view mode"
+      className="inline-flex"
+      style={{ border: `1px solid ${p.border}` }}
+    >
+      {options.map((o, idx) => {
+        const active = o.id === value;
+        return (
+          <button
+            key={o.id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(o.id)}
+            title={o.id === "price" ? "Show per-night rates" : "Show units available per night"}
+            style={{
+              padding: "0.4rem 0.85rem",
+              backgroundColor: active ? p.accent : "transparent",
+              color: active
+                ? (p.theme === "light" ? "#FFFFFF" : "#15161A")
+                : p.textSecondary,
+              border: "none",
+              borderInlineStart: idx === 0 ? "none" : `1px solid ${p.border}`,
+              fontFamily: "'Manrope', sans-serif",
+              fontSize: "0.66rem",
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              fontWeight: 700,
+              cursor: active ? "default" : "pointer",
+              whiteSpace: "nowrap",
+            }}
+            onMouseEnter={(e) => { if (!active) e.currentTarget.style.backgroundColor = p.bgHover; }}
+            onMouseLeave={(e) => { if (!active) e.currentTarget.style.backgroundColor = "transparent"; }}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// SellLimitInline — the "16 units" hint under a room-type's name on the
+// calendar's inventory view. Idle, it's a discreet text label with a
+// pencil affordance on hover. Activated (parent-controlled), it morphs
+// into a number input + Save / Cancel buttons rendered as a popover
+// anchored under the label.
+//
+// Saving calls updateRoom({ sellLimit: N }) on the room slice, which
+// flows through the persistence + realtime layers — every cell in the
+// visible window (and every future date that doesn't carry its own
+// per-date override) re-renders against the new cap within one tick.
+// For date-range-specific tweaks, the popover surfaces a one-click
+// jump to the Bulk-edit drawer.
+// ─────────────────────────────────────────────────────────────────────────
+function SellLimitInline({ room, typeUnits, physicalUnits, editing, onOpen, onClose, onSave, onOpenBulk, p }) {
+  const [draft, setDraft] = React.useState("");
+  React.useEffect(() => {
+    if (editing) {
+      // Seed the input with the CURRENT effective cap each time the
+      // editor opens — operator can clear to remove the override or
+      // type a new value.
+      setDraft(String(typeUnits));
+    }
+  }, [editing, typeUnits]);
+
+  // Esc-to-close + click-outside dismissal.
+  const popoverRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!editing) return;
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    const onDoc = (e) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target)) onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDoc);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDoc);
+    };
+  }, [editing, onClose]);
+
+  const submit = () => {
+    const trimmed = (draft || "").trim();
+    if (trimmed === "") {
+      // Empty = clear the override and fall back to physical unit count.
+      onSave(null);
+      return;
+    }
+    const n = Number(trimmed);
+    if (!Number.isFinite(n) || n < 0) return;
+    onSave(Math.floor(n));
+  };
+
+  const hasOverride = room.sellLimit !== undefined && room.sellLimit !== null && room.sellLimit !== "";
+
+  return (
+    <span style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onOpen(); }}
+        className="inline-flex items-center gap-1"
+        title="Click to change max units released for sale (next 90 days). Bookings can still exceed this if accepted manually — overbooked dates show in red."
+        style={{
+          color: p.textMuted,
+          fontSize: "0.66rem", letterSpacing: "0.05em",
+          fontFamily: "'Manrope', sans-serif",
+          backgroundColor: "transparent",
+          border: "none",
+          padding: "1px 4px",
+          margin: "0 -4px",
+          cursor: "pointer",
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = p.accent; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = p.textMuted; }}
+      >
+        <span>{typeUnits} unit{typeUnits === 1 ? "" : "s"}</span>
+        <Pencil size={9} style={{ opacity: 0.7 }} />
+      </button>
+
+      {editing && (
+        <div
+          ref={popoverRef}
+          role="dialog"
+          aria-label="Edit max units released for sale"
+          className="absolute"
+          style={{
+            top: "calc(100% + 6px)",
+            insetInlineStart: 0,
+            zIndex: 30,
+            minWidth: 280,
+            backgroundColor: p.bgPanel,
+            border: `1px solid ${p.border}`,
+            boxShadow: "0 12px 28px rgba(0,0,0,0.18)",
+            padding: 12,
+            fontFamily: "'Manrope', sans-serif",
+            fontSize: "0.78rem",
+            color: p.textPrimary,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{
+            color: p.accent,
+            fontSize: "0.6rem", letterSpacing: "0.22em",
+            textTransform: "uppercase", fontWeight: 700,
+            marginBottom: 8,
+          }}>
+            Max units · {typeUnits} now · {physicalUnits} physical
+          </div>
+          <input
+            type="number"
+            min={0}
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+            placeholder={`${physicalUnits} (track physical)`}
+            className="outline-none"
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              backgroundColor: p.inputBg,
+              color: p.textPrimary,
+              border: `1px solid ${p.border}`,
+              padding: "0.5rem 0.65rem",
+              fontFamily: "'Manrope', sans-serif",
+              fontSize: "0.92rem",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          />
+          <div style={{
+            color: p.textMuted, fontSize: "0.7rem",
+            lineHeight: 1.45, marginTop: 6,
+          }}>
+            Applies to every date in the calendar (next 90 days and beyond). Bookings beyond this cap will show as <strong style={{ color: p.danger }}>overbooked</strong> in red. For per-date blocks or stop-sale across a date range, use{" "}
+            <button
+              type="button"
+              onClick={onOpenBulk}
+              style={{
+                color: p.accent, fontWeight: 700,
+                backgroundColor: "transparent",
+                border: "none", padding: 0,
+                cursor: "pointer", fontSize: "inherit",
+                textDecoration: "underline",
+              }}
+            >
+              Bulk edit
+            </button>.
+          </div>
+
+          <div className="flex items-center gap-2" style={{ marginTop: 10 }}>
+            <button
+              type="button"
+              onClick={submit}
+              style={{
+                backgroundColor: p.accent,
+                color: p.theme === "light" ? "#FFFFFF" : "#15161A",
+                padding: "0.4rem 0.85rem",
+                fontFamily: "'Manrope', sans-serif",
+                fontSize: "0.62rem", letterSpacing: "0.22em",
+                textTransform: "uppercase", fontWeight: 700,
+                border: "none", cursor: "pointer",
+                display: "inline-flex", alignItems: "center", gap: 6,
+              }}
+            >
+              <Save size={11} /> Save
+            </button>
+            {hasOverride && (
+              <button
+                type="button"
+                onClick={() => onSave(null)}
+                title="Clear the override and let the cap track physical room count automatically."
+                style={{
+                  backgroundColor: "transparent",
+                  color: p.textSecondary,
+                  padding: "0.4rem 0.7rem",
+                  border: `1px solid ${p.border}`,
+                  fontFamily: "'Manrope', sans-serif",
+                  fontSize: "0.62rem", letterSpacing: "0.22em",
+                  textTransform: "uppercase", fontWeight: 700,
+                  cursor: "pointer",
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                }}
+              >
+                <RotateCcw size={11} /> Reset
+              </button>
+            )}
+            <div className="flex-1" />
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                backgroundColor: "transparent",
+                color: p.textMuted,
+                padding: "0.4rem 0.7rem",
+                border: "none",
+                fontFamily: "'Manrope', sans-serif",
+                fontSize: "0.62rem", letterSpacing: "0.22em",
+                textTransform: "uppercase", fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// PriceInline — the "BHD 25 base" hint under a room-type's name on the
+// calendar's Price view. Click to open a popover with separate
+// weekday + weekend inputs. Save persists room.price + room.priceWeekend;
+// the rest of the system (every cell that doesn't carry its own per-date
+// override) re-renders against the new rack rate on the next tick.
+//
+// For per-date / per-range price overrides the popover surfaces a one-
+// click jump to the Bulk-edit drawer.
+// ─────────────────────────────────────────────────────────────────────────
+function PriceInline({ room, editing, onOpen, onClose, onSave, onOpenBulk, p, t }) {
+  const [draftWeekday, setDraftWeekday] = React.useState("");
+  const [draftWeekend, setDraftWeekend] = React.useState("");
+  React.useEffect(() => {
+    if (editing) {
+      setDraftWeekday(String(room.price ?? ""));
+      setDraftWeekend(String(room.priceWeekend ?? room.price ?? ""));
+    }
+  }, [editing, room.price, room.priceWeekend]);
+
+  // Esc-to-close + click-outside dismissal.
+  const popoverRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!editing) return;
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    const onDoc = (e) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target)) onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDoc);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDoc);
+    };
+  }, [editing, onClose]);
+
+  const submit = () => {
+    const wkd = Number((draftWeekday || "").trim());
+    const wke = Number((draftWeekend || "").trim());
+    const patch = {};
+    if (Number.isFinite(wkd) && wkd >= 0) patch.price = Math.round(wkd);
+    if (Number.isFinite(wke) && wke >= 0) patch.priceWeekend = Math.round(wke);
+    // Default: if weekend left blank, match weekday so we don't end
+    // up with a 0-priced weekend rack rate after editing weekday-only.
+    if (patch.price !== undefined && patch.priceWeekend === undefined) {
+      patch.priceWeekend = patch.price;
+    }
+    if (Object.keys(patch).length === 0) return;
+    onSave(patch);
+  };
+
+  return (
+    <span style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onOpen(); }}
+        className="inline-flex items-center gap-1"
+        title="Click to change the rack rate for this suite type. Per-date overrides are still editable via the cell editor or Bulk edit."
+        style={{
+          color: p.textMuted,
+          fontSize: "0.66rem", letterSpacing: "0.05em",
+          fontFamily: "'Manrope', sans-serif",
+          backgroundColor: "transparent",
+          border: "none",
+          padding: "1px 4px",
+          margin: "0 -4px",
+          cursor: "pointer",
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = p.accent; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = p.textMuted; }}
+      >
+        <span>{t("common.bhd")} {room.price} base</span>
+        <Pencil size={9} style={{ opacity: 0.7 }} />
+      </button>
+
+      {editing && (
+        <div
+          ref={popoverRef}
+          role="dialog"
+          aria-label="Edit rack rate"
+          className="absolute"
+          style={{
+            top: "calc(100% + 6px)",
+            insetInlineStart: 0,
+            zIndex: 30,
+            // Wider than the inventory popover because two labelled
+            // number inputs need real breathing room — at 320px the
+            // weekday spinner buttons collided with the gap between
+            // columns and the label/input lines flowed inline.
+            minWidth: 360,
+            backgroundColor: p.bgPanel,
+            border: `1px solid ${p.border}`,
+            boxShadow: "0 12px 28px rgba(0,0,0,0.18)",
+            padding: 14,
+            fontFamily: "'Manrope', sans-serif",
+            fontSize: "0.78rem",
+            color: p.textPrimary,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{
+            color: p.accent,
+            fontSize: "0.6rem", letterSpacing: "0.22em",
+            textTransform: "uppercase", fontWeight: 700,
+            marginBottom: 10,
+          }}>
+            Rack rate · {t("common.bhd")} / night
+          </div>
+
+          {/* Two-column grid with explicit flex-column labels so the
+              caption sits above the input rather than running inline
+              with it. The previous structure used <span> children of a
+              block <label>, which display: inline and slumped next to
+              the input. */}
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { id: "weekday", caption: "Weekday", value: draftWeekday, setValue: setDraftWeekday, autoFocus: true },
+              { id: "weekend", caption: "Weekend", value: draftWeekend, setValue: setDraftWeekend, autoFocus: false },
+            ].map((field) => (
+              <label key={field.id} className="flex flex-col" style={{ minWidth: 0 }}>
+                <span style={{
+                  display: "block",
+                  color: p.textMuted,
+                  fontSize: "0.6rem",
+                  letterSpacing: "0.22em",
+                  textTransform: "uppercase",
+                  fontWeight: 700,
+                  marginBottom: 4,
+                }}>
+                  {field.caption}
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  autoFocus={field.autoFocus}
+                  value={field.value}
+                  onChange={(e) => field.setValue(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+                  className="outline-none"
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    backgroundColor: p.inputBg,
+                    color: p.textPrimary,
+                    border: `1px solid ${p.border}`,
+                    padding: "0.5rem 0.65rem",
+                    fontFamily: "'Manrope', sans-serif",
+                    fontSize: "0.92rem",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                />
+              </label>
+            ))}
+          </div>
+          <div style={{
+            color: p.textMuted, fontSize: "0.7rem",
+            lineHeight: 1.45, marginTop: 8,
+          }}>
+            Applies to every date in the calendar (next 90 days and beyond) that doesn't carry a per-date override. For per-date or per-range adjustments, use{" "}
+            <button
+              type="button"
+              onClick={onOpenBulk}
+              style={{
+                color: p.accent, fontWeight: 700,
+                backgroundColor: "transparent",
+                border: "none", padding: 0,
+                cursor: "pointer", fontSize: "inherit",
+                textDecoration: "underline",
+              }}
+            >
+              Bulk edit
+            </button>.
+          </div>
+
+          <div className="flex items-center gap-2" style={{ marginTop: 10 }}>
+            <button
+              type="button"
+              onClick={submit}
+              style={{
+                backgroundColor: p.accent,
+                color: p.theme === "light" ? "#FFFFFF" : "#15161A",
+                padding: "0.4rem 0.85rem",
+                fontFamily: "'Manrope', sans-serif",
+                fontSize: "0.62rem", letterSpacing: "0.22em",
+                textTransform: "uppercase", fontWeight: 700,
+                border: "none", cursor: "pointer",
+                display: "inline-flex", alignItems: "center", gap: 6,
+              }}
+            >
+              <Save size={11} /> Save rate
+            </button>
+            <div className="flex-1" />
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                backgroundColor: "transparent",
+                color: p.textMuted,
+                padding: "0.4rem 0.7rem",
+                border: "none",
+                fontFamily: "'Manrope', sans-serif",
+                fontSize: "0.62rem", letterSpacing: "0.22em",
+                textTransform: "uppercase", fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </span>
   );
 }

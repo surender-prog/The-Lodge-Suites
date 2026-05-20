@@ -53,6 +53,10 @@ export const RoomsRates = () => {
       extraBedFee:       Number(room.extraBedFee || 0),
       extraBedAddsAdults:   room.extraBedAdds?.adults   ?? 1,
       extraBedAddsChildren: room.extraBedAdds?.children ?? 0,
+      // Master sell limit (per type). null/empty = no override; falls
+      // back to the active room_units count for this type. The editor
+      // surfaces both numbers so the operator can compare.
+      sellLimit:    room.sellLimit ?? "",
     });
   };
   const save = () => {
@@ -75,6 +79,15 @@ export const RoomsRates = () => {
         adults:   draft.extraBedAvailable ? safe(draft.extraBedAddsAdults)   : 0,
         children: draft.extraBedAvailable ? safe(draft.extraBedAddsChildren) : 0,
       },
+      // Persist sell limit. Blank string → null (= no override, fall
+      // back to physical units). Any non-numeric input also resolves
+      // to null so a bad paste doesn't accidentally zero the cap.
+      sellLimit: (() => {
+        const v = draft.sellLimit;
+        if (v === "" || v === null || v === undefined) return null;
+        const n = Number(v);
+        return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+      })(),
     });
     pushToast({ message: `Saved · ${t(`rooms.${editingRate}.name`) || editingRate}` });
     setEditingRate(null);
@@ -305,9 +318,49 @@ function RoomTypeEditor({ room, draft, setDraft, tax, unitCount, onCancel, onSav
           </FormGroup>
           <div className="mt-4 space-y-2" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem" }}>
             <Detail label="Type id"  value={room.id} mono p={p} />
-            <Detail label="Inventory" value={`${unitCount} unit${unitCount === 1 ? "" : "s"}`} p={p} />
+            <Detail label="Physical units" value={`${unitCount} unit${unitCount === 1 ? "" : "s"}`} p={p} />
             <Detail label="Public name" value={t(`rooms.${room.id}.name`) || "—"} p={p} />
           </div>
+
+          {/* Master sell-limit — controls how many units of this type the
+              booking engine will release. Blank means "no override, fall
+              back to physical unit count". Operators can set it BELOW
+              physical to hold inventory back (corporate allocation,
+              owner blocks) or ABOVE for controlled overbooking. */}
+          <div className="mt-4">
+            <FormGroup label="Max units released for sale (optional)">
+              <TextField
+                type="number"
+                value={draft.sellLimit ?? ""}
+                placeholder={`${unitCount} (use physical count)`}
+                onChange={(v) => set({ sellLimit: v })}
+                suffix="units"
+              />
+            </FormGroup>
+            <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", marginTop: 6, lineHeight: 1.55 }}>
+              {(() => {
+                const v = draft.sellLimit;
+                if (v === "" || v === null || v === undefined) {
+                  return <>Currently <strong>no override</strong> — calendar &amp; booking flow use the physical count of <strong>{unitCount}</strong> unit{unitCount === 1 ? "" : "s"}.</>;
+                }
+                const n = Number(v);
+                if (!Number.isFinite(n) || n < 0) {
+                  return <span style={{ color: p.danger }}>Enter a non-negative whole number, or clear to remove the override.</span>;
+                }
+                const cap = Math.floor(n);
+                if (cap === unitCount) {
+                  return <>Cap matches physical inventory — same as leaving this blank.</>;
+                }
+                if (cap < unitCount) {
+                  const held = unitCount - cap;
+                  return <>Releasing <strong>{cap}</strong> of <strong>{unitCount}</strong> for sale · {held} unit{held === 1 ? "" : "s"} held back.</>;
+                }
+                const extra = cap - unitCount;
+                return <span style={{ color: p.warn }}>Overbooking: +{extra} virtual unit{extra === 1 ? "" : "s"} above physical inventory ({unitCount}). Front desk must manage walk-ins / overflow.</span>;
+              })()}
+            </div>
+          </div>
+
           <p className="mt-3" style={{ color: p.textMuted, fontSize: "0.74rem", lineHeight: 1.55 }}>
             Public name &amp; copy live in <strong>Site Content → Rooms</strong> — edit translation strings there. This editor controls operational fields (rate, capacity, extra bed).
           </p>
@@ -1495,6 +1548,9 @@ function RoomTypeCreator({ existingIds, tax, onCancel, onCreate }) {
     // for any booking flow that reads `room.mealPlans`. The operator
     // can dial the per-plan supplement individually after creating.
     mealPlans: { ...DEFAULT_MEAL_PLANS_FOR_ROOM },
+    // Sell limit — left blank by default so the type falls back to the
+    // physical unit count the operator wires up next in "Manage units".
+    sellLimit: "",
   });
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
 
@@ -1557,6 +1613,14 @@ function RoomTypeCreator({ existingIds, tax, onCancel, onCreate }) {
         children: draft.extraBedAvailable ? safe(draft.extraBedAddsChildren) : 0,
       },
       mealPlans: draft.mealPlans || { ...DEFAULT_MEAL_PLANS_FOR_ROOM },
+      // Carry the sell-limit across; null means "fall back to physical
+      // unit count" once the operator has wired units up.
+      sellLimit: (() => {
+        const v = draft.sellLimit;
+        if (v === "" || v === null || v === undefined) return null;
+        const n = Number(v);
+        return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+      })(),
       isActive: true,
       displayOrder: existingIds.length + 1, // append to the end
       // image stays unset — operator uploads a hero in Site Content
@@ -1660,6 +1724,23 @@ function RoomTypeCreator({ existingIds, tax, onCancel, onCreate }) {
                 className="w-full outline-none"
                 style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.55rem 0.7rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem", resize: "vertical" }}
               />
+            </FormGroup>
+            {/* Sell limit — optional master cap on bookable units for
+                this type. Brand-new types haven't been wired to room
+                units yet, so the operator typically leaves this blank
+                and lets it auto-track physical inventory. Setting a
+                positive integer here locks in a cap up front. */}
+            <FormGroup label="Max units released for sale (optional)">
+              <TextField
+                type="number"
+                value={draft.sellLimit}
+                placeholder="Leave blank to track physical units"
+                onChange={(v) => set({ sellLimit: v })}
+                suffix="units"
+              />
+              <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", marginTop: 6, lineHeight: 1.55 }}>
+                Hard cap on how many units of this type the booking engine releases for sale. Leave blank to fall back to the active room-units count once you add them under <strong>Manage units</strong>.
+              </div>
             </FormGroup>
           </div>
         </Card>

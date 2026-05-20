@@ -1,10 +1,14 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Activity, AlertCircle, BarChart3, Briefcase, Building2, Eye, EyeOff, Hotel,
   KeyRound, Lock, LogIn, LogOut, Mail, ShieldCheck, Sparkles, UserCheck, Users, X,
 } from "lucide-react";
 import { useT } from "../i18n/LanguageContext.jsx";
-import { useData } from "../data/store.jsx";
+import {
+  useData,
+  hasPermission, hasAnyPermission,
+  TOP_TAB_PERMISSION, ADMIN_SECTION_PERMISSION,
+} from "../data/store.jsx";
 import { CorporateTab } from "./portal/CorporateTab.jsx";
 import { AgentTab } from "./portal/AgentTab.jsx";
 import { AdminTab } from "./portal/AdminTab.jsx";
@@ -75,6 +79,38 @@ function PartnerPortalInner({ onClose }) {
     { id: "loyalty",    label: t("portal.tabs.loyalty"),    icon: Sparkles },
     { id: "admin",      label: t("portal.tabs.admin"),      icon: Hotel },
   ];
+
+  // Permission-filtered tabs. Most rows map to a single permission via
+  // TOP_TAB_PERMISSION; the Hotel Admin tab is special — it's visible
+  // when the operator has access to ANY of its sub-sections (i.e. at
+  // least one admin function they're allowed to use). A pure "Owner"
+  // permission set lights up everything; a Marketing user without
+  // dashboard-only restrictions still sees Hotel Admin → Offers; a
+  // read-only auditor only sees Dashboard.
+  const visibleTabs = useMemo(() => {
+    if (!staffSession) return tabs;
+    const adminSubPerms = Object.values(ADMIN_SECTION_PERMISSION);
+    return tabs.filter((tt) => {
+      if (tt.id === "admin") return hasAnyPermission(staffSession, adminSubPerms);
+      return hasPermission(staffSession, TOP_TAB_PERMISSION[tt.id]);
+    });
+    // tabs is rebuilt every render off useT; depending on staffSession
+    // is the meaningful trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staffSession]);
+
+  // Snap the active tab to one the operator can actually see. Prevents
+  // the body rendering an unauthorised section when the user signs in
+  // as a role whose default tab (dashboard) isn't in their permission
+  // set, or a role downgrade strips them of their current tab live.
+  useEffect(() => {
+    if (!staffSession) return;
+    if (visibleTabs.length === 0) return;
+    if (!visibleTabs.some((tt) => tt.id === tab)) {
+      setTab(visibleTabs[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleTabs, tab, staffSession]);
 
   // Login gate — show the staff login screen until a valid session exists.
   if (!staffSession) {
@@ -229,7 +265,7 @@ function PartnerPortalInner({ onClose }) {
 
       {/* Tabs row */}
       <nav className="flex flex-wrap px-6 md:px-10" style={{ borderBottom: `1px solid ${p.border}`, backgroundColor: p.bgPanel }}>
-        {tabs.map((tt) => {
+        {visibleTabs.map((tt) => {
           const TabIcon = tt.icon;
           const active = tab === tt.id;
           return (

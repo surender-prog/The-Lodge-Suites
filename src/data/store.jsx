@@ -6,12 +6,16 @@ import {
   notifyPaymentReceived,
 } from "../utils/notifications.js";
 import { PACKAGES as INITIAL_PACKAGES } from "./packages.js";
-import { supabase, SUPABASE_CONFIGURED } from "../lib/supabase.js";
-import { fetchRooms, persistRoomPatch, persistRoomInsert, persistRoomRemove } from "../lib/rooms.js";
+import { supabase, SUPABASE_CONFIGURED, hasSupabaseSession } from "../lib/supabase.js";
 import {
-  fetchAll, fetchSingleton,
-  useSlicePersistence, useSingletonPersistence,
-  upsertRow,
+  fetchRooms, persistRoomPatch, persistRoomInsert, persistRoomRemove,
+  dbRoomToClient,
+} from "../lib/rooms.js";
+import {
+  fetchAll, fetchSingleton, fetchEntityMap,
+  useSlicePersistence, useSingletonPersistence, useObjectSlicePersistence,
+  useRealtimeSlice, useRealtimeSingleton, useRealtimeTable, useObjectRealtimeSlice,
+  upsertRow, bulkReplace,
 } from "../lib/dataSync.js";
 
 // Loyalty tiers — fully self-contained shape so the admin can CRUD them.
@@ -2342,6 +2346,39 @@ export const ROOM_UNIT_STATUSES = [
   { id: "reserved",     label: "Reserved",     color: "#D97706", hint: "Held back — owner unit, long-stay lease, or block." },
 ];
 
+// ─── Sellable-inventory helpers ──────────────────────────────────────────
+// Two functions every "is there room left to book?" check should call:
+//
+//   countPhysicalUnits(roomTypeId, roomUnits)
+//     → number of active+reserved units of that type (excludes
+//       out-of-order). This is the absolute physical ceiling.
+//
+//   effectiveSellLimit(room, roomUnits)
+//     → master sellable cap for the type. Honours the admin-managed
+//       `room.sellLimit` override; falls back to the physical count
+//       when nothing has been set.
+//
+// Hotels routinely hold inventory back from public sale (corporate
+// allocation, walk-in stock, owner blocks) and occasionally release
+// MORE than physical (controlled overbooking for last-minute resells).
+// sellLimit covers both cases without touching the room_units table.
+export function countPhysicalUnits(roomTypeId, roomUnits) {
+  if (!roomTypeId || !Array.isArray(roomUnits)) return 0;
+  return roomUnits.filter(
+    (u) => u && u.roomTypeId === roomTypeId && u.status !== "out-of-order"
+  ).length;
+}
+
+export function effectiveSellLimit(room, roomUnits) {
+  const physical = countPhysicalUnits(room?.id, roomUnits || []);
+  if (!room) return physical;
+  const raw = room.sellLimit;
+  if (raw === null || raw === undefined || raw === "") return physical;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return physical;
+  return Math.floor(n);
+}
+
 export const ROOM_VIEWS = [
   { id: "sea",     label: "Sea view" },
   { id: "city",    label: "City view" },
@@ -2991,6 +3028,83 @@ export const ADMIN_ROLES = [
   },
 ];
 
+// ─── Navigation → permission gating ─────────────────────────────────────
+// Maps every navigable section in the operator portal to the PERMISSIONS
+// id that gates it. The values are either:
+//   • a permission id from PERMISSIONS (the section is hidden unless the
+//     session carries that id)
+//   • null (the section is visible to any signed-in operator — used for
+//     property-wide screens that everyone needs: Property Info, Activity
+//     Log, SMTP, System Docs)
+//
+// The Hotel Admin sub-nav (AdminLayout) and the PartnerPortal top tabs
+// both consume this map via hasPermission/hasAnyPermission below. Keep
+// the map and PERMISSIONS in sync — the Owner role grants everything,
+// GM grants everything except `admin_users` + `bookings_delete`, so any
+// new section that lands here needs a corresponding PERMISSIONS row.
+
+// Hotel Admin sub-sections (the dropdowns under Hotel Admin → Settings /
+// Operations, plus the top-level Calendar / Rooms / Maintenance / etc.).
+export const ADMIN_SECTION_PERMISSION = {
+  calendar:    "calendar",
+  rooms:       "rooms",
+  offers:      "offers",
+  maintenance: "maintenance",
+  extras:      "extras",
+  giftCards:   "offers",       // gift cards belong to the Offers permission
+  reports:     "dashboard",
+  invoices:    "invoices",
+  payments:    "payments",
+  messages:    "members",       // staff-to-guest chat threads
+  activity:    null,            // every signed-in operator can audit themselves
+  tax:         "tax",
+  property:    null,            // property info edits live with everyone
+  emails:      "emails",
+  smtp:        null,            // outbound SMTP config — operator-wide
+  siteContent: "siteContent",
+  schedules:   "dashboard",
+  staff:       "admin_users",   // <-- gates the Staff & Access editor (this is what was leaking to GMs)
+  docs:        null,            // System docs are reference material
+  stopsale:    "stopsale",
+  ota:         "stopsale",      // OTA management rides on the stopsale permission
+};
+
+// PartnerPortal top tabs.
+export const TOP_TAB_PERMISSION = {
+  dashboard:  "dashboard",
+  bookings:   "bookings",
+  activities: null,             // CRM activity stream visible to anyone
+  corporate:  "corporates",
+  agent:      "agents",
+  loyalty:    "members",
+  admin:      null,             // visibility computed from sub-section perms
+};
+
+/**
+ * Permission predicate. `permission` may be:
+ *   • a permission id string (the session must carry it)
+ *   • null (granted to any signed-in session)
+ *   • undefined (granted — same as null, defensive for missing map entries)
+ *
+ * No session → always false (the user is anon).
+ */
+export function hasPermission(session, permission) {
+  if (permission === null || permission === undefined) return !!session;
+  if (!session) return false;
+  const perms = Array.isArray(session.permissions) ? session.permissions : [];
+  return perms.includes(permission);
+}
+
+/**
+ * "Has at least one of these permissions". Used to decide whether the
+ * Hotel Admin top tab itself should render — if EVERY sub-section is
+ * gated away from this operator, the tab disappears entirely.
+ */
+export function hasAnyPermission(session, permissions) {
+  if (!Array.isArray(permissions) || permissions.length === 0) return !!session;
+  return permissions.some((p) => hasPermission(session, p));
+}
+
 // Audit log catalogue — every kind we record. Each entry pushed onto
 // `auditLogs` carries one of these as its `kind`, plus actor + target
 // + free-form details. The Activity Log admin section reads this stream.
@@ -3176,6 +3290,56 @@ export function applyPhasePatch(assignment, phaseId, patch) {
     completedAt: allDone ? (assignment.completedAt || new Date().toISOString()) : null,
     status: nextStatus,
   };
+}
+
+// ─── admin_users hydration cache (browser localStorage) ─────────────────
+//
+// The demo-login tile on the operator portal renders BEFORE any DB
+// fetch has resolved. On a fresh browser there's nothing to render
+// except the JS SAMPLE seed, which can briefly show stale names
+// ("Rahul Sharma") before being replaced by the live DB rows
+// ("Karunakar Shetty"). On every subsequent visit we want that flash
+// gone — so after each successful fetch we cache the rows here, and
+// on the next mount we use the cache as the initial state.
+//
+// Keep the cache small and tied to a versioned key. If the shape ever
+// changes (new fields, renamed properties), bump the version suffix
+// so old caches are invalidated rather than rendering with missing
+// fields.
+const ADMIN_USERS_CACHE_KEY = "lodge.adminUsers.v1";
+const ADMIN_USERS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+function readAdminUsersCache() {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(ADMIN_USERS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    if (!Array.isArray(parsed.rows)) return null;
+    // Skip caches older than the TTL — guards against a long-stale
+    // entry shadowing a fresh fetch when the DB has been pruned.
+    if (typeof parsed.ts === "number" && Date.now() - parsed.ts > ADMIN_USERS_CACHE_TTL_MS) {
+      return null;
+    }
+    return parsed.rows;
+  } catch {
+    return null;
+  }
+}
+
+function writeAdminUsersCache(rows) {
+  if (typeof window === "undefined") return;
+  if (!Array.isArray(rows)) return;
+  try {
+    window.localStorage.setItem(
+      ADMIN_USERS_CACHE_KEY,
+      JSON.stringify({ ts: Date.now(), rows })
+    );
+  } catch {
+    // Quota exhausted, private mode, etc. — silently skip; the worst
+    // case is the seed flashes on the next visit instead of the cache.
+  }
 }
 
 // Seed staff. `password` is intentionally plaintext placeholder text — when
@@ -4055,7 +4219,23 @@ export function DataProvider({ children }) {
   const [emailTemplates, setEmailTemplates] = useState(SAMPLE_EMAIL_TEMPLATES);
   const [rfps,     setRfps]     = useState(SAMPLE_RFPS);
   const [channels, setChannels] = useState(SAMPLE_CHANNELS);
-  const [adminUsers, setAdminUsers] = useState(SAMPLE_ADMIN_USERS);
+  // admin_users initial state — three-tier hydration to eliminate the
+  // "Rahul flashes before Karunakar" effect on returning visitors:
+  //
+  //   1. localStorage cache from the last successful DB fetch (instant)
+  //   2. JS SAMPLE_ADMIN_USERS bundled seed (testing-friendly fallback)
+  //   3. Live DB fetch (authoritative — overrides 1 and 2 when it returns)
+  //
+  // On a brand-new browser the cache is empty, so the seed renders for
+  // ~100ms while the fetch is in flight. On every subsequent visit the
+  // cache is populated with the previously-confirmed DB state, so the
+  // tiles render with the right names immediately. Owner edits update
+  // the cache via the same fetch path the moment they commit, so the
+  // cache stays fresh on its own.
+  const [adminUsers, setAdminUsers] = useState(() => {
+    const cached = readAdminUsersCache();
+    return cached && cached.length > 0 ? cached : SAMPLE_ADMIN_USERS;
+  });
 
   // Admin Testing & Training Plan — assignments handed out by the owner
   // for UAT / onboarding / pre-launch sign-off. Each record carries the
@@ -4337,14 +4517,22 @@ export function DataProvider({ children }) {
   // bumps on Supabase auth events; the effect re-runs and replays every
   // fetch under the new (authenticated) session, replacing mock with
   // the real DB content.
-  const hydrated = useRef(false);
+  //
+  // `hydrated` is STATE (not a ref) so flipping it true triggers a
+  // re-evaluation of every useSlicePersistence / useSingletonPersistence
+  // effect. Without this, a slow Promise.all could let an early
+  // setX(dbRows) fire while hydrated was still false — the persistence
+  // hook would skip it, then never see the value-change again, and a
+  // later owner-edit would silently land as the "baseline" with no
+  // write. See useSlicePersistence's header comment for the full trace.
+  const [hydrated, setHydrated] = useState(false);
   const [hydrationVersion, setHydrationVersion] = useState(0);
   useEffect(() => {
-    if (!SUPABASE_CONFIGURED) { hydrated.current = true; return; }
+    if (!SUPABASE_CONFIGURED) { setHydrated(true); return; }
     let cancelled = false;
     // Pause persistence while we replay the fetches — otherwise a slice
     // re-render mid-fetch could trigger a stray bulkReplace.
-    hydrated.current = false;
+    setHydrated(false);
     Promise.all([
       // Entity slices
       fetchAll("packages")           .then(d => { if (!cancelled && d && d.length > 0) setPackages(d); }),
@@ -4360,7 +4548,45 @@ export function DataProvider({ children }) {
       fetchAll("email_templates")    .then(d => { if (!cancelled && d && d.length > 0) setEmailTemplates(d); }),
       fetchAll("rfps")               .then(d => { if (!cancelled && d && d.length > 0) setRfps(d); }),
       fetchAll("channels")           .then(d => { if (!cancelled && d && d.length > 0) setChannels(d); }),
-      fetchAll("admin_users")        .then(d => { if (!cancelled && d && d.length > 0) setAdminUsers(d); }),
+      fetchAll("admin_users")        .then(d => {
+        if (cancelled) return;
+        if (d && d.length > 0) {
+          // Live rows beat the bundled seed. Also write the rows to
+          // localStorage so the next page load can render them
+          // instantly instead of flashing the JS seed.
+          setAdminUsers(d);
+          writeAdminUsersCache(d);
+          // eslint-disable-next-line no-console
+          console.info(`[admin_users] ${d.length} live row${d.length === 1 ? "" : "s"} loaded from DB (cached for next visit).`);
+        } else if (Array.isArray(d) && d.length === 0) {
+          if (hasSupabaseSession()) {
+            // Table is reachable but empty AND we're authenticated as
+            // staff — push the canonical demo seed so every browser
+            // session immediately sees the same login tiles. Fire-and-
+            // forget; the RLS guard on bulkReplace will silently no-op
+            // if the session expired between fetch and write.
+            bulkReplace("admin_users", SAMPLE_ADMIN_USERS).catch(() => {});
+            // eslint-disable-next-line no-console
+            console.info("[admin_users] DB empty + authed — seeding canonical accounts now.");
+          } else {
+            // Anon visitor + empty table = the public login screen will
+            // render the JS seed (Rahul Sharma & co). Apply Supabase
+            // migrations 012 (anon SELECT + realtime publication) and
+            // 015 (canonical seed) to make this flow show the live
+            // owner edits on the demo tiles.
+            // eslint-disable-next-line no-console
+            console.warn(
+              "[admin_users] anon fetch returned 0 rows — demo tiles will fall back to the JS seed. " +
+              "Apply supabase/migrations/012_admin_users_realtime.sql and 015_admin_users_seed.sql " +
+              "to drive the tiles from live DB rows."
+            );
+          }
+        } else if (d === null) {
+          // Supabase isn't configured at all — perfectly valid in mock/CI mode.
+          // eslint-disable-next-line no-console
+          console.info("[admin_users] Supabase not configured — using JS seed only.");
+        }
+      }),
       fetchAll("testing_plan_assignments").then(d => { if (!cancelled && d && d.length > 0) setTestingPlanAssignments(d); }),
       fetchAll("audit_logs")         .then(d => { if (!cancelled && d && d.length > 0) setAuditLogs(d); }),
       fetchAll("prospects")          .then(d => { if (!cancelled && d && d.length > 0) setProspects(d); }),
@@ -4371,7 +4597,14 @@ export function DataProvider({ children }) {
       fetchAll("room_units")         .then(d => { if (!cancelled && d && d.length > 0) setRoomUnits(d); }),
       fetchAll("notifications")      .then(d => { if (!cancelled && d && d.length > 0) setNotifications(d); }),
       fetchAll("messages")           .then(d => { if (!cancelled && d && d.length > 0) setMessages(d); }),
-      fetchAll("calendar_overrides") .then(d => { if (!cancelled && d && d.length > 0) setCalendar(d); }),
+      // calendar_overrides is stored as an object map { "roomId|date": cell },
+      // not an array, so it uses the bespoke object-map fetch helper that
+      // preserves each row's id as the map key. Using fetchAll here would
+      // throw away the id and coerce the map to an array, breaking every
+      // `calendar[key]` lookup downstream.
+      fetchEntityMap("calendar_overrides") .then(d => {
+        if (!cancelled && d && Object.keys(d).length > 0) setCalendar(d);
+      }),
       fetchAll("tax_patterns")       .then(d => { if (!cancelled && d && d.length > 0) setTaxPatterns(d); }),
       // Singletons
       fetchSingleton("hotel_info")        .then(v => { if (!cancelled && v) setHotelInfo(v); }),
@@ -4387,7 +4620,7 @@ export function DataProvider({ children }) {
       // (The slice itself is initialised inside siteContent in this
       // codebase; persistence is handled below at the slice level.)
     ]).finally(() => {
-      if (!cancelled) hydrated.current = true;
+      if (!cancelled) setHydrated(true);
     });
     return () => { cancelled = true; };
   }, [hydrationVersion]);
@@ -4440,6 +4673,125 @@ export function DataProvider({ children }) {
   useSlicePersistence("rfps",                rfps,               hydrated);
   useSlicePersistence("channels",            channels,           hydrated);
   useSlicePersistence("admin_users",         adminUsers,         hydrated);
+  // ─── Live multi-tab sync ────────────────────────────────────────────
+  // Every operational slice the staff might edit from one tab and
+  // expect another tab (or another teammate) to see immediately rides
+  // on Supabase's realtime broadcast. Persistence is content-aware
+  // (JSON.stringify diff), so inbound events that produce identical
+  // state don't trigger an echo write back. Each hook teardown removes
+  // its WebSocket subscription on unmount; the underlying Supabase
+  // client multiplexes everything onto one connection.
+  //
+  // Audit log is intentionally NOT broadcast — every operator session
+  // appends to it, the firehose adds chatter without a UI that watches
+  // it live. Same for testing_plan_assignments + report_runs (low-
+  // priority background data). Add later if a "live audit feed"
+  // screen needs it.
+  //
+  //   Users & accounts
+  //     admin_users   — Staff & Access (operators / GMs / housekeeping…)
+  //     members       — LS Privilege loyalty guests
+  //     agreements    — Corporate accounts (with embedded user POCs)
+  //     agencies      — Travel agencies   (with embedded user POCs)
+  //     prospects     — Sales-funnel leads
+  //
+  //   Inventory & pricing
+  //     rooms              — Public room types + rack rates + sell limit
+  //     room_units         — Per-suite registry (status, view, floor)
+  //     calendar_overrides — Per-(roomId × date) rate / blocked / stop-sale
+  //     packages           — Featured offers
+  //     extras             — Booking add-ons
+  //     tax_patterns       — VAT / service / tourism levy presets
+  //     gift_cards         — Issued gift cards + redemption status
+  //     gift_card_tiers    — Pre-set gift card bundles
+  //
+  //   Reservations & billing
+  //     bookings           — Reservations across every channel
+  //     invoices           — Booking + commission + gift-card invoices
+  //     payments           — Captured payments
+  //
+  //   Operations & comms
+  //     maintenance_jobs   — Defect-to-fix lifecycle
+  //     maintenance_vendors— Rolodex (AC, plumbers, painters…)
+  //     channels           — OTA / channel-manager status
+  //     email_templates    — Templated emails the system sends
+  //     report_schedules   — Recurring email reports
+  //     rfps               — Corporate RFP intake
+  //     activities         — CRM activity stream
+  //     notifications      — Operator inbox
+  //     messages           — Staff chat threads
+  //     gallery            — Homepage gallery items
+  //
+  //   Property singletons (settings + global rate cards)
+  //     hotel_info         — Property info, weekend days, payment terms…
+  //     tiers              — LS Privilege tier benefits + earn rates
+  //     tax                — Default VAT / service / tourism levy
+  //     active_tax_pattern — Currently-applied tax pattern id
+  //     loyalty            — Loyalty config (earn rates, expiry rules)
+  //     event_supplements  — Eid / F1 / NYE rate-supplement master
+  //     smtp_config        — Outbound email transport settings
+  //     site_content       — Public marketing copy + hero imagery
+
+  // Users & accounts
+  useRealtimeSlice("admin_users", setAdminUsers, hydrated);
+
+  // Mirror every adminUsers change to localStorage so the next page
+  // load can render the demo tiles instantly (no JS-seed flash). We
+  // wait until hydration completes so we don't accidentally cache the
+  // initial SAMPLE before the DB fetch has had a chance to replace it.
+  useEffect(() => {
+    if (!hydrated) return;
+    if (!Array.isArray(adminUsers) || adminUsers.length === 0) return;
+    writeAdminUsersCache(adminUsers);
+  }, [adminUsers, hydrated]);
+  useRealtimeSlice("members",     setMembers,    hydrated);
+  useRealtimeSlice("agreements",  setAgreements, hydrated);
+  useRealtimeSlice("agencies",    setAgencies,   hydrated);
+  useRealtimeSlice("prospects",   setProspects,  hydrated);
+
+  // Inventory & pricing — `rooms` rides through useRealtimeTable since
+  // it has its own columnar schema (snake_case columns + image_url URL,
+  // not a single `data` jsonb blob). The others are JSONB-entity tables.
+  useRealtimeTable("rooms", setRooms, hydrated, { rowToClient: dbRoomToClient });
+  useRealtimeSlice("room_units",         setRoomUnits,         hydrated);
+  // calendar_overrides — object-map realtime so payloads land at the
+  // right map key instead of being appended to a phantom array.
+  useObjectRealtimeSlice("calendar_overrides", setCalendar,     hydrated);
+  useRealtimeSlice("packages",           setPackages,          hydrated);
+  useRealtimeSlice("extras",             setExtras,            hydrated);
+  useRealtimeSlice("tax_patterns",       setTaxPatterns,       hydrated);
+  useRealtimeSlice("gift_cards",         setGiftCards,         hydrated);
+  useRealtimeSlice("gift_card_tiers",    setGiftCardTiers,     hydrated);
+
+  // Reservations & billing
+  useRealtimeSlice("bookings",           setBookings,          hydrated);
+  useRealtimeSlice("invoices",           setInvoices,          hydrated);
+  useRealtimeSlice("payments",           setPayments,          hydrated);
+
+  // Operations & comms
+  useRealtimeSlice("maintenance_jobs",   setMaintenanceJobs,   hydrated);
+  useRealtimeSlice("maintenance_vendors",setMaintenanceVendors,hydrated);
+  useRealtimeSlice("channels",           setChannels,          hydrated);
+  useRealtimeSlice("email_templates",    setEmailTemplates,    hydrated);
+  useRealtimeSlice("report_schedules",   setReportSchedules,   hydrated);
+  useRealtimeSlice("rfps",               setRfps,              hydrated);
+  useRealtimeSlice("activities",         setActivities,        hydrated);
+  useRealtimeSlice("notifications",      setNotifications,     hydrated);
+  useRealtimeSlice("messages",           setMessages,          hydrated);
+  // Gallery is nested inside the `site_content` singleton in this codebase,
+  // so it propagates through the singleton channel below — no separate
+  // `gallery` entity-table subscription needed.
+
+  // Singletons — one channel per key. Filtered server-side so a
+  // hotel_info change doesn't wake up the `tiers` or `tax` subscribers.
+  useRealtimeSingleton("hotel_info",         setHotelInfo,         hydrated);
+  useRealtimeSingleton("tiers",              setTiers,             hydrated);
+  useRealtimeSingleton("tax",                setTax,               hydrated);
+  useRealtimeSingleton("active_tax_pattern", (v) => setActivePatternId(v?.id || v), hydrated);
+  useRealtimeSingleton("loyalty",            setLoyalty,           hydrated);
+  useRealtimeSingleton("event_supplements",  (v) => setEventSupplements(Array.isArray(v) ? v : []), hydrated);
+  useRealtimeSingleton("smtp_config",        setSmtpConfig,        hydrated);
+  useRealtimeSingleton("site_content",       setSiteContent,       hydrated);
   useSlicePersistence("testing_plan_assignments", testingPlanAssignments, hydrated);
   useSlicePersistence("audit_logs",          auditLogs,          hydrated);
   useSlicePersistence("prospects",           prospects,          hydrated);
@@ -4450,7 +4802,11 @@ export function DataProvider({ children }) {
   useSlicePersistence("room_units",          roomUnits,          hydrated);
   useSlicePersistence("notifications",       notifications,      hydrated);
   useSlicePersistence("messages",            messages,           hydrated);
-  useSlicePersistence("calendar_overrides",  calendar,           hydrated);
+  // Object-map persistence — only the diff (added / changed / removed
+  // keys) is pushed. A single cell edit costs one upsert, not a full
+  // table replace, and stale rows are deleted by id when the operator
+  // clears an override.
+  useObjectSlicePersistence("calendar_overrides",  calendar,     hydrated);
   useSlicePersistence("tax_patterns",        taxPatterns,        hydrated);
   // Singletons
   useSingletonPersistence("hotel_info",         hotelInfo,         hydrated);
@@ -5143,6 +5499,87 @@ export function DataProvider({ children }) {
     }));
   }, []);
 
+  // ─── Member → guest transfer ─────────────────────────────────────────
+  //
+  // A member who's holding an issued gift card can transfer (= hand off)
+  // its remaining nights to a non-member guest by name + email + mobile.
+  // The card stays on the original member's profile as the original copy
+  // — the member retains it for re-verification — but the active
+  // bearer becomes the guest. The guest can redeem at check-in / by
+  // email / on WhatsApp; the front desk verifies the guest's contact
+  // details against what's printed on the card.
+  //
+  // Implementation:
+  //   • Patch the card with `transferredTo: { name, email, phone }`
+  //     and an isoFormat `transferredAt` timestamp.
+  //   • Carry a `transferHistory[]` so multiple hand-offs (e.g. guest
+  //     reassignment before redemption) are auditable. The most recent
+  //     entry is the live bearer.
+  //   • Set `verifiedBy` to null — admin must explicitly mark the guest
+  //     verified at redemption (front desk checks ID against the card).
+  //   • Push a notification + audit log so admin visibility is automatic.
+  //
+  // The signature accepts the member who initiated the transfer as
+  // `transferredBy` so the audit trail can attribute the action even
+  // when the call originates from an impersonation context.
+  const transferGiftCard = useCallback(({ id, guest, transferredBy }) => {
+    if (!id || !guest) return null;
+    const name  = (guest.name  || "").trim();
+    const email = (guest.email || "").trim();
+    const phone = (guest.phone || "").trim();
+    if (!name || !email || !phone) {
+      // eslint-disable-next-line no-console
+      console.warn("[gift-card] transferGiftCard rejected — name, email, and phone are all required.");
+      return null;
+    }
+    const now = new Date().toISOString();
+    let savedCard = null;
+    setGiftCards((prev) => prev.map((c) => {
+      if (c.id !== id) return c;
+      const entry = {
+        name, email, phone,
+        transferredAt: now,
+        transferredBy: transferredBy
+          ? { id: transferredBy.id, name: transferredBy.name, email: transferredBy.email }
+          : null,
+        verifiedBy: null,   // staff marks this once they sight ID at check-in
+        verifiedAt: null,
+      };
+      const updated = {
+        ...c,
+        transferredTo: { name, email, phone, transferredAt: now },
+        transferHistory: [...(c.transferHistory || []), entry],
+      };
+      savedCard = updated;
+      return updated;
+    }));
+    return savedCard;
+  }, []);
+
+  // Admin-side verification at redemption. Stamps the latest
+  // transferHistory entry with verifiedBy / verifiedAt so the audit
+  // trail shows who at the front desk vouched for the guest's ID.
+  const verifyGiftCardTransfer = useCallback(({ id, verifiedBy }) => {
+    if (!id || !verifiedBy) return null;
+    const now = new Date().toISOString();
+    let savedCard = null;
+    setGiftCards((prev) => prev.map((c) => {
+      if (c.id !== id) return c;
+      const history = Array.isArray(c.transferHistory) ? c.transferHistory : [];
+      if (history.length === 0) return c;
+      const lastIdx = history.length - 1;
+      const updated = {
+        ...c,
+        transferHistory: history.map((h, i) => i === lastIdx
+          ? { ...h, verifiedAt: now, verifiedBy: { id: verifiedBy.id, name: verifiedBy.name } }
+          : h),
+      };
+      savedCard = updated;
+      return updated;
+    }));
+    return savedCard;
+  }, []);
+
   // Tax patterns — apply, save current, remove (custom only).
   const applyTaxPattern = useCallback((id) => setTaxPatterns(ps => {
     const pattern = ps.find(p => p.id === id);
@@ -5398,6 +5835,7 @@ export function DataProvider({ children }) {
     setMembers, addMember, updateMember, removeMember,
     // Gift cards — advance-purchase night packs
     giftCards, setGiftCards, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard,
+    transferGiftCard, verifyGiftCardTransfer,
     // Gift card tier master — admin-editable list of the preset bundles
     giftCardTiers, setGiftCardTiers, updateGiftCardTiers, resetGiftCardTiers,
     extras, activeExtras: extras.filter(e => e.active !== false), setExtras, upsertExtra, removeExtra, toggleExtra,

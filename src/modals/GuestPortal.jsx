@@ -2,11 +2,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle, ArrowRight, BedDouble, Briefcase, Building2, Calendar,
   CalendarDays, CheckCircle2, ChevronLeft, ClipboardList, Coins, Copy, CreditCard,
-  Crown, Download, Edit2, ExternalLink, Eye, EyeOff, FileBadge, FileText,
+  Crown, Download, Edit2, ExternalLink, Eye, EyeOff, FileBadge, FileText, Gift,
   Image as ImageIcon, KeyRound, Link as LinkIcon, Lock, LogIn, LogOut, Mail,
   MessageCircle, Minus, Paperclip, Phone, Plus, Printer,
   Receipt as ReceiptIcon, Save, Send, Share2, Shield, Sparkles, Star, Trash2,
-  User, UserCircle2, Users, Wallet, X, Zap,
+  User, UserCircle2, UserPlus, Users, Wallet, X, Zap,
 } from "lucide-react";
 import {
   buildPkpassBlob, buildMembershipCardPng, buildShareText,
@@ -18,6 +18,7 @@ import { ensurePlanList, resolveDefaultPlan } from "./portal/ContractEditor.jsx"
 import { Icon as ExtraIcon } from "../components/Icon.jsx";
 import { PortalThemeProvider, ThemeToggle, usePalette } from "./portal/theme.jsx";
 import { ToastHost, pushToast } from "./portal/admin/ui.jsx";
+import { GiftCardDocPreviewModal } from "./portal/admin/GiftCardDocs.jsx";
 import { NotificationBell } from "../components/NotificationBell.jsx";
 import { MessageThread } from "../components/MessageThread.jsx";
 
@@ -1055,7 +1056,7 @@ function CustomerMessagesTab({ kind, account, session, bookings }) {
 function MemberPortal({ session, setSession, pendingNav, consumePendingNav }) {
   const p = usePalette();
   const data = useData();
-  const { members, tiers, loyalty, bookings, invoices, payments, updateMember } = data;
+  const { members, tiers, loyalty, bookings, invoices, payments, updateMember, giftCards, transferGiftCard } = data;
   const member = members.find((m) => m.id === session.accountId);
   const [tab, setTab] = useState("dashboard");
   const [selectedBookingId, setSelectedBookingId] = useState(null);
@@ -1088,19 +1089,46 @@ function MemberPortal({ session, setSession, pendingNav, consumePendingNav }) {
     );
   }, [bookings, member.id, member.email, member.name]);
   const myBookingIds = new Set(myBookings.map((b) => b.id));
+  // Gift cards this member BOUGHT (their senderMemberId). The matching
+  // invoice + payment records carry the gift-card payment, which belongs
+  // in their Receipts tab so they can print the accounting record for
+  // the card purchase. Cards they only RECEIVED (recipientMemberId) are
+  // listed under Gift cards but the payment belonged to the buyer.
+  const myGiftCardIds = useMemo(
+    () => new Set((giftCards || [])
+      .filter((c) => c.senderMemberId === member?.id)
+      .map((c) => c.id)),
+    [giftCards, member?.id]
+  );
   const myInvoices = useMemo(
-    () => invoices.filter((i) => myBookingIds.has(i.bookingId)),
-    [invoices, myBookings] // eslint-disable-line react-hooks/exhaustive-deps
+    () => invoices.filter((i) =>
+      myBookingIds.has(i.bookingId)
+      || (i.giftCardId && myGiftCardIds.has(i.giftCardId))
+    ),
+    [invoices, myBookings, myGiftCardIds] // eslint-disable-line react-hooks/exhaustive-deps
   );
   const myPayments = useMemo(
-    () => payments.filter((pay) => myBookingIds.has(pay.bookingId)),
-    [payments, myBookings] // eslint-disable-line react-hooks/exhaustive-deps
+    () => payments.filter((pay) =>
+      myBookingIds.has(pay.bookingId)
+      || (pay.giftCardId && myGiftCardIds.has(pay.giftCardId))
+    ),
+    [payments, myBookings, myGiftCardIds] // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
+  // Gift cards held by this member. Cards where they are the
+  // recipientMemberId (someone bought them as a gift) belong to them and
+  // can be shared with a non-member guest. Cards where they are the
+  // sender are read-only context (purchased gifts they sent to others).
+  const myGiftCards = useMemo(
+    () => (giftCards || []).filter((c) => c.recipientMemberId === member?.id),
+    [giftCards, member?.id]
   );
 
   const tabs = [
     { id: "dashboard", label: "Dashboard", icon: Sparkles },
     { id: "book",      label: "Book stay", icon: CalendarDays },
     { id: "bookings",  label: "Bookings",  icon: BedDouble },
+    { id: "gift-cards",label: "Gift cards",icon: Gift },
     { id: "invoices",  label: "Folios",    icon: FileText },
     { id: "receipts",  label: "Receipts",  icon: ReceiptIcon },
     { id: "statement", label: "Statement", icon: Wallet },
@@ -1134,6 +1162,13 @@ function MemberPortal({ session, setSession, pendingNav, consumePendingNav }) {
         ) : (
           <BookingsList bookings={myBookings} kindLabel="guest" onSelect={(b) => setSelectedBookingId(b.id)} />
         )
+      )}
+      {tab === "gift-cards" && (
+        <MemberGiftCardsTab
+          member={member}
+          cards={myGiftCards}
+          transferGiftCard={transferGiftCard}
+        />
       )}
       {tab === "invoices"  && <InvoicesList invoices={myInvoices} bookings={myBookings} />}
       {tab === "receipts"  && <ReceiptsList payments={myPayments} bookings={myBookings} />}
@@ -2294,6 +2329,430 @@ function AgentProfileTab({ session, agency, upsertAgency, setSession }) {
     </div>
   );
 }
+
+// ============================================================================
+// MemberGiftCardsTab — list a member's gift cards (received as recipient) and
+// let them hand one off to a non-member guest.
+//
+// Each card row shows:
+//   • Code + suite type + remaining nights
+//   • Sender + purchase date + validity
+//   • Either a "Share with guest" button (if issued and has remaining nights
+//     AND not yet transferred) or the transferred-to block (guest name +
+//     contact) once handed off.
+//
+// The share modal collects the guest's name, email, and mobile — all three
+// are mandatory because they're what the front desk verifies at check-in.
+// On save, transferGiftCard stamps the card with `transferredTo` + appends
+// a `transferHistory` entry, and the row flips into the "Transferred"
+// display state. The original member retains a copy here for re-verification
+// (this view always shows the active transfer + previous transfers).
+//
+// Redemption mechanics (handled on the admin side) are summarised in the
+// help panel at the top so the member knows what their guest needs to do:
+// present the certificate by email, on WhatsApp, or at check-in. The
+// front desk verifies the guest matches the contact details on file.
+// ============================================================================
+function MemberGiftCardsTab({ member, cards, transferGiftCard }) {
+  const p = usePalette();
+  const [sharingFor, setSharingFor] = useState(null); // card object | null
+  const [previewing, setPreviewing] = useState(null); // card object | null
+
+  const issued = (cards || []).filter((c) => c.status === "issued");
+  const redeemed = (cards || []).filter((c) => c.status === "redeemed");
+  const transferred = issued.filter((c) => c.transferredTo);
+  const sharable    = issued.filter((c) => !c.transferredTo);
+
+  return (
+    <div>
+      {/* Help panel — explains how the share + redeem flow works */}
+      <div className="p-4 mb-6" style={{
+        backgroundColor: `${p.accent}10`,
+        border: `1px solid ${p.accent}55`,
+        borderInlineStart: `4px solid ${p.accent}`,
+      }}>
+        <div style={{ color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
+          How sharing works
+        </div>
+        <p style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem", lineHeight: 1.55, margin: 0 }}>
+          Hand a gift card off to anyone — they don't have to be an LS Privilege member. We'll print their name, email and mobile on the certificate, and the front desk will verify those details at check-in (or when they redeem by email / WhatsApp). You'll keep a copy here for your own records, plus the admin team holds the master copy for verification.
+        </p>
+      </div>
+
+      {/* Sharable cards */}
+      <Card title={`Available to share · ${sharable.length}`} action={
+        <span style={{ color: p.textMuted, fontSize: "0.72rem" }}>
+          Members can transfer issued cards to a non-member guest
+        </span>
+      }>
+        {sharable.length === 0 ? (
+          <div className="p-5 text-center" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}>
+            No issued gift cards on this account yet. When someone purchases one for you, it'll appear here.
+          </div>
+        ) : (
+          <div className="divide-y" style={{ borderColor: p.border }}>
+            {sharable.map((c) => (
+              <GiftCardRow
+                key={c.id}
+                card={c}
+                onShare={() => setSharingFor(c)}
+                onPreview={() => setPreviewing(c)}
+                p={p}
+              />
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* Already transferred — kept for re-verification */}
+      {transferred.length > 0 && (
+        <div className="mt-7">
+          <Card title={`Transferred · ${transferred.length}`} action={
+            <span style={{ color: p.textMuted, fontSize: "0.72rem" }}>
+              Keep these visible for guest re-verification at check-in
+            </span>
+          }>
+            <div className="divide-y" style={{ borderColor: p.border }}>
+              {transferred.map((c) => (
+                <GiftCardRow
+                  key={c.id}
+                  card={c}
+                  onPreview={() => setPreviewing(c)}
+                  p={p}
+                />
+              ))}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Fully redeemed — historic record */}
+      {redeemed.length > 0 && (
+        <div className="mt-7">
+          <Card title={`Fully redeemed · ${redeemed.length}`}>
+            <div className="divide-y" style={{ borderColor: p.border }}>
+              {redeemed.map((c) => (
+                <GiftCardRow
+                  key={c.id}
+                  card={c}
+                  onPreview={() => setPreviewing(c)}
+                  p={p}
+                />
+              ))}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {sharingFor && (
+        <ShareGiftCardModal
+          card={sharingFor}
+          member={member}
+          onClose={() => setSharingFor(null)}
+          onSave={(guest) => {
+            const saved = transferGiftCard({
+              id: sharingFor.id,
+              guest,
+              transferredBy: { id: member.id, name: member.name, email: member.email },
+            });
+            setSharingFor(null);
+            if (saved) {
+              pushToast({ message: `Shared with ${guest.name} — they can redeem at check-in.` });
+              // Open preview so member can immediately share / print the
+              // updated certificate carrying the guest's details.
+              setPreviewing(saved);
+            } else {
+              pushToast({ message: "Please fill in name, email and mobile.", kind: "warn" });
+            }
+          }}
+          p={p}
+        />
+      )}
+
+      {previewing && (
+        <GiftCardCertificateModal card={previewing} onClose={() => setPreviewing(null)} p={p} />
+      )}
+    </div>
+  );
+}
+
+// One row in the member's gift-card list. Reused for all three groupings
+// (sharable, transferred, redeemed) — the variant flips on the card's
+// status and `transferredTo` field.
+function GiftCardRow({ card, onShare, onPreview, p }) {
+  const remaining = (card.totalNights || 0) - (card.nightsUsed || 0);
+  const transferred = !!card.transferredTo;
+  const fullyRedeemed = card.status === "redeemed";
+  return (
+    <div className="px-5 py-4 flex items-start justify-between gap-4 flex-wrap">
+      <div className="min-w-0 flex-1">
+        {/* Code + suite */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <span style={{
+            fontFamily: "ui-monospace, Menlo, monospace",
+            fontSize: "0.86rem", fontWeight: 700,
+            color: p.textPrimary, letterSpacing: "0.04em",
+          }}>
+            {card.code}
+          </span>
+          <span style={{
+            padding: "2px 7px",
+            backgroundColor: `${p.accent}1A`,
+            border: `1px solid ${p.accent}55`,
+            color: p.accent,
+            fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem",
+            letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+          }}>
+            {card.totalNights} nights
+          </span>
+          {!fullyRedeemed && (
+            <span style={{
+              padding: "2px 7px",
+              backgroundColor: remaining === card.totalNights ? "transparent" : `${p.success}10`,
+              border: `1px solid ${p.success}55`,
+              color: p.success,
+              fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem",
+              letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+            }}>
+              {remaining}/{card.totalNights} remaining
+            </span>
+          )}
+          {fullyRedeemed && (
+            <span style={{
+              padding: "2px 7px",
+              backgroundColor: `${p.textMuted}10`,
+              border: `1px solid ${p.textMuted}55`,
+              color: p.textMuted,
+              fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem",
+              letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+            }}>
+              Redeemed
+            </span>
+          )}
+        </div>
+
+        {/* Suite + sender */}
+        <div className="mt-1" style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem" }}>
+          For the <strong style={{ color: p.textPrimary }}>{ROOM_LABEL_FULL[card.roomId] || card.roomId}</strong> · valid until {fmtDate(card.validUntil)}
+        </div>
+        <div className="mt-0.5" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.76rem" }}>
+          From <strong style={{ color: p.textSecondary }}>{card.senderName}</strong>
+          {card.message && <> · "<em>{card.message}</em>"</>}
+        </div>
+
+        {/* Transferred-to block */}
+        {transferred && (
+          <div className="mt-3 p-3" style={{
+            backgroundColor: `${p.accent}08`,
+            border: `1px solid ${p.accent}33`,
+            borderInlineStart: `3px solid ${p.accent}`,
+          }}>
+            <div style={{ color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>
+              Transferred to guest
+            </div>
+            <div style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem", fontWeight: 600 }}>
+              {card.transferredTo.name}
+            </div>
+            <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 2 }}>
+              <Mail size={11} style={{ display: "inline", verticalAlign: "middle", marginInlineEnd: 5 }} />{card.transferredTo.email}
+              {" · "}
+              <Phone size={11} style={{ display: "inline", verticalAlign: "middle", marginInlineEnd: 5, marginInlineStart: 5 }} />{card.transferredTo.phone}
+            </div>
+            <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", marginTop: 4 }}>
+              Shared on {fmtDate(card.transferredTo.transferredAt)} · admin will verify these details at redemption
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center gap-2 flex-shrink-0">
+        <button
+          onClick={onPreview}
+          className="inline-flex items-center gap-1.5"
+          style={{
+            color: p.textSecondary,
+            fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+            letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+            padding: "0.45rem 0.85rem",
+            border: `1px solid ${p.border}`,
+            backgroundColor: "transparent",
+            cursor: "pointer",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = p.accent; e.currentTarget.style.borderColor = p.accent; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = p.textSecondary; e.currentTarget.style.borderColor = p.border; }}
+        >
+          <Printer size={11} /> View certificate
+        </button>
+        {onShare && !transferred && !fullyRedeemed && (
+          <button
+            onClick={onShare}
+            className="inline-flex items-center gap-1.5"
+            style={{
+              backgroundColor: p.accent,
+              color: p.theme === "light" ? "#FFFFFF" : "#15161A",
+              fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+              letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+              padding: "0.45rem 0.95rem",
+              border: `1px solid ${p.accent}`,
+              cursor: "pointer",
+            }}
+          >
+            <UserPlus size={11} /> Share with guest
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Modal to capture guest name + email + mobile when transferring a card.
+function ShareGiftCardModal({ card, member, onClose, onSave, p }) {
+  const [name,  setName]  = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [touched, setTouched] = useState(false);
+
+  // Trim + validate as the operator types; flag empties only after first
+  // submit attempt so the form doesn't shout from the get-go.
+  const errors = {
+    name:  !name.trim()  ? "Required" : "",
+    email: !email.trim() ? "Required" : !/\S+@\S+\.\S+/.test(email.trim()) ? "Looks like an invalid email" : "",
+    phone: !phone.trim() ? "Required" : phone.trim().length < 4 ? "Mobile number too short" : "",
+  };
+  const valid = !errors.name && !errors.email && !errors.phone;
+  const submit = () => {
+    setTouched(true);
+    if (!valid) return;
+    onSave({ name: name.trim(), email: email.trim(), phone: phone.trim() });
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center px-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        backgroundColor: p.bgPanel,
+        border: `1px solid ${p.border}`,
+        maxWidth: 520, width: "100%",
+        boxShadow: "0 18px 40px rgba(0,0,0,0.22)",
+      }}>
+        <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: `1px solid ${p.border}` }}>
+          <div>
+            <div style={{ color: p.accent, fontSize: "0.6rem", letterSpacing: "0.28em", textTransform: "uppercase", fontWeight: 700, fontFamily: "'Manrope', sans-serif" }}>
+              Share gift card
+            </div>
+            <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", fontStyle: "italic", color: p.textPrimary }}>
+              {card.code}
+            </div>
+          </div>
+          <button onClick={onClose} aria-label="Close" style={{ color: p.textMuted, padding: 4 }}><X size={18} /></button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          <p style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem", lineHeight: 1.55, margin: 0 }}>
+            Enter the guest's details. We'll print all three on the certificate so the front desk can verify them at check-in (or when the guest redeems by email or WhatsApp). The card stays linked to <strong style={{ color: p.textPrimary }}>{member.name}</strong> for your records.
+          </p>
+
+          <GuestShareField label="Guest name" error={touched && errors.name}>
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Ahmed Al-Khalifa"
+              autoFocus
+              style={{
+                width: "100%", boxSizing: "border-box",
+                backgroundColor: p.inputBg, color: p.textPrimary,
+                border: `1px solid ${touched && errors.name ? p.danger : p.border}`,
+                padding: "0.55rem 0.7rem",
+                fontFamily: "'Manrope', sans-serif", fontSize: "0.92rem",
+              }}
+            />
+          </GuestShareField>
+          <GuestShareField label="Guest email" error={touched && errors.email}>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="guest@example.com"
+              style={{
+                width: "100%", boxSizing: "border-box",
+                backgroundColor: p.inputBg, color: p.textPrimary,
+                border: `1px solid ${touched && errors.email ? p.danger : p.border}`,
+                padding: "0.55rem 0.7rem",
+                fontFamily: "'Manrope', sans-serif", fontSize: "0.92rem",
+              }}
+            />
+          </GuestShareField>
+          <GuestShareField label="Guest mobile" error={touched && errors.phone}>
+            <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+973 3300 0000"
+              style={{
+                width: "100%", boxSizing: "border-box",
+                backgroundColor: p.inputBg, color: p.textPrimary,
+                border: `1px solid ${touched && errors.phone ? p.danger : p.border}`,
+                padding: "0.55rem 0.7rem",
+                fontFamily: "'Manrope', sans-serif", fontSize: "0.92rem",
+              }}
+            />
+          </GuestShareField>
+        </div>
+
+        <div className="px-6 py-4 flex items-center justify-end gap-3" style={{ borderTop: `1px solid ${p.border}` }}>
+          <button onClick={onClose} style={{
+            color: p.textMuted,
+            padding: "0.5rem 0.95rem",
+            border: `1px solid ${p.border}`,
+            backgroundColor: "transparent",
+            fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem",
+            letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+            cursor: "pointer",
+          }}>Cancel</button>
+          <button onClick={submit} disabled={touched && !valid} style={{
+            backgroundColor: p.accent,
+            color: p.theme === "light" ? "#FFFFFF" : "#15161A",
+            padding: "0.5rem 0.95rem",
+            border: `1px solid ${p.accent}`,
+            fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem",
+            letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+            cursor: (touched && !valid) ? "not-allowed" : "pointer",
+            opacity: (touched && !valid) ? 0.6 : 1,
+            display: "inline-flex", alignItems: "center", gap: 8,
+          }}>
+            <UserPlus size={12} /> Share with guest
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GuestShareField({ label, error, children }) {
+  const p = usePalette();
+  return (
+    <label className="block">
+      <div className="flex items-center justify-between" style={{ marginBottom: 4 }}>
+        <span style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, fontFamily: "'Manrope', sans-serif" }}>{label}</span>
+        {error && <span style={{ color: p.danger, fontSize: "0.7rem", fontFamily: "'Manrope', sans-serif" }}>{error}</span>}
+      </div>
+      {children}
+    </label>
+  );
+}
+
+// Modal that shows the printable gift card certificate, including the
+// transferred-to block when the card has been shared. Reuses
+// GiftCardDocPreviewModal so the print/email/download helpers stay a
+// single source of truth.
+function GiftCardCertificateModal({ card, onClose }) {
+  // kind="certificate" renders the gift-focused document — nights × suite
+  // type, sender + message, bearer block, redemption instructions. No
+  // line items or payment figures. Members get the accounting receipt
+  // via the Receipts tab; the certificate is what they share with their
+  // guest.
+  return <GiftCardDocPreviewModal card={card} kind="certificate" onClose={onClose} />;
+}
+
+// Small room-label map duplicated locally so the file doesn't have to
+// reach into admin internals. Keep it in lockstep with the admin copy.
+const ROOM_LABEL_FULL = {
+  studio:      "Lodge Studio",
+  "one-bed":   "One-Bedroom Suite",
+  "two-bed":   "Two-Bedroom Suite",
+  "three-bed": "Three-Bedroom Suite",
+};
+
+// (Note: `fmtDate` is defined earlier in this file — reuse it directly.)
 
 function MemberProfileTab({ session, member, updateMember, setSession }) {
   const p = usePalette();

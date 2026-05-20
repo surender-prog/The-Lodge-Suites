@@ -1,9 +1,10 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, AlertCircle, BadgeCheck, BookOpen, Briefcase, Calendar as CalendarIcon, CalendarClock, ChevronDown, Clock,
   CreditCard, FileText, Gift, Globe, Hotel, LineChart, Mail, MessageCircle, Plus, Receipt, Server, Settings as SettingsIcon, ShieldCheck, Tag, Wifi, Wrench,
 } from "lucide-react";
 import { usePalette } from "../theme.jsx";
+import { useData, hasPermission, ADMIN_SECTION_PERMISSION } from "../../../data/store.jsx";
 import { CalendarView }      from "./sections/CalendarView.jsx";
 import { RoomsRates }        from "./sections/RoomsRates.jsx";
 import { Offers }            from "./sections/Offers.jsx";
@@ -89,10 +90,59 @@ const SECTIONS = {
 
 export const AdminLayout = ({ section: controlledSection, onSectionChange, params, clearParams, onNavigate }) => {
   const p = usePalette();
+  const { staffSession } = useData();
   const [internalSection, setInternalSection] = useState("calendar");
   const section = controlledSection ?? internalSection;
   const setSection = onSectionChange ?? setInternalSection;
-  const Active = SECTIONS[section] || CalendarView;
+
+  // Permission-filtered nav. Each top-level item is hidden when the
+  // current operator lacks the gating permission; each group is hidden
+  // when ALL of its children are hidden (otherwise we'd render an empty
+  // dropdown that opens to nothing). Re-derived every render so role
+  // changes mid-session (rare but possible via realtime) snap straight
+  // through without a refresh.
+  const visibleNav = useMemo(() => {
+    const isAllowed = (id) => hasPermission(staffSession, ADMIN_SECTION_PERMISSION[id]);
+    return NAV
+      .map((item) => {
+        if (item.type === "group") {
+          const items = item.items.filter((child) => isAllowed(child.id));
+          return items.length > 0 ? { ...item, items } : null;
+        }
+        return isAllowed(item.id) ? item : null;
+      })
+      .filter(Boolean);
+  }, [staffSession]);
+
+  // Pick the section to actually render. If the operator is trying to
+  // open something they don't have permission for (deep-link, stale
+  // saved state, role downgrade mid-session), snap to the first allowed
+  // section instead and update the parent's controlled state. Falls
+  // back to the calendar — every role currently has the calendar
+  // permission.
+  const allowedIds = useMemo(() => {
+    const ids = [];
+    visibleNav.forEach((item) => {
+      if (item.type === "group") item.items.forEach((c) => ids.push(c.id));
+      else ids.push(item.id);
+    });
+    return new Set(ids);
+  }, [visibleNav]);
+
+  const effectiveSection = allowedIds.has(section)
+    ? section
+    : (visibleNav.find((i) => i.type !== "group")?.id
+       || visibleNav.find((i) => i.type === "group")?.items?.[0]?.id
+       || "calendar");
+
+  useEffect(() => {
+    if (effectiveSection !== section) {
+      setSection(effectiveSection);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveSection]);
+
+  const Active = SECTIONS[effectiveSection] || CalendarView;
 
   return (
     <div>
@@ -104,19 +154,19 @@ export const AdminLayout = ({ section: controlledSection, onSectionChange, param
         }}
       >
         <div className="flex px-6 md:px-10">
-          {NAV.map((item) => {
+          {visibleNav.map((item) => {
             if (item.type === "group") {
               return (
                 <NavGroup
                   key={item.id}
                   group={item}
-                  current={section}
+                  current={effectiveSection}
                   onSelect={setSection}
                 />
               );
             }
             const Ic = item.icon;
-            const active = section === item.id;
+            const active = effectiveSection === item.id;
             const accentColor = item.danger ? p.danger : p.accent;
             const idleColor   = item.danger ? p.danger : p.textSecondary;
             return (

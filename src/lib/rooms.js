@@ -44,6 +44,11 @@ export function dbRoomToClient(row) {
     // for the canonical shape. Falls back to the seeded defaults so
     // legacy rows (pre-migration 009) render with sensible values.
     mealPlans:          row.meal_plans || seed?.mealPlans || null,
+    // Optional master cap on bookable units for this type. When null the
+    // calendar / booking engine falls back to the active room_units count.
+    // Useful when the hotel wants to hold inventory back (corporate-only,
+    // owner blocks, walk-in stock) without removing physical rooms.
+    sellLimit:          row.sell_limit != null ? Number(row.sell_limit) : null,
     isActive:           row.is_active !== false,
     displayOrder:       row.display_order || 0,
   };
@@ -65,6 +70,12 @@ export function clientPatchToDb(patch) {
   if (patch.extraBedFee        !== undefined) out.extra_bed_fee        = patch.extraBedFee;
   if (patch.extraBedAdds       !== undefined) out.extra_bed_adds       = patch.extraBedAdds;
   if (patch.mealPlans          !== undefined) out.meal_plans           = patch.mealPlans;
+  if (patch.sellLimit          !== undefined) {
+    // null = "no override, fall back to active unit count". Stored
+    // exactly that way in DB so the constraint check stays readable.
+    const v = patch.sellLimit;
+    out.sell_limit = (v === null || v === "" || Number.isNaN(Number(v))) ? null : Number(v);
+  }
   if (patch.isActive           !== undefined) out.is_active            = patch.isActive;
   if (patch.displayOrder       !== undefined) out.display_order        = patch.displayOrder;
   return out;
