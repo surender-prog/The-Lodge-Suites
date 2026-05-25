@@ -10,6 +10,7 @@ import { useData, describePackageConditions, packagePriceSuffix, PACKAGE_PRICING
 import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 import { IMG } from "../../../../data/images.js";
 import { C } from "../../../../data/tokens.js";
+import { roomLabel as resolveRoomLabel } from "../../../../lib/rooms.js";
 
 // Editable defaults — note these are stored alongside the package, separate
 // from the i18n strings so admin can override on the fly.
@@ -310,7 +311,7 @@ function OfferEditor({ draft, mode, updateDraft, updateInclusion, addInclusion, 
     next[roomId] = { ...(next[roomId] || { price: 0, saving: 0 }), ...patch };
     updateDraft({ roomPricing: next });
   };
-  const roomLabel = (id) => t(`rooms.${id}.name`) || id;
+  const roomLabel = (id) => resolveRoomLabel(rooms.find((r) => r.id === id) || id, t);
   const conditionsLine = describePackageConditions(draft, roomLabel) || "No constraints — bookable against any suite, any nights, any dates.";
 
   // Resolve the rows the per-room price matrix should render. When the
@@ -858,7 +859,7 @@ function OfferCardPreview({ draft, t, p }) {
   const Icn = ICON_OPTIONS.find((o) => o.value === draft.icon)?.Cmp || Sparkles;
   const headline = getPackageMinPrice(draft);
   const total = headline.price + headline.saving;
-  const conditions = describePackageConditions(draft, (id) => t(`rooms.${id}.name`) || id);
+  const conditions = describePackageConditions(draft, (id) => resolveRoomLabel(id, t));
 
   return (
     <div

@@ -8,6 +8,7 @@ import { MealPlanSupplementMatrix, ensurePlanList, resolveDefaultPlan } from "..
 import { Icon } from "../../../../components/Icon.jsx";
 import { Card, Drawer, FileUpload, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 import { WalletCardDrawer } from "./WalletCard.jsx";
+import { roomLabel } from "../../../../lib/rooms.js";
 
 const TIER_ICON = { silver: Award, gold: Crown, platinum: Gem };
 const COUNTRIES = ["Bahrain", "Saudi Arabia", "UAE", "Kuwait", "Qatar", "Oman", "United Kingdom", "United States", "India", "Japan", "Italy", "Other"];
@@ -1288,7 +1289,7 @@ function BookOnBehalfDrawer({ member, onClose }) {
             <div className="space-y-4">
               <FormGroup label="Suite">
                 <SelectField value={draft.roomId} onChange={(v) => setDraft({ ...draft, roomId: v })}
-                  options={rooms.map(r => ({ value: r.id, label: `${t(`rooms.${r.id}.name`)} · ${t("common.bhd")} ${r.price}/night` }))} />
+                  options={rooms.map(r => ({ value: r.id, label: `${roomLabel(r, t)} · ${t("common.bhd")} ${r.price}/night` }))} />
               </FormGroup>
               <div className="grid grid-cols-2 gap-4">
                 <FormGroup label="Check-in"><TextField type="date" value={draft.checkIn} onChange={(v) => setDraft({ ...draft, checkIn: v })} /></FormGroup>
@@ -1736,7 +1737,7 @@ function MemberProfileDrawer({ member, onClose, onEdit, onBook, onWallet }) {
                     </Td>
                     <Td>
                       <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1rem", color: p.textPrimary }}>
-                        {room ? t(`rooms.${room.id}.name`) : b.roomId}
+                        {room ? roomLabel(room, t) : b.roomId}
                       </div>
                     </Td>
                     <Td muted>{fmtDate(b.checkIn)} → {fmtDate(b.checkOut)}</Td>

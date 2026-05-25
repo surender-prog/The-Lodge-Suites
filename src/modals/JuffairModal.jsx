@@ -57,6 +57,8 @@ export const JuffairModal = ({ open, onClose }) => {
   const emailDisplay = hotelInfo?.email || "frontoffice@thelodgesuites.com";
   const emailHref    = `mailto:${emailDisplay}`;
   const mapName      = hotelInfo?.name  || "The Lodge Suites";
+  // Google Maps share link — see DEFAULT_HOTEL_INFO.mapsUrl in store.jsx.
+  const mapsUrl      = hotelInfo?.mapsUrl || "https://maps.app.goo.gl/N7dGa9Zqt1Rd9Apm8";
   // Address shown as a two-line stylized heading: line 1 is the street
   // address, line 2 the area/district. Best-effort mapping — the Property
   // Info admin doesn't formally split these for display, so we use the
@@ -245,7 +247,7 @@ export const JuffairModal = ({ open, onClose }) => {
                 <a href={emailHref} style={{ color: C.cream }}>{emailDisplay}</a>
               </div>
             </div>
-            <a href="https://maps.google.com/?q=The+Lodge+Suites+Juffair+Bahrain"
+            <a href={mapsUrl}
               target="_blank" rel="noopener noreferrer"
               className="mt-6 inline-flex items-center gap-2"
               style={{ color: C.gold, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}

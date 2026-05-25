@@ -5,6 +5,7 @@ import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate, inDays } from "../../../../utils/date.js";
 import { applyTaxes, inverseApplyTaxes, useData, formatCurrency } from "../../../../data/store.jsx";
 import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
+import { roomLabel } from "../../../../lib/rooms.js";
 
 const STATUS_LABEL = { paid: "Paid", issued: "Issued", overdue: "Overdue", void: "Void" };
 
@@ -427,7 +428,7 @@ function InvoiceGenerator({ preset, onClose, unbilled }) {
                         <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.02rem", color: p.textPrimary }}>{b.guest}</div>
                         <div style={{ color: p.textMuted, fontSize: "0.7rem" }}>{b.email}</div>
                       </td>
-                      <td className="px-3 py-3" style={{ color: p.textMuted }}>{t(`rooms.${b.roomId}.name`)}</td>
+                      <td className="px-3 py-3" style={{ color: p.textMuted }}>{roomLabel(rooms.find((r) => r.id === b.roomId) || b.roomId, t)}</td>
                       <td className="px-3 py-3" style={{ color: p.textMuted, whiteSpace: "nowrap" }}>{fmtDate(b.checkIn, lang)} → {fmtDate(b.checkOut, lang)}</td>
                       <td className="px-3 py-3 text-end" style={{ fontWeight: 600 }}>{formatCurrency(b.total)}</td>
                       <td className="px-5 py-3 text-end">
@@ -455,7 +456,7 @@ function InvoiceDetailsStep({ booking, onClose, onBack }) {
   const t = useT();
   const p = usePalette();
   const { lang } = useLang();
-  const { tax, addInvoice, agreements, agencies, members } = useData();
+  const { tax, addInvoice, agreements, agencies, members, rooms } = useData();
 
   // Resolve client type/name from booking source.
   const clientFromBooking = useMemo(() => {
@@ -541,7 +542,7 @@ function InvoiceDetailsStep({ booking, onClose, onBack }) {
             }}>{booking.source}</span>
           </div>
           <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 4 }}>
-            {t(`rooms.${booking.roomId}.name`)} · {fmtDate(booking.checkIn, lang)} → {fmtDate(booking.checkOut, lang)} · {booking.nights} {booking.nights === 1 ? "night" : "nights"}
+            {roomLabel(rooms.find((r) => r.id === booking.roomId) || booking.roomId, t)} · {fmtDate(booking.checkIn, lang)} → {fmtDate(booking.checkOut, lang)} · {booking.nights} {booking.nights === 1 ? "night" : "nights"}
           </div>
         </div>
         <div className="text-end">

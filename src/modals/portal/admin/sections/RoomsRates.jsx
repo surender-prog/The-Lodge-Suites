@@ -14,7 +14,7 @@ import {
   Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast,
   SelectField, Stat, TableShell, Td, Th, TextField,
 } from "../ui.jsx";
-import { uploadRoomImage } from "../../../../lib/rooms.js";
+import { uploadRoomImage, roomLabel } from "../../../../lib/rooms.js";
 
 // ---------------------------------------------------------------------------
 // Rooms & Rates
@@ -57,6 +57,12 @@ export const RoomsRates = () => {
       // back to the active room_units count for this type. The editor
       // surfaces both numbers so the operator can compare.
       sellLimit:    room.sellLimit ?? "",
+      // Snapshot the room's meal-plan catalogue so toggling HB/FB off
+      // in the editor mutates the draft (not DEFAULT_MEAL_PLANS_FOR_ROOM)
+      // and survives the save below.
+      mealPlans:    room.mealPlans
+        ? JSON.parse(JSON.stringify(room.mealPlans))
+        : { ...DEFAULT_MEAL_PLANS_FOR_ROOM },
     });
   };
   const save = () => {
@@ -88,8 +94,15 @@ export const RoomsRates = () => {
         const n = Number(v);
         return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
       })(),
+      // Meal plans round-trip from the editor's toggles. RO is always
+      // marked enabled in the local toggle handlers, so the DB row stays
+      // bookable at the rack-rate baseline even after an operator dials
+      // every other plan off.
+      mealPlans: draft.mealPlans
+        ? JSON.parse(JSON.stringify(draft.mealPlans))
+        : { ...DEFAULT_MEAL_PLANS_FOR_ROOM },
     });
-    pushToast({ message: `Saved · ${t(`rooms.${editingRate}.name`) || editingRate}` });
+    pushToast({ message: `Saved · ${roomLabel(rooms.find((x) => x.id === editingRate) || editingRate, t)}` });
     setEditingRate(null);
   };
 
@@ -151,7 +164,7 @@ export const RoomsRates = () => {
             {rooms.map((r) => (
               <tr key={r.id}>
                 <Td>
-                  <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.1rem", color: p.textPrimary }}>{t(`rooms.${r.id}.name`)}</div>
+                  <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.1rem", color: p.textPrimary }}>{roomLabel(r, t)}</div>
                   <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>{r.id}</div>
                 </Td>
                 <Td align="end">{r.sqm} m²</Td>
@@ -193,9 +206,9 @@ export const RoomsRates = () => {
                         <button
                           onClick={() => {
                             if (disabled) { pushToast({ message: reason, kind: "warn" }); return; }
-                            if (!confirm(`Remove "${t(`rooms.${r.id}.name`) || r.id}" room type? This cannot be undone.`)) return;
+                            if (!confirm(`Remove "${roomLabel(r, t)}" room type? This cannot be undone.`)) return;
                             removeRoom(r.id);
-                            pushToast({ message: `Removed · ${t(`rooms.${r.id}.name`) || r.id}` });
+                            pushToast({ message: `Removed · ${roomLabel(r, t)}` });
                           }}
                           title={reason}
                           disabled={disabled}
@@ -289,7 +302,7 @@ function RoomTypeEditor({ room, draft, setDraft, tax, unitCount, onCancel, onSav
       open={true}
       onClose={onCancel}
       eyebrow={`Edit room type · ${room.id}`}
-      title={t(`rooms.${room.id}.name`) || room.id}
+      title={roomLabel(room, t)}
       fullPage
       contentMaxWidth="max-w-5xl"
       footer={
@@ -319,7 +332,7 @@ function RoomTypeEditor({ room, draft, setDraft, tax, unitCount, onCancel, onSav
           <div className="mt-4 space-y-2" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem" }}>
             <Detail label="Type id"  value={room.id} mono p={p} />
             <Detail label="Physical units" value={`${unitCount} unit${unitCount === 1 ? "" : "s"}`} p={p} />
-            <Detail label="Public name" value={t(`rooms.${room.id}.name`) || "—"} p={p} />
+            <Detail label="Public name" value={roomLabel(room, t) || "—"} p={p} />
           </div>
 
           {/* Master sell-limit — controls how many units of this type the
@@ -691,7 +704,7 @@ function RoomTypeEditor({ room, draft, setDraft, tax, unitCount, onCancel, onSav
             <div className="flex-1 min-w-0">
               <div className="flex items-baseline justify-between gap-2 flex-wrap">
                 <h4 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: p.textPrimary, fontWeight: 500 }}>
-                  {t(`rooms.${room.id}.name`) || room.id}
+                  {roomLabel(room, t)}
                 </h4>
                 <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", color: p.accent, fontWeight: 500 }}>
                   {formatCurrency(rate)}<span style={{ fontSize: "0.7rem", color: p.textMuted, fontFamily: "'Manrope', sans-serif", letterSpacing: "0.1em" }}> /night</span>
@@ -797,10 +810,10 @@ function RoomUnitsManager() {
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
         {rooms.map((r) => {
           const v = byType[r.id] || { active: 0, ooo: 0, reserved: 0, total: 0 };
-          // Resolve i18n strings — fall back to humanised id when a
-          // translation isn't present so a freshly-added type still
-          // renders cleanly.
-          const typeName = t(`rooms.${r.id}.name`) || r.id;
+          // Resolve i18n strings — fall back to operator-set publicName
+          // (DB column) and finally a humanised id, so a freshly-added
+          // type still renders cleanly even before any translation lands.
+          const typeName = roomLabel(r, t);
           const typeShort = t(`rooms.${r.id}.short`);
           const isActive = filterType === r.id;
           // Pricing block — show weekday / weekend if they differ so the
@@ -897,7 +910,7 @@ function RoomUnitsManager() {
             <SelectField
               value={filterType}
               onChange={setFilterType}
-              options={[{ value: "all", label: "All types" }, ...rooms.map((r) => ({ value: r.id, label: t(`rooms.${r.id}.name`) || r.id }))]}
+              options={[{ value: "all", label: "All types" }, ...rooms.map((r) => ({ value: r.id, label: roomLabel(r, t) }))]}
             />
           </div>
           <div style={{ minWidth: 130 }}>
@@ -1002,7 +1015,7 @@ function RoomUnitsManager() {
                       </div>
                       <div style={{ color: p.accent, fontSize: "0.62rem", letterSpacing: "0.05em", marginTop: 2 }}>{u.id}</div>
                     </Td>
-                    <Td>{room ? (t(`rooms.${room.id}.name`) || room.id) : u.roomTypeId}</Td>
+                    <Td>{room ? roomLabel(room, t) : u.roomTypeId}</Td>
                     <Td align="end" muted>Floor {u.floor}</Td>
                     <Td muted>{view?.label || "—"}</Td>
                     <Td>
@@ -1106,7 +1119,7 @@ function FloorGrid({ units, rooms, onEdit }) {
                 <button
                   key={u.id}
                   onClick={() => onEdit(u)}
-                  title={`${room ? (t(`rooms.${room.id}.name`) || room.id) : u.roomTypeId} · ${VIEW_BY_ID[u.view]?.label || u.view} · ${status.label}${u.notes ? ` · ${u.notes}` : ""}`}
+                  title={`${room ? roomLabel(room, t) : u.roomTypeId} · ${VIEW_BY_ID[u.view]?.label || u.view} · ${status.label}${u.notes ? ` · ${u.notes}` : ""}`}
                   className="p-2 text-center transition-colors"
                   style={{
                     backgroundColor: `${status.color}10`,
@@ -1121,7 +1134,7 @@ function FloorGrid({ units, rooms, onEdit }) {
                     {u.number}
                   </div>
                   <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700 }}>
-                    {room ? (t(`rooms.${room.id}.name`) || room.id) : u.roomTypeId}
+                    {room ? roomLabel(room, t) : u.roomTypeId}
                   </div>
                 </button>
               );
@@ -1212,7 +1225,7 @@ function UnitEditor({ unit, onClose }) {
             <SelectField
               value={draft.roomTypeId}
               onChange={(v) => set({ roomTypeId: v })}
-              options={rooms.map((r) => ({ value: r.id, label: t(`rooms.${r.id}.name`) || r.id }))}
+              options={rooms.map((r) => ({ value: r.id, label: roomLabel(r, t) }))}
             />
             {room && (
               <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 4 }}>
@@ -1423,7 +1436,7 @@ function BulkAddDrawer({ onClose }) {
             <SelectField
               value={draft.roomTypeId}
               onChange={(v) => set({ roomTypeId: v })}
-              options={rooms.map((r) => ({ value: r.id, label: t(`rooms.${r.id}.name`) || r.id }))}
+              options={rooms.map((r) => ({ value: r.id, label: roomLabel(r, t) }))}
             />
           </FormGroup>
           <div className="grid grid-cols-2 gap-4 mt-4">

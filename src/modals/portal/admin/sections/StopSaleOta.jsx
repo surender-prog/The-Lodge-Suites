@@ -5,6 +5,7 @@ import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate } from "../../../../utils/date.js";
 import { useData } from "../../../../data/store.jsx";
 import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, TableShell, Td, Th, TextField } from "../ui.jsx";
+import { roomLabel } from "../../../../lib/rooms.js";
 
 // Recipient type metadata used for tabs, chips, and the send-summary line.
 // OTAs are intentionally absent — channel-side updates run via the live
@@ -377,7 +378,7 @@ export const StopSaleOta = () => {
                   <Td>
                     <div className="flex items-center gap-2">
                       <AlertCircle size={14} style={{ color: p.warn }} />
-                      <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.05rem", color: p.textPrimary }}>{t(`rooms.${s.roomId}.name`)}</span>
+                      <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.05rem", color: p.textPrimary }}>{roomLabel(rooms.find((r) => r.id === s.roomId) || s.roomId, t)}</span>
                     </div>
                   </Td>
                   <Td muted>{fmtDate(s.from, lang)}</Td>

@@ -1,6 +1,51 @@
 import { supabase, SUPABASE_CONFIGURED } from "./supabase.js";
 import { ROOMS as INITIAL_ROOMS } from "../data/rooms.js";
 
+// ─── Room label resolver ─────────────────────────────────────────────────
+// Single source of truth for "what should I render for this room type?".
+// The hierarchy is:
+//   1. The active-language i18n string  (rooms.<id>.name)
+//   2. The operator-set publicName on the room row (DB column added in 017)
+//   3. A humanised version of the id  ("superioronebedroom" → "Superior
+//      One Bedroom") so even brand-new types without a translation OR a
+//      saved name render readably until the operator fills one in.
+//
+// Pass the active translator (from useT()) and the room object. The id
+// string fallback is acceptable when you only have the id available
+// (e.g. legacy code paths) — humanise it from the slug.
+
+function humaniseRoomId(id) {
+  if (!id) return "";
+  // Split camelCase + snake/kebab + digit-letter boundaries, then title-case.
+  const spaced = String(id)
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/([A-Za-z])(\d)/g, "$1 $2")
+    .replace(/(\d)([A-Za-z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim();
+  return spaced
+    .split(" ")
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w))
+    .join(" ");
+}
+
+export function roomLabel(room, t) {
+  if (!room && !arguments.length) return "";
+  const id = typeof room === "string" ? room : room?.id;
+  if (!id) return "";
+  // Try i18n first. Translator returns the key itself when the path
+  // doesn't resolve — detect that and treat as miss.
+  const key = `rooms.${id}.name`;
+  const fromI18n = typeof t === "function" ? t(key) : null;
+  if (fromI18n && fromI18n !== key) return fromI18n;
+  // Operator-set name (DB)
+  const fromRow = typeof room === "object" ? room?.publicName : null;
+  if (fromRow && String(fromRow).trim()) return String(fromRow).trim();
+  // Last resort — humanise the slug
+  return humaniseRoomId(id);
+}
+
 // ─── Rooms slice ↔ Supabase ──────────────────────────────────────────────
 //
 // The DB stores room rows in snake_case (Postgres convention); the app's
@@ -26,6 +71,10 @@ export function dbRoomToClient(row) {
     : weekdayPrice;
   return {
     id:                 row.id,
+    // Operator-set public name. Falls back to whatever the bundled seed
+    // calls itself so legacy rows (created before migration 017) still
+    // have a readable label even before the operator opens the editor.
+    publicName:         row.name || seed?.publicName || null,
     sqm:                row.sqm,
     occupancy:          row.occupancy,
     // The app expects defined values; DB stores nullable sub-caps that
@@ -57,6 +106,7 @@ export function dbRoomToClient(row) {
 /** Convert a partial camelCase patch into a snake_case Supabase update. */
 export function clientPatchToDb(patch) {
   const out = {};
+  if (patch.publicName         !== undefined) out.name                 = patch.publicName;
   if (patch.sqm                !== undefined) out.sqm                  = patch.sqm;
   if (patch.occupancy          !== undefined) out.occupancy            = patch.occupancy;
   if (patch.maxAdults          !== undefined) out.max_adults           = patch.maxAdults;

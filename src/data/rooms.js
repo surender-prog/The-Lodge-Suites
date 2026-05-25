@@ -47,6 +47,7 @@ import { IMG } from "./images.js";
 export const ROOMS = [
   {
     id: "studio",
+    publicName: "Lodge Studio",
     sqm: 43,
     occupancy: 2,
     maxAdults: 2,
@@ -71,6 +72,7 @@ export const ROOMS = [
   },
   {
     id: "one-bed",
+    publicName: "One-Bedroom Suite",
     sqm: 60,
     occupancy: 3,
     maxAdults: 2,
@@ -95,6 +97,7 @@ export const ROOMS = [
   },
   {
     id: "two-bed",
+    publicName: "Two-Bedroom Suite",
     sqm: 140,
     occupancy: 5,
     maxAdults: 4,
@@ -115,6 +118,7 @@ export const ROOMS = [
   },
   {
     id: "three-bed",
+    publicName: "Three-Bedroom Suite",
     sqm: 150,
     occupancy: 6,
     maxAdults: 4,

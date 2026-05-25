@@ -5,6 +5,7 @@ import { Crosshatch } from "../components/Crosshatch.jsx";
 import { GoldBtn, SectionLabel, SectionTitle } from "../components/primitives.jsx";
 import { useT } from "../i18n/LanguageContext.jsx";
 import { useData, formatCurrency } from "../data/store.jsx";
+import { roomLabel } from "../lib/rooms.js";
 
 export const RoomsSection = ({ onBookRoom }) => {
   const t = useT();
@@ -12,12 +13,15 @@ export const RoomsSection = ({ onBookRoom }) => {
   const [active, setActive] = useState(ROOMS[1]?.id || ROOMS[0]?.id);
   const room = ROOMS.find((r) => r.id === active) || ROOMS[0];
   if (!room) return null;
-  const meta = (id) => ({
-    name:        t(`rooms.${id}.name`),
-    short:       t(`rooms.${id}.short`),
-    description: t(`rooms.${id}.description`),
-    features:    t(`rooms.${id}.features`),
-  });
+  const meta = (id) => {
+    const r = ROOMS.find((x) => x.id === id) || id;
+    return {
+      name:        roomLabel(r, t),
+      short:       t(`rooms.${id}.short`),
+      description: t(`rooms.${id}.description`),
+      features:    t(`rooms.${id}.features`),
+    };
+  };
   const m = meta(room.id);
 
   return (
@@ -47,7 +51,7 @@ export const RoomsSection = ({ onBookRoom }) => {
                 border: `1px solid ${active === r.id ? C.gold : C.border}`,
               }}
             >
-              {t(`rooms.${r.id}.name`)}
+              {roomLabel(r, t)}
               {r.popular && <span style={{ marginInlineStart: 8, fontSize: "0.55rem", color: active === r.id ? C.bgDeep : C.gold }}>★</span>}
             </button>
           ))}

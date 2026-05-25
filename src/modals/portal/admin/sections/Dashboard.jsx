@@ -8,6 +8,7 @@ import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate } from "../../../../utils/date.js";
 import { useData, formatCurrency, effectiveSellLimit } from "../../../../data/store.jsx";
 import { Card, PageHeader, Stat } from "../ui.jsx";
+import { roomLabel } from "../../../../lib/rooms.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Date helpers used by every dashboard computation. Everything works in
@@ -604,7 +605,7 @@ function Heatmap({ rooms, bookings, roomUnits, calendar, onCellClick }) {
                 fontFamily: "'Cormorant Garamond', serif", fontSize: "0.92rem", color: p.textPrimary,
                 paddingInlineEnd: 8, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
               }}>
-                {t(`rooms.${row.roomId}.name`)}
+                {roomLabel(rooms.find((r) => r.id === row.roomId) || row.roomId, t)}
               </div>
               {row.cells.map((cell, di) => {
                 const occPct = Math.round(cell.occ * 100);

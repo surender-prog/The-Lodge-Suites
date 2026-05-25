@@ -23,6 +23,9 @@ export const ContactSection = () => {
   const emailDisplay = hotelInfo?.emailReservations || hotelInfo?.email || "reservations@thelodgesuites.bh";
   const emailHref    = `mailto:${emailDisplay}`;
   const mapName      = hotelInfo?.name    || t("contact.mapName");
+  // Google Maps share link — defaults to the canonical GMB pin in
+  // DEFAULT_HOTEL_INFO, can be overridden via Property Info admin.
+  const mapsUrl      = hotelInfo?.mapsUrl || "https://maps.app.goo.gl/N7dGa9Zqt1Rd9Apm8";
   return (
     <section id="contact" className="py-24 px-6 relative" style={{ backgroundColor: C.bgDeep }}>
       <Crosshatch opacity={0.07} />
@@ -74,7 +77,7 @@ export const ContactSection = () => {
                   <MapPin size={28} style={{ color: C.gold, margin: "0 auto" }} />
                   <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: C.cream, marginTop: 12 }}>{mapName}</div>
                   <div style={{ fontFamily: "'Manrope', sans-serif", color: C.textMuted, fontSize: "0.78rem", marginTop: 4 }}>{t("contact.mapCoords")}</div>
-                  <a href="#" style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 14, color: C.gold, fontSize: "0.7rem", letterSpacing: "0.2em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 600 }}>
+                  <a href={mapsUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 14, color: C.gold, fontSize: "0.7rem", letterSpacing: "0.2em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 600 }}>
                     {t("contact.openMaps")} <ArrowUpRight size={12} />
                   </a>
                 </div>
