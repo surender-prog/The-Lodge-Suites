@@ -5,7 +5,8 @@ import {
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
 import { useT } from "../../i18n/LanguageContext.jsx";
-import { useData, applyTaxes, buildCardOnFile, nightlyBreakdown, formatCurrency } from "../../data/store.jsx";
+import { useData, applyTaxes, buildCardOnFile, nightlyBreakdown, formatCurrency, roomTypeAvailable } from "../../data/store.jsx";
+import { roomLabel } from "../../lib/rooms.js";
 
 // Pay-now incentive — applied when a pre-payment-contracted account opts to
 // settle at booking instead of on arrival. Mirrors the B2C BookingModal so
@@ -47,7 +48,7 @@ const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString("en-GB", { day: 
 export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
   const p = usePalette();
   const t = useT();
-  const { rooms, addBooking, calendar, tax, taxPatterns, activePatternId, hotelInfo } = useData();
+  const { rooms, addBooking, calendar, tax, taxPatterns, activePatternId, hotelInfo, bookings, roomUnits, staffSession } = useData();
 
   // When the contracted payment term is "Pre-payment (cash)", surface the
   // same Pay-on-arrival / Pay-now-save-5% choice the public booking modal
@@ -214,6 +215,16 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
     // the admin Tax Report can group historical bookings by pattern even
     // after Settings → Tax Setup is updated.
     const activePattern = (taxPatterns || []).find((p) => p.id === activePatternId);
+    // Inventory check — if the suite is sold out for any night in the
+    // window, the booking is captured as "on-request" instead of
+    // confirmed so the front desk can approve / reject manually.
+    const isAvailable = roomTypeAvailable(draft.roomId, draft.checkIn, draft.checkOut, 1, {
+      rooms, bookings, roomUnits,
+    });
+    const initialStatus = isAvailable ? "confirmed" : "on-request";
+    const initialStatusRemark = isAvailable
+      ? "Auto-confirmed at booking — inventory available."
+      : "Auto-routed to On request — suite sold out for the requested window. Front desk to confirm or reject.";
     const booking = {
       id,
       guest:       draft.guestName.trim(),
@@ -229,7 +240,16 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
       rate:        avgRate,
       total,
       paid,
-      status:      "confirmed",
+      status:      initialStatus,
+      statusLog: [{
+        ts: new Date().toISOString(),
+        actorId:   staffSession?.id   || "anon",
+        actorName: staffSession?.name || "Staff",
+        actorRole: staffSession?.role || null,
+        from: null,
+        to: initialStatus,
+        remark: initialStatusRemark,
+      }],
       paymentStatus,
       paymentTiming: isPrepay ? draft.paymentTiming : "later",
       nonRefundable: isPrepay && draft.paymentTiming === "now",
@@ -334,7 +354,7 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
                         const monthly = Number(agreement.monthlyRates?.[key] || 0);
                         return (
                           <option key={r.id} value={r.id}>
-                            {t(`rooms.${r.id}.name`)}
+                            {roomLabel(r, t)}
                             {daily > 0 ? ` · BHD ${daily}/n` : ""}
                             {monthly > 0 ? ` · ${formatCurrency(monthly)}/mo` : ""}
                             {daily === 0 && monthly === 0 ? ` · BHD ${r.price}/n (rack)` : ""}
@@ -526,7 +546,7 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
             <aside className="lg:sticky lg:top-4 self-start space-y-4">
               <CardBlock title="Booking summary" p={p}>
                 <div className="space-y-2.5" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}>
-                  <SummaryRow label="Suite" value={room ? t(`rooms.${room.id}.name`) : "—"} bold p={p} />
+                  <SummaryRow label="Suite" value={room ? roomLabel(room, t) : "—"} bold p={p} />
                   <SummaryRow label="Stay" value={`${fmtDate(draft.checkIn)} → ${fmtDate(draft.checkOut)}`} p={p} />
                   <SummaryRow label="Nights" value={nights} accent={isLongStay} p={p} />
                   <SummaryRow label="Guests" value={draft.guests || 0} p={p} />

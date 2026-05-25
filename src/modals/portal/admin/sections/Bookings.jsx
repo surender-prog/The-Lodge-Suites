@@ -1,17 +1,43 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Ban, Briefcase, Building2, Calculator, CalendarCheck, Check, CheckCircle2, ChevronDown, Coins, Copy, CreditCard, Edit2, Eye, EyeOff, FileText, Globe, Hotel as HotelIcon, Lock, LogIn, LogOut, Mail, MoreHorizontal, Phone, Plus, Printer, Receipt, RotateCcw, Save, Search, ShieldCheck, Sparkles, Trash2, User as UserIcon, Users as UsersIcon } from "lucide-react";
+import { Ban, Briefcase, Building2, Calculator, CalendarCheck, Check, CheckCircle2, ChevronDown, Coins, Copy, CreditCard, Edit2, Eye, EyeOff, FileText, Globe, Hotel as HotelIcon, Lock, LogIn, LogOut, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Printer, Receipt, RotateCcw, Save, Search, ShieldCheck, Sparkles, Trash2, User as UserIcon, Users as UsersIcon } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween } from "../../../../utils/date.js";
-import { useData, applyTaxes, roomFitsParty, canViewCardOnFile, maskCardNumber, cardOnFileExpired, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, describePackageConditions, packagePriceSuffix, getPackageRoomPrice, formatCurrency, MEAL_PLANS, mealPlanLabel } from "../../../../data/store.jsx";
+import { useData, applyTaxes, roomFitsParty, canViewCardOnFile, maskCardNumber, cardOnFileExpired, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, describePackageConditions, packagePriceSuffix, getPackageRoomPrice, formatCurrency, MEAL_PLANS, mealPlanLabel, roomTypeAvailable } from "../../../../data/store.jsx";
 import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 import { BookingDocPreviewModal, emailBookingDoc, printBookingDoc } from "../BookingDocs.jsx";
+import { roomLabel } from "../../../../lib/rooms.js";
 
 const STATUS_LABEL = {
   "in-house":    "In-house",
   "confirmed":   "Confirmed",
+  "on-request":  "On request",
   "checked-out": "Checked-out",
+  "rejected":    "Rejected",
+  "sold-out":    "Sold-out",
   "cancelled":   "Cancelled",
+};
+
+// Allowed status transitions. Hard-rules surface in the row-action menu
+// (only valid next statuses render) and in the editor's "Change status"
+// modal (same). Terminal statuses have empty arrays so no further
+// transitions are offered without an explicit re-open.
+//
+//   on-request ─┬─► confirmed ──► in-house ─┬─► checked-out
+//               │                            └─► cancelled
+//               ├─► in-house (walk-in approved)
+//               ├─► cancelled
+//               ├─► rejected
+//               └─► sold-out
+//   confirmed ──┴─► (same as above, minus self & "confirmed → confirmed")
+const ALLOWED_TRANSITIONS = {
+  "on-request":  ["confirmed", "in-house", "cancelled", "rejected", "sold-out"],
+  "confirmed":   ["in-house", "cancelled", "rejected", "sold-out"],
+  "in-house":    ["checked-out", "cancelled"],
+  "checked-out": [],
+  "rejected":    [],
+  "sold-out":    [],
+  "cancelled":   [],
 };
 
 const PAYMENT_LABEL = {
@@ -36,7 +62,10 @@ const SOURCE_LABEL = {
 const STATUS_BASE = {
   "confirmed":   "#2563EB", // blue   — future booking, scheduled
   "in-house":    "#16A34A", // green  — guest currently staying
+  "on-request":  "#D97706", // amber  — awaiting hotel confirmation
   "checked-out": "#64748B", // slate  — completed, archived
+  "rejected":    "#9F1239", // rose   — hotel declined the request
+  "sold-out":    "#7C3AED", // purple — no availability for these dates
   "cancelled":   "#DC2626", // red    — cancelled
 };
 
@@ -269,7 +298,7 @@ export const Bookings = ({ onNavigate, params, clearParams }) => {
           ]} />
           <SelectField value={room} onChange={setRoom} options={[
             { value: "all", label: "All room types" },
-            ...rooms.map((r) => ({ value: r.id, label: t(`rooms.${r.id}.name`) })),
+            ...rooms.map((r) => ({ value: r.id, label: roomLabel(r, t) })),
           ]} />
           <SelectField value={payment} onChange={setPayment} options={[
             { value: "all", label: "All payments" },
@@ -351,7 +380,7 @@ export const Bookings = ({ onNavigate, params, clearParams }) => {
                     {SOURCE_LABEL[b.source]}
                   </span>
                 </Td>
-                <Td>{t(`rooms.${b.roomId}.name`)}</Td>
+                <Td>{roomLabel(rooms.find((r) => r.id === b.roomId) || b.roomId, t)}</Td>
                 <Td muted>{fmtDate(b.checkIn, lang)} → {fmtDate(b.checkOut, lang)}</Td>
                 <Td align="end">{b.nights}</Td>
                 <Td align="end" className="font-semibold">{formatCurrency(b.total)}</Td>
@@ -379,6 +408,21 @@ export const Bookings = ({ onNavigate, params, clearParams }) => {
                     <span style={statusDot(b.status)} />
                     {STATUS_LABEL[b.status]}
                   </span>
+                  {b.hotelConfirmationNo && (
+                    <div
+                      title="Hotel confirmation no."
+                      style={{
+                        marginTop: 4,
+                        color: p.textMuted,
+                        fontFamily: "'Manrope', sans-serif",
+                        fontSize: "0.7rem",
+                        letterSpacing: "0.04em",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {b.hotelConfirmationNo}
+                    </div>
+                  )}
                 </Td>
                 <Td align="end">
                   <RowActions booking={b} onEdit={() => setEditing({ ...b })} />
@@ -540,10 +584,13 @@ function SourceMixCard({ bookings, setSource, activeSource }) {
 function RowActions({ booking, onEdit }) {
   const p = usePalette();
   const t = useT();
-  const { updateBooking, removeBooking, addInvoice, invoices, tax, rooms, extras, staffSession, appendAuditLog } = useData();
+  const { updateBooking, removeBooking, addInvoice, invoices, tax, rooms, extras, staffSession, appendAuditLog, hotelInfo, members } = useData();
+  const { lang } = useLang();
   const [menuOpen, setMenuOpen] = useState(false);
   const [docPreview, setDocPreview] = useState(null); // "invoice" | "receipt" | null
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [whatsAppPreview, setWhatsAppPreview] = useState(false);
+  const [statusChange, setStatusChange] = useState(null); // target status string, or null
   const ref = useRef(null);
 
   const alreadyBilled = invoices.some(i => i.bookingId === booking.id);
@@ -562,6 +609,87 @@ function RowActions({ booking, onEdit }) {
   const sendEmail = () => {
     pushToast({ message: `Confirmation email sent to ${booking.email}` });
   };
+  // Resolve the customer's phone, preferring the value captured at booking
+  // time and falling back to the linked LS Privilege member record. The
+  // public booking flow always asks for a number, but staff-created
+  // corporate / agent bookings often skip it — try memberId first, then
+  // email match, so we recover the phone whenever the guest is also on
+  // file as a member.
+  const customerPhone = (() => {
+    const direct = (booking.phone || "").trim();
+    if (direct) return direct;
+    if (!Array.isArray(members)) return "";
+    let m = booking.memberId ? members.find((x) => x.id === booking.memberId) : null;
+    if (!m && booking.email) {
+      const lower = String(booking.email).trim().toLowerCase();
+      m = members.find((x) => (x.email || "").toLowerCase() === lower);
+    }
+    return (m?.phone || "").trim();
+  })();
+  // WhatsApp accepts the international number as digits only (no leading
+  // +, no spaces, no dashes). Anything left after stripping is the phone
+  // the deep link should target — the preview modal's "Open in WhatsApp"
+  // button is shown only when waDigits is long enough to be plausible.
+  const waDigits = customerPhone.replace(/\D/g, "");
+  // Pre-fill the confirmation message with the operational essentials:
+  // booking id, suite, dates, party, total. Each line carries a leading
+  // emoji so the message scans quickly on a phone (WhatsApp ignores HTML
+  // styling, but renders Unicode emoji + *bold* asterisks correctly on
+  // every platform). The status line uses a glyph + uppercase bold word
+  // so it stands out as the headline of the message.
+  const buildWhatsAppMessage = () => {
+    const room       = rooms.find((r) => r.id === booking.roomId);
+    const suiteName  = room ? roomLabel(room, t) : booking.roomId;
+    const checkInD   = fmtDate(booking.checkIn, lang);
+    const checkOutD  = fmtDate(booking.checkOut, lang);
+    const checkInT   = hotelInfo?.checkIn  || "14:00";
+    const checkOutT  = hotelInfo?.checkOut || "12:00";
+    const hotel      = hotelInfo?.name || "The Lodge Suites";
+    const phoneLine  = hotelInfo?.phone ? `\n📞 For changes call ${hotelInfo.phone}.` : "";
+    const totalStr   = formatCurrency(booking.total || 0);
+    const partyLine  = (booking.guests || 1) === 1
+      ? "1 guest"
+      : `${booking.guests} guests`;
+    const nightsLine = (booking.nights || 1) === 1
+      ? "1 night"
+      : `${booking.nights} nights`;
+    // Map each booking status to an operator-recognisable glyph + a
+    // headline word. Anything unknown falls back to a neutral receipt.
+    const STATUS_BADGE = {
+      "confirmed":   { icon: "✅", label: "CONFIRMED"   },
+      "in-house":    { icon: "🏨", label: "IN-HOUSE"    },
+      "on-request":  { icon: "⏳", label: "ON REQUEST"  },
+      "checked-out": { icon: "👋", label: "CHECKED OUT" },
+      "rejected":    { icon: "🚫", label: "REJECTED"    },
+      "sold-out":    { icon: "🛑", label: "SOLD OUT"    },
+      "cancelled":   { icon: "❌", label: "CANCELLED"   },
+    };
+    const badge = STATUS_BADGE[booking.status] || { icon: "🧾", label: String(booking.status || "BOOKING").toUpperCase() };
+    const hotelRef = (booking.hotelConfirmationNo || "").trim();
+    return [
+      `Hello ${booking.guest || "guest"},`,
+      "",
+      `${badge.icon} Your reservation at *${hotel}* is *${badge.label}*.`,
+      "",
+      `🧾 *Booking* ${booking.id}`,
+      // Hotel's own PMS reference, shown only when the operator has filled
+      // it in — guests usually quote this on arrival, not our internal id.
+      ...(hotelRef ? [`🏨 *Hotel Ref* ${hotelRef}`] : []),
+      `🛏️ *Suite* ${suiteName}`,
+      `🛬 *Check-in* ${checkInD} from ${checkInT}`,
+      `🛫 *Check-out* ${checkOutD} by ${checkOutT}`,
+      `🌙 *Stay* ${nightsLine} · ${partyLine}`,
+      `💳 *Total* ${totalStr}`,
+      "",
+      `We look forward to welcoming you to Juffair.${phoneLine}`,
+    ].join("\n");
+  };
+  // Open a small preview modal so the operator SEES the message before
+  // copying. A silent navigator.clipboard.writeText() looks broken when
+  // it's blocked by a sandboxed iframe, missing document focus, or a
+  // restrictive Permissions-Policy header — the visible textarea is the
+  // reliable fallback (operator can always select-all + Cmd/Ctrl+C
+  // manually even if the auto-copy fails).
   const sendInvoice = () => {
     pushToast({ message: `Invoice for ${booking.id} dispatched` });
   };
@@ -569,19 +697,60 @@ function RowActions({ booking, onEdit }) {
     updateBooking(booking.id, { paymentStatus: "paid", paid: booking.total });
     pushToast({ message: `${booking.id} marked as paid` });
   };
-  const checkIn = () => {
-    updateBooking(booking.id, { status: "in-house" });
-    pushToast({ message: `${booking.guest} checked in` });
+  // Status changes route through StatusChangeDialog → applyStatusChange so
+  // every transition stamps a remark + actor + timestamp into both
+  // booking.statusLog (for inline history in the editor) and audit_logs
+  // (for the global audit trail). Direct setStatus calls would leak past
+  // the remark requirement and break the workflow contract.
+  const requestStatus = (next) => {
+    const allowed = ALLOWED_TRANSITIONS[booking.status] || [];
+    if (!allowed.includes(next)) {
+      pushToast({
+        message: `Cannot move ${STATUS_LABEL[booking.status]} → ${STATUS_LABEL[next] || next}.`,
+        kind: "warn",
+      });
+      return;
+    }
+    setStatusChange(next);
   };
-  const checkOut = () => {
-    updateBooking(booking.id, { status: "checked-out" });
-    pushToast({ message: `${booking.guest} checked out · folio closed` });
+  const applyStatusChange = (next, remark) => {
+    const trimmed = String(remark || "").trim();
+    if (!trimmed) {
+      pushToast({ message: "A remark is required for every status change.", kind: "warn" });
+      return false;
+    }
+    const ts = new Date().toISOString();
+    const entry = {
+      ts,
+      actorId:   staffSession?.id   || "anon",
+      actorName: staffSession?.name || "Staff",
+      actorRole: staffSession?.role || null,
+      from: booking.status,
+      to:   next,
+      remark: trimmed,
+    };
+    const nextLog = Array.isArray(booking.statusLog) ? [...booking.statusLog, entry] : [entry];
+    updateBooking(booking.id, { status: next, statusLog: nextLog });
+    try {
+      appendAuditLog?.({
+        kind: "booking-status-change",
+        actorId:   entry.actorId,
+        actorName: entry.actorName,
+        actorRole: entry.actorRole,
+        targetKind: "booking",
+        targetId:   booking.id,
+        targetName: booking.guest || null,
+        details: `Status ${STATUS_LABEL[entry.from] || entry.from} → ${STATUS_LABEL[entry.to] || entry.to} · ${trimmed}`,
+      });
+    } catch (_) {}
+    pushToast({
+      message: `${booking.id}: ${STATUS_LABEL[next] || next}`,
+      kind: next === "cancelled" || next === "rejected" || next === "sold-out" ? "warn" : "success",
+    });
+    setStatusChange(null);
+    return true;
   };
-  const cancel = () => {
-    if (!confirm(`Cancel booking ${booking.id}?`)) return;
-    updateBooking(booking.id, { status: "cancelled" });
-    pushToast({ message: `Booking ${booking.id} cancelled`, kind: "warn" });
-  };
+  const allowedNext = ALLOWED_TRANSITIONS[booking.status] || [];
   // Hard-delete invoked from the row kebab. Same audit-log + toast pattern
   // as the drawer's danger-zone action — gated by `bookings_delete` and
   // requires "type to confirm" via the shared modal.
@@ -653,17 +822,34 @@ function RowActions({ booking, onEdit }) {
           ) : (
             <MenuItem icon={FileText} label="Resend invoice" onClick={() => { setMenuOpen(false); sendInvoice(); }} />
           )}
+          <MenuItem icon={MessageCircle} label="WhatsApp message" onClick={() => { setMenuOpen(false); setWhatsAppPreview(true); }} />
           {booking.paymentStatus !== "paid" && (
             <MenuItem icon={CheckCircle2} label="Mark as paid" onClick={() => { setMenuOpen(false); markPaid(); }} />
           )}
-          {booking.status === "confirmed" && (
-            <MenuItem icon={LogIn} label="Check in" onClick={() => { setMenuOpen(false); checkIn(); }} />
+          {/* Status transitions — only what the workflow allows from the
+              current state. Each route opens StatusChangeDialog so the
+              operator must leave a remark before it lands. */}
+          {allowedNext.includes("confirmed") && (
+            <MenuItem icon={CheckCircle2} label="Confirm booking" onClick={() => { setMenuOpen(false); requestStatus("confirmed"); }} />
           )}
-          {booking.status === "in-house" && (
-            <MenuItem icon={LogOut} label="Check out" onClick={() => { setMenuOpen(false); checkOut(); }} />
+          {allowedNext.includes("in-house") && (
+            <MenuItem icon={LogIn} label="Check in" onClick={() => { setMenuOpen(false); requestStatus("in-house"); }} />
           )}
-          <div style={{ height: 1, backgroundColor: p.border }} />
-          <MenuItem icon={Ban} label="Cancel booking" onClick={() => { setMenuOpen(false); cancel(); }} danger />
+          {allowedNext.includes("checked-out") && (
+            <MenuItem icon={LogOut} label="Check out" onClick={() => { setMenuOpen(false); requestStatus("checked-out"); }} />
+          )}
+          {(allowedNext.includes("rejected") || allowedNext.includes("sold-out") || allowedNext.includes("cancelled")) && (
+            <div style={{ height: 1, backgroundColor: p.border }} />
+          )}
+          {allowedNext.includes("rejected") && (
+            <MenuItem icon={Ban} label="Reject booking" onClick={() => { setMenuOpen(false); requestStatus("rejected"); }} danger />
+          )}
+          {allowedNext.includes("sold-out") && (
+            <MenuItem icon={Ban} label="Mark sold-out" onClick={() => { setMenuOpen(false); requestStatus("sold-out"); }} danger />
+          )}
+          {allowedNext.includes("cancelled") && (
+            <MenuItem icon={Ban} label="Cancel booking" onClick={() => { setMenuOpen(false); requestStatus("cancelled"); }} danger />
+          )}
           {canDeleteBooking && (
             <MenuItem icon={Trash2} label="Delete permanently" onClick={() => { setMenuOpen(false); setConfirmDelete(true); }} danger />
           )}
@@ -684,6 +870,23 @@ function RowActions({ booking, onEdit }) {
           booking={booking}
           onCancel={() => setConfirmDelete(false)}
           onConfirm={deletePermanently}
+        />
+      )}
+      {whatsAppPreview && (
+        <WhatsAppMessagePreview
+          booking={booking}
+          message={buildWhatsAppMessage()}
+          phone={customerPhone}
+          waDigits={waDigits}
+          onClose={() => setWhatsAppPreview(false)}
+        />
+      )}
+      {statusChange && (
+        <StatusChangeDialog
+          booking={booking}
+          nextStatus={statusChange}
+          onCancel={() => setStatusChange(null)}
+          onConfirm={(remark) => applyStatusChange(statusChange, remark)}
         />
       )}
     </div>
@@ -737,7 +940,7 @@ const SOURCE_OPTIONS = [
 function BookingCreator({ onClose }) {
   const t = useT();
   const p = usePalette();
-  const { rooms, members, agreements, agencies, calendar, addBooking, updateMember, loyalty, tiers } = useData();
+  const { rooms, members, agreements, agencies, calendar, addBooking, updateMember, loyalty, tiers, bookings, roomUnits, staffSession } = useData();
 
   const [source, setSource] = useState("direct");
   const [client, setClient] = useState(null); // member / agreement / agency object
@@ -875,6 +1078,13 @@ function BookingCreator({ onClose }) {
     const paymentStatus = isPrepay
       ? "pending"
       : (source === "corporate" ? "invoiced" : "pending");
+    const isAvailable = roomTypeAvailable(draft.roomId, draft.checkIn, draft.checkOut, 1, {
+      rooms, bookings, roomUnits,
+    });
+    const initialStatus = isAvailable ? "confirmed" : "on-request";
+    const initialStatusRemark = isAvailable
+      ? "Auto-confirmed at booking — inventory available."
+      : "Auto-routed to On request — suite sold out for the requested window. Front desk to confirm or reject.";
     addBooking({
       id,
       guest: finalGuest,
@@ -888,7 +1098,16 @@ function BookingCreator({ onClose }) {
       rate: Math.round(avgRate),
       total,
       paid: 0,
-      status: "confirmed",
+      status: initialStatus,
+      statusLog: [{
+        ts: new Date().toISOString(),
+        actorId:   staffSession?.id   || "anon",
+        actorName: staffSession?.name || "Staff",
+        actorRole: staffSession?.role || null,
+        from: null,
+        to: initialStatus,
+        remark: initialStatusRemark,
+      }],
       paymentStatus,
       paymentTiming: isPrepay ? paymentTiming : "later",
       nonRefundable: isPrepay && paymentTiming === "now",
@@ -981,7 +1200,7 @@ function BookingCreator({ onClose }) {
                     // Treat the declared headcount as adults — admin
                     // creator doesn't split adults/children separately.
                     const fit = roomFitsParty(r, Number(draft.guests) || 0, 0);
-                    const baseLabel = `${t(`rooms.${r.id}.name`)} · ${t("common.bhd")} ${r.price}/night base`;
+                    const baseLabel = `${roomLabel(r, t)} · ${t("common.bhd")} ${r.price}/night base`;
                     return {
                       value: r.id,
                       label: fit.ok ? baseLabel : `${baseLabel} — ${fit.reason}`,
@@ -1271,6 +1490,48 @@ function BookingEditor({ booking, onClose }) {
   const [docPreview, setDocPreview] = useState(null); // "confirmation" | "invoice" | "receipt" | null
   const [recordingPayment, setRecordingPayment] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [pendingStatus, setPendingStatus] = useState(null);
+  // The pill picker shouldn't let operators bypass the workflow. We open
+  // the same StatusChangeDialog the row-action menu uses so every change
+  // carries a remark + audit-trail entry. The editor also commits the
+  // change immediately to the live record (not just the draft) so the
+  // history line is preserved even if the operator hits Cancel afterwards.
+  const allowedEditorNext = ALLOWED_TRANSITIONS[draft.status] || [];
+  const applyEditorStatusChange = (next, remark) => {
+    const trimmed = String(remark || "").trim();
+    if (!trimmed) return false;
+    const ts = new Date().toISOString();
+    const entry = {
+      ts,
+      actorId:   staffSession?.id   || "anon",
+      actorName: staffSession?.name || "Staff",
+      actorRole: staffSession?.role || null,
+      from: draft.status,
+      to:   next,
+      remark: trimmed,
+    };
+    const nextLog = Array.isArray(draft.statusLog) ? [...draft.statusLog, entry] : [entry];
+    updateBooking(booking.id, { status: next, statusLog: nextLog });
+    setDraft((d) => ({ ...d, status: next, statusLog: nextLog }));
+    try {
+      appendAuditLog?.({
+        kind: "booking-status-change",
+        actorId:   entry.actorId,
+        actorName: entry.actorName,
+        actorRole: entry.actorRole,
+        targetKind: "booking",
+        targetId:   booking.id,
+        targetName: booking.guest || null,
+        details: `Status ${STATUS_LABEL[entry.from] || entry.from} → ${STATUS_LABEL[entry.to] || entry.to} · ${trimmed}`,
+      });
+    } catch (_) {}
+    pushToast({
+      message: `${booking.id}: ${STATUS_LABEL[next] || next}`,
+      kind: next === "cancelled" || next === "rejected" || next === "sold-out" ? "warn" : "success",
+    });
+    setPendingStatus(null);
+    return true;
+  };
   // Operator must hold `bookings_delete` to see / use the destructive
   // "Delete booking permanently" action below the Lifecycle card.
   const canDeleteBooking = Array.isArray(staffSession?.permissions)
@@ -1517,7 +1778,7 @@ function BookingEditor({ booking, onClose }) {
                   onChange={(v) => update({ roomId: v })}
                   options={rooms.map((r) => {
                     const fit = roomFitsParty(r, Number(draft.guests) || 0, 0);
-                    const base = t(`rooms.${r.id}.name`);
+                    const base = roomLabel(r, t);
                     return {
                       value: r.id,
                       label: fit.ok ? base : `${base} — ${fit.reason}`,
@@ -1550,6 +1811,20 @@ function BookingEditor({ booking, onClose }) {
                   <ReadOnlyField p={p} value={`${nights} ${nights === 1 ? "night" : "nights"}`} hint="Auto · derived from dates" />
                 </FormGroup>
               </div>
+              {/* Hotel confirmation number — the PMS-issued reference the
+                  front desk gives guests (distinct from our internal
+                  booking id). Surfaced in the WhatsApp confirmation and
+                  under the status chip in the bookings list. */}
+              <FormGroup label="Hotel confirmation no.">
+                <TextField
+                  value={draft.hotelConfirmationNo || ""}
+                  onChange={(v) => update({ hotelConfirmationNo: v })}
+                  placeholder="e.g. LDG-25-04123"
+                />
+                <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", marginTop: 6 }}>
+                  PMS / channel-manager reference. Shown to the guest in WhatsApp confirmations and under the status chip in this list.
+                </div>
+              </FormGroup>
               <FormGroup label="Guests">
                 <TextField type="number" value={draft.guests} onChange={(v) => update({ guests: Number(v) || 0 })} />
               </FormGroup>
@@ -1573,15 +1848,66 @@ function BookingEditor({ booking, onClose }) {
             </div>
           </Card>
 
-          {/* Status & lifecycle */}
+          {/* Status & lifecycle — the current status is informational (not
+              clickable); operators flip via the "Change to →" pills below,
+              which open StatusChangeDialog so every transition lands with
+              a required remark and an audit-trail entry. Terminal statuses
+              (cancelled / rejected / sold-out / checked-out) hide the
+              picker since no further moves are allowed. */}
           <Card title="Status & lifecycle">
             <FormGroup label="Reservation status">
-              <ChipPicker
-                p={p}
-                value={draft.status}
-                onChange={(v) => update({ status: v })}
-                options={Object.entries(STATUS_LABEL).map(([k, l]) => ({ value: k, label: l, color: STATUS_BASE[k] }))}
-              />
+              <div className="flex items-center gap-2 flex-wrap">
+                <span style={chipStyle(STATUS_BASE[draft.status] || "#6B7280")}>
+                  <span style={dotStyle(STATUS_BASE[draft.status] || "#6B7280")} />
+                  {STATUS_LABEL[draft.status] || draft.status}
+                </span>
+                {draft.hotelConfirmationNo && (
+                  <span style={{
+                    color: p.textMuted, fontFamily: "'Manrope', sans-serif",
+                    fontSize: "0.72rem", letterSpacing: "0.04em",
+                  }}>· Hotel ref {draft.hotelConfirmationNo}</span>
+                )}
+              </div>
+              {allowedEditorNext.length > 0 ? (
+                <div className="mt-3">
+                  <div style={{
+                    color: p.textMuted, fontFamily: "'Manrope', sans-serif",
+                    fontSize: "0.6rem", letterSpacing: "0.22em",
+                    textTransform: "uppercase", fontWeight: 700, marginBottom: 6,
+                  }}>Change to →</div>
+                  <div className="flex flex-wrap gap-2">
+                    {allowedEditorNext.map((nextS) => {
+                      const c = STATUS_BASE[nextS] || "#6B7280";
+                      return (
+                        <button
+                          key={nextS}
+                          type="button"
+                          onClick={() => setPendingStatus(nextS)}
+                          style={{
+                            ...chipStyle(c),
+                            cursor: "pointer",
+                            border: `1px solid ${c}`,
+                            background: "transparent",
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = c + "1A"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+                        >
+                          <span style={dotStyle(c)} />
+                          {STATUS_LABEL[nextS] || nextS}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <p style={{
+                  marginTop: 8,
+                  color: p.textMuted, fontFamily: "'Manrope', sans-serif",
+                  fontSize: "0.72rem", lineHeight: 1.55,
+                }}>
+                  Terminal state — no further transitions. Re-open from history if this was set in error.
+                </p>
+              )}
             </FormGroup>
             <div className="mt-4">
               <FormGroup label="Payment status">
@@ -1592,6 +1918,48 @@ function BookingEditor({ booking, onClose }) {
                   options={Object.entries(PAYMENT_LABEL).map(([k, l]) => ({ value: k, label: l, color: PAYMENT_BASE[k] }))}
                 />
               </FormGroup>
+            </div>
+            {/* Status history — one row per transition, newest first. The
+                audit trail also lands in audit_logs for global visibility. */}
+            <div className="mt-5">
+              <div style={{
+                color: p.textMuted, fontFamily: "'Manrope', sans-serif",
+                fontSize: "0.6rem", letterSpacing: "0.22em",
+                textTransform: "uppercase", fontWeight: 700, marginBottom: 8,
+              }}>Status history</div>
+              {Array.isArray(draft.statusLog) && draft.statusLog.length > 0 ? (
+                <div className="space-y-2">
+                  {[...draft.statusLog].reverse().map((e, i) => {
+                    const fc = STATUS_BASE[e.from] || "#6B7280";
+                    const tc = STATUS_BASE[e.to]   || "#6B7280";
+                    return (
+                      <div key={i} className="p-3" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
+                        <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: 6 }}>
+                          <span style={chipStyle(fc)}>
+                            <span style={dotStyle(fc)} />
+                            {STATUS_LABEL[e.from] || e.from || "—"}
+                          </span>
+                          <span style={{ color: p.textMuted, fontWeight: 700 }}>→</span>
+                          <span style={chipStyle(tc)}>
+                            <span style={dotStyle(tc)} />
+                            {STATUS_LABEL[e.to] || e.to}
+                          </span>
+                          <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", marginInlineStart: "auto" }}>
+                            {fmtDate(e.ts)} · {e.actorName || "Staff"}{e.actorRole ? ` · ${e.actorRole}` : ""}
+                          </span>
+                        </div>
+                        <div style={{ color: p.textSecondary, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", lineHeight: 1.5 }}>
+                          {e.remark || <em style={{ color: p.textMuted }}>(no remark)</em>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", lineHeight: 1.5 }}>
+                  No status changes recorded yet. Future transitions will be logged here with the operator's remark.
+                </p>
+              )}
             </div>
           </Card>
 
@@ -1960,7 +2328,277 @@ function BookingEditor({ booking, onClose }) {
           onConfirm={deleteBookingPermanently}
         />
       )}
+      {pendingStatus && (
+        <StatusChangeDialog
+          booking={draft}
+          nextStatus={pendingStatus}
+          onCancel={() => setPendingStatus(null)}
+          onConfirm={(remark) => applyEditorStatusChange(pendingStatus, remark)}
+        />
+      )}
     </Drawer>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// StatusChangeDialog — every booking status transition lands here. The
+// remark is REQUIRED (operator must type something before Confirm enables)
+// so the audit trail always carries a "why". Renders the from → to flow
+// with the same colour swatches used everywhere else for continuity.
+// ---------------------------------------------------------------------------
+function StatusChangeDialog({ booking, nextStatus, onCancel, onConfirm }) {
+  const p = usePalette();
+  const [remark, setRemark] = useState("");
+  const armed = remark.trim().length > 0;
+  const fromColor = STATUS_BASE[booking.status] || "#6B7280";
+  const toColor   = STATUS_BASE[nextStatus]    || "#6B7280";
+  const destructive = nextStatus === "cancelled" || nextStatus === "rejected" || nextStatus === "sold-out";
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-lg"
+        style={{ backgroundColor: p.bgPanel, border: `1px solid ${destructive ? p.danger : p.accent}`, fontFamily: "'Manrope', sans-serif" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 py-4 flex items-center gap-2" style={{ borderBottom: `1px solid ${p.border}` }}>
+          <span style={{ color: destructive ? p.danger : p.accent, fontSize: "0.66rem", letterSpacing: "0.28em", textTransform: "uppercase", fontWeight: 700 }}>
+            Change reservation status · {booking.id}
+          </span>
+        </div>
+        <div className="px-5 py-4" style={{ color: p.textSecondary, fontSize: "0.84rem", lineHeight: 1.55 }}>
+          <div className="flex items-center gap-3" style={{ marginBottom: 14 }}>
+            <span style={chipStyle(fromColor)}>
+              <span style={dotStyle(fromColor)} />
+              {STATUS_LABEL[booking.status] || booking.status}
+            </span>
+            <span style={{ color: p.textMuted, fontWeight: 700 }}>→</span>
+            <span style={chipStyle(toColor)}>
+              <span style={dotStyle(toColor)} />
+              {STATUS_LABEL[nextStatus] || nextStatus}
+            </span>
+          </div>
+          <label style={{ display: "block", color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
+            Remark · required
+          </label>
+          <textarea
+            value={remark}
+            onChange={(e) => setRemark(e.target.value)}
+            placeholder={
+              nextStatus === "cancelled" ? "Why is this booking being cancelled? (e.g. guest no-show, overbooking shift, duplicate)" :
+              nextStatus === "rejected"  ? "Why is the request being rejected? (e.g. unsuitable dates, no inventory)" :
+              nextStatus === "sold-out"  ? "Note the period / suite type that's sold out and how the guest will be informed" :
+              nextStatus === "in-house"  ? "Check-in note (room handed over, ID copy taken, any special arrangements)" :
+              nextStatus === "checked-out" ? "Check-out note (folio settled, deposit released, any incidentals)" :
+              nextStatus === "confirmed" ? "Confirmation note (inventory allocated, hotel ref issued, payment terms)" :
+              "Brief note explaining this status change"
+            }
+            rows={4}
+            autoFocus
+            style={{
+              width: "100%", padding: "0.55rem 0.7rem",
+              fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem",
+              backgroundColor: p.inputBg, color: p.textPrimary,
+              border: `1px solid ${armed ? (destructive ? p.danger : p.accent) : p.border}`, outline: "none",
+              resize: "vertical",
+            }}
+          />
+          <p style={{ color: p.textMuted, fontSize: "0.72rem", marginTop: 8, lineHeight: 1.55 }}>
+            This remark is appended to the booking's audit trail (Status history card in the editor + global audit log) and visible to every operator with access to this booking.
+          </p>
+        </div>
+        <div className="px-5 py-3 flex items-center justify-end gap-2" style={{ borderTop: `1px solid ${p.border}` }}>
+          <button
+            onClick={onCancel}
+            style={{
+              backgroundColor: "transparent",
+              color: p.textMuted,
+              border: `1px solid ${p.border}`,
+              padding: "0.5rem 1rem",
+              fontFamily: "'Manrope', sans-serif",
+              fontSize: "0.66rem", fontWeight: 600,
+              letterSpacing: "0.2em", textTransform: "uppercase",
+              cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => { if (armed) onConfirm(remark); }}
+            disabled={!armed}
+            style={{
+              backgroundColor: armed ? (destructive ? p.danger : p.accent) : "transparent",
+              color: armed ? "#FFFFFF" : p.textDim,
+              border: `1px solid ${armed ? (destructive ? p.danger : p.accent) : p.border}`,
+              padding: "0.5rem 1rem",
+              fontFamily: "'Manrope', sans-serif",
+              fontSize: "0.66rem", fontWeight: 700,
+              letterSpacing: "0.2em", textTransform: "uppercase",
+              cursor: armed ? "pointer" : "not-allowed",
+            }}
+          >
+            Confirm change
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// WhatsAppMessagePreview — small modal that renders the pre-built
+// confirmation text in a textarea so the operator can SEE what's being
+// shared, and offers a Copy button + a direct "Open in WhatsApp" deep
+// link when a phone number is on file. Falls back to manual select-all
+// when the async Clipboard API is blocked (sandboxed previews, missing
+// document focus, restrictive Permissions-Policy headers).
+// ---------------------------------------------------------------------------
+function WhatsAppMessagePreview({ booking, message, phone, waDigits, onClose }) {
+  const p = usePalette();
+  const taRef = useRef(null);
+  const [copied, setCopied] = useState(false);
+  const [copyErr, setCopyErr] = useState(false);
+  // Auto-select the text on mount so the operator can Cmd/Ctrl+C
+  // immediately even if the Copy button's clipboard write is blocked.
+  React.useEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => { try { el.focus(); el.select(); } catch (_) {} });
+  }, []);
+  const handleCopy = async () => {
+    setCopyErr(false);
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(message);
+      } else if (taRef.current) {
+        taRef.current.focus();
+        taRef.current.select();
+        const ok = document.execCommand("copy");
+        if (!ok) throw new Error("execCommand returned false");
+      } else {
+        throw new Error("no clipboard available");
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+      pushToast({ message: "WhatsApp message copied to clipboard." });
+    } catch (_) {
+      setCopyErr(true);
+      // Re-select so the operator can copy with the keyboard shortcut.
+      try { taRef.current?.focus(); taRef.current?.select(); } catch (_) {}
+    }
+  };
+  const waUrl = waDigits ? `https://wa.me/${waDigits}?text=${encodeURIComponent(message)}` : null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-xl"
+        style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}`, fontFamily: "'Manrope', sans-serif" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 py-4 flex items-center gap-2" style={{ borderBottom: `1px solid ${p.border}` }}>
+          <MessageCircle size={14} style={{ color: p.accent }} />
+          <span style={{ color: p.accent, fontSize: "0.66rem", letterSpacing: "0.28em", textTransform: "uppercase", fontWeight: 700 }}>
+            WhatsApp message · {booking.id}
+          </span>
+        </div>
+        <div className="px-5 py-4" style={{ color: p.textSecondary, fontSize: "0.82rem", lineHeight: 1.55 }}>
+          <p style={{ color: p.textMuted, fontSize: "0.74rem", marginBottom: 10 }}>
+            {phone
+              ? <>Number on file: <strong style={{ color: p.textPrimary }}>{phone}</strong>. Copy the text below or open WhatsApp with this message pre-filled.</>
+              : <>No mobile number on file. Copy the text below and paste into any WhatsApp chat (web, desktop, or mobile).</>
+            }
+          </p>
+          <textarea
+            ref={taRef}
+            readOnly
+            value={message}
+            rows={Math.min(16, Math.max(8, message.split("\n").length + 1))}
+            style={{
+              width: "100%",
+              padding: "0.7rem 0.85rem",
+              fontFamily: "'Manrope', sans-serif",
+              fontSize: "0.84rem",
+              lineHeight: 1.5,
+              backgroundColor: p.inputBg,
+              color: p.textPrimary,
+              border: `1px solid ${p.border}`,
+              outline: "none",
+              resize: "vertical",
+              whiteSpace: "pre-wrap",
+            }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = p.accent; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = p.border; }}
+          />
+          {copyErr && (
+            <p style={{ color: p.warn, fontSize: "0.72rem", marginTop: 8 }}>
+              Auto-copy was blocked by the browser. The text is selected — press <strong>{navigator.platform?.includes("Mac") ? "⌘C" : "Ctrl+C"}</strong> to copy manually.
+            </p>
+          )}
+        </div>
+        <div className="px-5 py-3 flex items-center justify-end gap-2" style={{ borderTop: `1px solid ${p.border}` }}>
+          <button
+            onClick={onClose}
+            style={{
+              backgroundColor: "transparent",
+              color: p.textMuted,
+              border: `1px solid ${p.border}`,
+              padding: "0.5rem 1rem",
+              fontFamily: "'Manrope', sans-serif",
+              fontSize: "0.66rem", fontWeight: 600,
+              letterSpacing: "0.2em", textTransform: "uppercase",
+              cursor: "pointer",
+            }}
+          >
+            Close
+          </button>
+          {waUrl && (
+            <a
+              href={waUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                backgroundColor: "transparent",
+                color: p.accent,
+                border: `1px solid ${p.accent}`,
+                padding: "0.5rem 1rem",
+                fontFamily: "'Manrope', sans-serif",
+                fontSize: "0.66rem", fontWeight: 700,
+                letterSpacing: "0.2em", textTransform: "uppercase",
+                cursor: "pointer",
+                display: "inline-flex", alignItems: "center", gap: 6,
+                textDecoration: "none",
+              }}
+            >
+              <MessageCircle size={12} /> Open in WhatsApp
+            </a>
+          )}
+          <button
+            onClick={handleCopy}
+            style={{
+              backgroundColor: copied ? p.success : p.accent,
+              color: "#FFFFFF",
+              border: `1px solid ${copied ? p.success : p.accent}`,
+              padding: "0.5rem 1rem",
+              fontFamily: "'Manrope', sans-serif",
+              fontSize: "0.66rem", fontWeight: 700,
+              letterSpacing: "0.2em", textTransform: "uppercase",
+              cursor: "pointer",
+              display: "inline-flex", alignItems: "center", gap: 6,
+              transition: "background-color 200ms",
+            }}
+          >
+            {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy message</>}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

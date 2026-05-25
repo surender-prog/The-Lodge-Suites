@@ -49,7 +49,10 @@ const startOfYearISO = () => new Date(new Date().getFullYear(), 0, 1).toISOStrin
 const STATUS_BASE = {
   "confirmed":   "#2563EB",
   "in-house":    "#16A34A",
+  "on-request":  "#D97706",
   "checked-out": "#64748B",
+  "rejected":    "#9F1239",
+  "sold-out":    "#7C3AED",
   "cancelled":   "#DC2626",
 };
 const PAYMENT_BASE = {

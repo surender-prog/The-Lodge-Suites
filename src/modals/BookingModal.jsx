@@ -8,12 +8,12 @@ import { CountrySelect } from "../components/CountrySelect.jsx";
 import { findCountryByCode, parsePhone, DEFAULT_COUNTRY_CODE } from "../data/countryCodes.js";
 import { useT, useLang } from "../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween, todayISO } from "../utils/date.js";
-import { priceExtra, priceLabelFor, useData, evalPackageEligibility, describePackageConditions, roomFitsParty, computePackageCharge, computePackageSaving, packagePriceSuffix, getPackageRoomPrice, getPackageMinPrice, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, applyTaxes, nightlyBreakdown, formatCurrency, findRedeemableGiftCard, evaluateGiftCardForBooking, normaliseGiftCardCode, MEAL_PLANS, mealPlanSupplement, mealPlanLabel, enabledMealPlansFor } from "../data/store.jsx";
+import { priceExtra, priceLabelFor, useData, evalPackageEligibility, describePackageConditions, roomFitsParty, computePackageCharge, computePackageSaving, packagePriceSuffix, getPackageRoomPrice, getPackageMinPrice, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, applyTaxes, nightlyBreakdown, formatCurrency, findRedeemableGiftCard, evaluateGiftCardForBooking, normaliseGiftCardCode, MEAL_PLANS, mealPlanSupplement, mealPlanLabel, enabledMealPlansFor, roomTypeAvailable } from "../data/store.jsx";
 
 export const BookingModal = ({ open, onClose, initial }) => {
   const t = useT();
   const { lang } = useLang();
-  const { rooms: ROOMS, activeExtras, activePackages, addBooking, members, addMember, tiers, loyalty, tax, taxPatterns, activePatternId, hotelInfo, giftCards, redeemGiftCard } = useData();
+  const { rooms: ROOMS, activeExtras, activePackages, addBooking, members, addMember, tiers, loyalty, tax, taxPatterns, activePatternId, hotelInfo, giftCards, redeemGiftCard, bookings, roomUnits } = useData();
   // Tier discount table — single source of truth for both the booking-
   // modal's "register me as Silver" flow and the existing-member welcome-
   // back path. Mirrors what the customer portal uses.
@@ -627,6 +627,19 @@ export const BookingModal = ({ open, onClose, initial }) => {
       // admin Bookings drawer. Picks the lead suite's breakdown when the
       // booking spans multiple room types (rare in this flow).
       const leadBreakdown = roomLines[0]?.breakdown || null;
+      // Inventory check — if the chosen suite is sold out for any night in
+      // the window the booking lands as "on-request" instead of "confirmed"
+      // so the operator can manually approve / reject from the partner
+      // portal. Stamps a kickoff entry in statusLog so the audit trail
+      // covers the lifecycle from the very first event.
+      const targetRoomId = lead?.id || ROOMS[0]?.id;
+      const isAvailable = roomTypeAvailable(targetRoomId, data.checkIn, data.checkOut, 1, {
+        rooms: ROOMS, bookings, roomUnits,
+      });
+      const initialStatus = isAvailable ? "confirmed" : "on-request";
+      const initialStatusRemark = isAvailable
+        ? "Auto-confirmed at booking — inventory available."
+        : "Auto-routed to On request — no inventory for the requested dates. Front desk to confirm or reject.";
       addBooking({
         id: code,
         guest: data.name || "Guest",
@@ -664,7 +677,16 @@ export const BookingModal = ({ open, onClose, initial }) => {
         // flips to "paid". Until then, Pay-now sits at zero just like
         // Pay-on-arrival.
         paid: 0,
-        status: "confirmed",
+        status: initialStatus,
+        statusLog: [{
+          ts: new Date().toISOString(),
+          actorId: memberId || "anon",
+          actorName: data.name || "Guest",
+          actorRole: "guest",
+          from: null,
+          to: initialStatus,
+          remark: initialStatusRemark,
+        }],
         // Non-guaranteed bookings stay "pending" on the payment ledger
         // (no deposit, no card) so dashboards can flag them quickly. Pay-
         // on-arrival WITH a card stays "deposit" (the existing default).

@@ -2379,6 +2379,43 @@ export function effectiveSellLimit(room, roomUnits) {
   return Math.floor(n);
 }
 
+// Inventory check used by the new-booking flows. Walks every night in
+// [checkIn, checkOut) and counts how many existing bookings overlap that
+// night for the chosen room type — anything in cancelled / rejected /
+// sold-out (i.e. inventory-releasing statuses) is excluded. Returns
+// false when ANY night is at-or-over the effective sell limit, so the
+// caller can default the new booking to "on-request" instead of
+// "confirmed" without having to redo the date-math itself.
+//
+// `quantity` is the number of identical suites the prospective guest
+// wants to book (typically 1; group bookings can pass higher).
+export function roomTypeAvailable(roomId, checkIn, checkOut, qty, { rooms, bookings, roomUnits }) {
+  if (!roomId || !checkIn || !checkOut) return true;
+  const room = (rooms || []).find((r) => r.id === roomId);
+  if (!room) return true;
+  const cap = effectiveSellLimit(room, roomUnits || []);
+  if (cap <= 0) return false;
+  const need = Math.max(1, Number(qty) || 1);
+  const ci = new Date(checkIn);
+  const co = new Date(checkOut);
+  if (!(ci instanceof Date) || isNaN(ci) || isNaN(co) || co <= ci) return true;
+  // Statuses that DO hold inventory — anything else releases the night.
+  const HOLDS_INVENTORY = new Set(["confirmed", "in-house", "on-request", "checked-out"]);
+  const relevant = (bookings || []).filter(
+    (b) => b && b.roomId === roomId && HOLDS_INVENTORY.has(b.status)
+  );
+  for (let d = new Date(ci); d < co; d.setDate(d.getDate() + 1)) {
+    const day = d.toISOString().slice(0, 10);
+    let used = 0;
+    for (const b of relevant) {
+      if (!b.checkIn || !b.checkOut) continue;
+      if (day >= b.checkIn && day < b.checkOut) used += 1;
+    }
+    if (used + need > cap) return false;
+  }
+  return true;
+}
+
 export const ROOM_VIEWS = [
   { id: "sea",     label: "Sea view" },
   { id: "city",    label: "City view" },
@@ -3532,6 +3569,11 @@ const DEFAULT_HOTEL_INFO = {
   emailSales:        "sales@exploremena.com",
   emailPress:        "press@thelodgesuites.com",
   website:           "www.thelodgesuites.com",
+  // Google Maps share link (the short maps.app.goo.gl form preserves the
+  // precise pin + business listing). Used by every "Open in Maps" CTA on
+  // the public site — keep in sync with the hotel's actual GMB pin if it
+  // ever moves.
+  mapsUrl:           "https://maps.app.goo.gl/N7dGa9Zqt1Rd9Apm8",
   iban:              "BH## NBOB ##############",
   bank:              "National Bank of Bahrain",
   copyrightYear:     "2026",
