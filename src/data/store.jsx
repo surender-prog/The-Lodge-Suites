@@ -5544,13 +5544,20 @@ export function DataProvider({ children }) {
     setGiftCards((prev) => prev.filter((c) => c.id !== id));
   }, []);
 
-  // Redeem `nights` against a card by id. Increments nightsUsed,
-  // appends a redemptionHistory entry, flips status to "redeemed"
-  // when fully consumed. Idempotent — caller should compute nights
-  // via evaluateGiftCardForBooking() and pass the redeem count.
+  // Redeem (hold) `nights` against a card by id. Increments nightsUsed,
+  // appends a redemptionHistory entry, flips status to "redeemed" when
+  // fully consumed. IDEMPOTENT per bookingId — if a redemption entry
+  // already exists for this booking, it's a no-op, so a re-render or a
+  // double-submit can never double-debit the card. Caller computes the
+  // night count (nights covered by the card, not overflow).
   const redeemGiftCard = useCallback(({ id, nights, bookingId, savings }) => {
     setGiftCards((prev) => prev.map((c) => {
       if (c.id !== id) return c;
+      // Guard against double-debit: skip when this booking already has a
+      // redemption entry on the card.
+      if (bookingId && (c.redemptionHistory || []).some((e) => e.bookingId === bookingId)) {
+        return c;
+      }
       const used = (c.nightsUsed || 0) + (Number(nights) || 0);
       const isDone = used >= (c.totalNights || 0);
       const entry = {
@@ -5564,6 +5571,28 @@ export function DataProvider({ children }) {
         nightsUsed: used,
         status: isDone ? "redeemed" : c.status,
         redemptionHistory: [...(c.redemptionHistory || []), entry],
+      };
+    }));
+  }, []);
+
+  // Release a previously-held redemption when its booking is cancelled /
+  // rejected / sold-out. Finds whichever card carries a redemption entry
+  // for `bookingId`, removes that entry, credits the nights back to the
+  // balance, and un-redeems the status if it had been fully consumed.
+  // Safe to call for non-gift-card bookings (no matching entry → no-op).
+  const releaseGiftCardForBooking = useCallback((bookingId) => {
+    if (!bookingId) return;
+    setGiftCards((prev) => prev.map((c) => {
+      const hist = c.redemptionHistory || [];
+      const entry = hist.find((e) => e.bookingId === bookingId);
+      if (!entry) return c;
+      const used = Math.max(0, (c.nightsUsed || 0) - (Number(entry.nights) || 0));
+      const nextStatus = (c.status === "redeemed" && used < (c.totalNights || 0)) ? "issued" : c.status;
+      return {
+        ...c,
+        nightsUsed: used,
+        status: nextStatus,
+        redemptionHistory: hist.filter((e) => e.bookingId !== bookingId),
       };
     }));
   }, []);
@@ -5901,7 +5930,7 @@ export function DataProvider({ children }) {
     setRoomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus,
     setMembers, addMember, updateMember, removeMember,
     // Gift cards — advance-purchase night packs
-    giftCards, setGiftCards, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard,
+    giftCards, setGiftCards, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, releaseGiftCardForBooking,
     transferGiftCard, verifyGiftCardTransfer,
     // Gift card tier master — admin-editable list of the preset bundles
     giftCardTiers, setGiftCardTiers, updateGiftCardTiers, resetGiftCardTiers,
@@ -5909,7 +5938,7 @@ export function DataProvider({ children }) {
     setCalendar, setCalendarCell,
     setLoyalty,
     addBooking, updateBooking, removeBooking,
-  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, addRoom, removeRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, eventSupplements, upsertEventSupplement, removeEventSupplement, resetEventSupplements, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
+  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, addRoom, removeRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, releaseGiftCardForBooking, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, eventSupplements, upsertEventSupplement, removeEventSupplement, resetEventSupplements, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
 
   return <DataStoreContext.Provider value={value}>{children}</DataStoreContext.Provider>;
 }

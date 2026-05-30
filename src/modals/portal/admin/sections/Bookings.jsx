@@ -584,7 +584,7 @@ function SourceMixCard({ bookings, setSource, activeSource }) {
 function RowActions({ booking, onEdit }) {
   const p = usePalette();
   const t = useT();
-  const { updateBooking, removeBooking, addInvoice, invoices, tax, rooms, extras, staffSession, appendAuditLog, hotelInfo, members } = useData();
+  const { updateBooking, removeBooking, addInvoice, invoices, tax, rooms, extras, staffSession, appendAuditLog, hotelInfo, members, releaseGiftCardForBooking } = useData();
   const { lang } = useLang();
   const [menuOpen, setMenuOpen] = useState(false);
   const [docPreview, setDocPreview] = useState(null); // "invoice" | "receipt" | null
@@ -731,6 +731,12 @@ function RowActions({ booking, onEdit }) {
     };
     const nextLog = Array.isArray(booking.statusLog) ? [...booking.statusLog, entry] : [entry];
     updateBooking(booking.id, { status: next, statusLog: nextLog });
+    // Release held gift-card nights when the booking falls out of the
+    // active set — they return to the card's balance. No-op for bookings
+    // that don't redeem a card.
+    if (["cancelled", "rejected", "sold-out"].includes(next) && booking.redeemingGiftCardId) {
+      try { releaseGiftCardForBooking(booking.id); } catch (_) {}
+    }
     try {
       appendAuditLog?.({
         kind: "booking-status-change",
@@ -740,7 +746,10 @@ function RowActions({ booking, onEdit }) {
         targetKind: "booking",
         targetId:   booking.id,
         targetName: booking.guest || null,
-        details: `Status ${STATUS_LABEL[entry.from] || entry.from} → ${STATUS_LABEL[entry.to] || entry.to} · ${trimmed}`,
+        details: `Status ${STATUS_LABEL[entry.from] || entry.from} → ${STATUS_LABEL[entry.to] || entry.to} · ${trimmed}`
+          + (["cancelled", "rejected", "sold-out"].includes(next) && booking.redeemingGiftCardId
+              ? ` · released ${booking.giftCardNightsRequested || 0} night(s) back to ${booking.redeemingGiftCardCode}`
+              : ""),
       });
     } catch (_) {}
     pushToast({
@@ -1485,7 +1494,7 @@ function BookingEditor({ booking, onClose }) {
   const t = useT();
   const p = usePalette();
   const data = useData();
-  const { rooms, agreements, agencies, members, invoices, payments, packages, tax, taxPatterns, activePatternId, extras, hotelInfo, staffSession, updateBooking, removeBooking, addInvoice, addPayment, appendAuditLog } = data;
+  const { rooms, agreements, agencies, members, invoices, payments, packages, tax, taxPatterns, activePatternId, extras, hotelInfo, staffSession, updateBooking, removeBooking, addInvoice, addPayment, appendAuditLog, releaseGiftCardForBooking } = data;
   const [draft, setDraft] = useState(booking);
   const [docPreview, setDocPreview] = useState(null); // "confirmation" | "invoice" | "receipt" | null
   const [recordingPayment, setRecordingPayment] = useState(false);
@@ -1513,6 +1522,10 @@ function BookingEditor({ booking, onClose }) {
     const nextLog = Array.isArray(draft.statusLog) ? [...draft.statusLog, entry] : [entry];
     updateBooking(booking.id, { status: next, statusLog: nextLog });
     setDraft((d) => ({ ...d, status: next, statusLog: nextLog }));
+    // Release held gift-card nights when the booking exits the active set.
+    if (["cancelled", "rejected", "sold-out"].includes(next) && draft.redeemingGiftCardId) {
+      try { releaseGiftCardForBooking(booking.id); } catch (_) {}
+    }
     try {
       appendAuditLog?.({
         kind: "booking-status-change",
@@ -1522,7 +1535,10 @@ function BookingEditor({ booking, onClose }) {
         targetKind: "booking",
         targetId:   booking.id,
         targetName: booking.guest || null,
-        details: `Status ${STATUS_LABEL[entry.from] || entry.from} → ${STATUS_LABEL[entry.to] || entry.to} · ${trimmed}`,
+        details: `Status ${STATUS_LABEL[entry.from] || entry.from} → ${STATUS_LABEL[entry.to] || entry.to} · ${trimmed}`
+          + (["cancelled", "rejected", "sold-out"].includes(next) && draft.redeemingGiftCardId
+              ? ` · released ${draft.giftCardNightsRequested || 0} night(s) back to ${draft.redeemingGiftCardCode}`
+              : ""),
       });
     } catch (_) {}
     pushToast({
@@ -1634,7 +1650,11 @@ function BookingEditor({ booking, onClose }) {
   const markPaid   = () => { update({ paymentStatus: "paid", paid: grandTotal }); pushToast({ message: "Marked paid (unsaved)" }); };
   const checkIn    = () => { update({ status: "in-house" });   pushToast({ message: "Status set to in-house (unsaved)" }); };
   const checkOut   = () => { update({ status: "checked-out" }); pushToast({ message: "Status set to checked-out (unsaved)" }); };
-  const cancelBkg  = () => { if (confirm(`Cancel booking ${booking.id}?`)) { update({ status: "cancelled" }); pushToast({ message: "Status set to cancelled (unsaved)", kind: "warn" }); } };
+  // Route the sidebar cancel through the same StatusChangeDialog the pill
+  // picker uses — so it captures a remark, writes the audit entry, and
+  // releases any held gift-card nights via applyEditorStatusChange. (The
+  // old "unsaved draft" shortcut skipped all three.)
+  const cancelBkg  = () => { setPendingStatus("cancelled"); };
 
   // Hard-delete from the DB. Gated by the `bookings_delete` permission and
   // a "type the booking reference to confirm" modal — this is the only

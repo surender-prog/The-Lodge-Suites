@@ -2664,7 +2664,7 @@ function GiftCardRow({ card, onShare, onPreview, onBook, p }) {
 // portal; stop-sale + event-period windows block submission outright.
 function BookWithGiftCardDialog({ card, member, onClose, p }) {
   const t = useT();
-  const { rooms, bookings, roomUnits, addBooking, calendar, eventSupplements, appendAuditLog } = useData();
+  const { rooms, bookings, roomUnits, addBooking, calendar, eventSupplements, appendAuditLog, redeemGiftCard } = useData();
   const sourceRoom = useMemo(() => (rooms || []).find((r) => r.id === card.roomId), [rooms, card.roomId]);
   const remaining = (card.totalNights || 0) - (card.nightsUsed || 0);
   const today = todayISO();
@@ -2870,7 +2870,9 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
         guaranteed,
         guaranteeMode: guaranteed ? "card" : "none",
         paymentNote,
-        // Gift-card linkage — admin redeems against this id on approval.
+        // Gift-card linkage — the redeem below holds these nights against
+        // the card now; they're released if the booking is later
+        // cancelled / rejected / sold-out (see releaseGiftCardForBooking).
         redeemingGiftCardId: card.id,
         redeemingGiftCardCode: card.code,
         giftCardNightsRequested: nightsCoveredByCard,
@@ -2879,6 +2881,18 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
         giftCardTopUpGross:     totalDue,
         notes,
       });
+      // Hold the card nights immediately so the member's remaining
+      // balance reflects this booking the moment it's placed. Idempotent
+      // per bookingId, so a re-render can't double-debit. Released back to
+      // the balance if the operator cancels / rejects / marks sold-out.
+      try {
+        redeemGiftCard({
+          id: card.id,
+          nights: nightsCoveredByCard,
+          bookingId: saved?.id || code,
+          savings: +(nightsCoveredByCard * Number(sourceRoom?.price || 0)).toFixed(3),
+        });
+      } catch (_) {}
       try {
         appendAuditLog?.({
           kind: "gift-card-booking-request",
@@ -2888,7 +2902,7 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
           targetKind: "booking",
           targetId:   saved?.id || code,
           targetName: member.name,
-          details: `Request to redeem ${card.code} (${nightsCoveredByCard}/${nights} nights) at ${roomLabel(targetRoom, t)} ${checkIn} → ${checkOut}${perNightDiff > 0 ? ` · top-up BHD ${perNightDiff}/n` : ""}`,
+          details: `Redeemed ${card.code} (${nightsCoveredByCard}/${nights} nights held) at ${roomLabel(targetRoom, t)} ${checkIn} → ${checkOut}${perNightDiff > 0 ? ` · top-up BHD ${perNightDiff}/n` : ""}`,
         });
       } catch (_) {}
       pushToast({
