@@ -95,17 +95,12 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
   const defaultRoomId = rooms?.find((r) => r.id === "one-bed")?.id || rooms?.[0]?.id || "studio";
   const [roomId, setRoomId]   = useState(defaultRoomId);
   const [tierId, setTierId]   = useState(activeTiers[1]?.id || activeTiers[0]?.id || "10n");
-  const [delivery, setDelivery] = useState("email");
-  // Email-only model: gift cards are member-only, so both sender and
-  // recipient resolve to LS Privilege members by email. The buyer
-  // (sender) supplies their own email so we can identify their member
-  // record; the recipient's email is checked against the directory and
-  // a friendly "not a member yet — invite them" hint shows when no
-  // match exists.
-  const [buyerEmail,     setBuyerEmail]     = useState("");
-  const [recipientEmail, setRecipientEmail] = useState("");
-  const [deliverOn,      setDeliverOn]      = useState("");
-  const [message,        setMessage]        = useState("");
+  // The buyer supplies their LS Privilege email so we can identify their
+  // member record and park the issued card on their account. Recipient
+  // assignment, delivery format, and personal message used to live in a
+  // separate composer step but have moved into the LS Privilege member
+  // portal — buyers send / re-print their cards from there.
+  const [buyerEmail, setBuyerEmail] = useState("");
   // Payment method + buyer-facing payment metadata. `cardName` is the
   // only field we capture for card methods — full card numbers go
   // through the gateway, never our DOM. `transferRef` is a free-text
@@ -137,12 +132,6 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
     if (!e) return null;
     return (members || []).find((m) => (m.email || "").toLowerCase() === e) || null;
   }, [buyerEmail, members]);
-  const recipientMember = useMemo(() => {
-    const e = (recipientEmail || "").trim().toLowerCase();
-    if (!e) return null;
-    return (members || []).find((m) => (m.email || "").toLowerCase() === e) || null;
-  }, [recipientEmail, members]);
-  const sameMember = buyerMember && recipientMember && buyerMember.id === recipientMember.id;
 
   // Active payment method record. Falls back to the first method if the
   // picked key was removed from the catalogue (defensive).
@@ -159,16 +148,16 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
     return true;
   }, [paymentMethod, cardName, transferRef]);
 
+  // Public purchase flow only needs the buyer to be an LS Privilege
+  // member — the card is issued to their account. Recipient assignment
+  // (and delivery / personal message) happens later from the member
+  // portal once the card is on file.
   const canSubmit = !!buyerMember
-    && !!recipientMember
-    && !sameMember
     && paymentReady
     && !processing;
 
   const handleSubmit = async () => {
     if (!buyerMember) { pushToast({ message: "Enter your LS Privilege email to continue.", kind: "warn" }); return; }
-    if (!recipientMember) { pushToast({ message: "Recipient must be a LS Privilege member.", kind: "warn" }); return; }
-    if (sameMember) { pushToast({ message: "Pick a different recipient — you can't gift to yourself.", kind: "warn" }); return; }
     if (paymentMethod === "card" && cardName.trim().length < 2) {
       pushToast({ message: "Enter the name on your card to continue.", kind: "warn" }); return;
     }
@@ -211,15 +200,20 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
         // "pending" → "issued" once the wire clears. For the four
         // card-style methods the funds are captured straight away.
         paidAmount: price.net,
-        recipientMemberId: recipientMember.id,
-        recipientName:     recipientMember.name,
-        recipientEmail:    recipientMember.email,
+        // Recipient is left blank at purchase time — the buyer assigns
+        // one later from their LS Privilege portal. The card initially
+        // belongs to the buyer's own account (recipientMemberId mirrors
+        // the buyer so the read-side that looks up cards "owned" by a
+        // member still finds it).
+        recipientMemberId: buyerMember.id,
+        recipientName:     buyerMember.name,
+        recipientEmail:    buyerMember.email,
         senderMemberId:    buyerMember.id,
         senderName:        buyerMember.name,
         senderEmail:       buyerMember.email,
-        message:        message.trim(),
-        delivery,
-        deliverOn: deliverOn || null,
+        message:           "",
+        delivery:          "email",
+        deliverOn:         null,
         // Surface the method on the card itself too — the admin
         // detail drawer reads it for the "Paid via" chip even before
         // the operator opens the linked receipt.
@@ -244,9 +238,6 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
   const closeAfterIssue = () => {
     setIssued(null);
     setBuyerEmail("");
-    setRecipientEmail("");
-    setDeliverOn("");
-    setMessage("");
     setPaymentMethod("card");
     setCardName("");
     setTransferRef("");
@@ -505,119 +496,43 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
         </div>
       </PageSection>
 
-      {/* Composer — only when we haven't already issued a card */}
+      {/* Step 3 · Payment + buyer identification. The composer (recipient
+          / delivery / personal message) has moved out of the public
+          purchase flow — buyers receive the code into their own LS
+          Privilege account and assign it to a recipient later from the
+          member portal. The only thing we still need at checkout is the
+          buyer's email so the issued card lands on the right account. */}
       {!issued && (
         <PageSection
-          eyebrow="Step 3 · Compose"
-          title="Send your"
-          italic="gift."
-          intro="Gift cards are member-to-member. Enter your LS Privilege email and the recipient's — we'll match them against the directory and issue the code instantly."
-        >
-          {/* Member-only callout — sets the expectation up front so the
-              buyer doesn't fill out the form before realising the
-              recipient needs an LS Privilege account. */}
-          <div className="p-5 mb-px" style={{ backgroundColor: C.bgDeep, color: C.cream, borderLeft: `3px solid ${C.gold}` }}>
-            <div className="flex items-start gap-3">
-              <div style={{ color: C.gold, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, flexShrink: 0, marginTop: 2 }}>
-                LS Privilege only
-              </div>
-              <div style={{ color: C.textDim, fontSize: "0.84rem", lineHeight: 1.55 }}>
-                Both buyer and recipient must be LS Privilege members. The code applies prepaid nights against the recipient's member account on redemption — they need an account to receive it. <button onClick={onClose} style={{ background: "transparent", border: "none", color: C.gold, fontWeight: 700, cursor: "pointer", padding: 0, textDecoration: "underline" }}>Not a member yet? Join LS Privilege.</button>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-px" style={{ backgroundColor: "rgba(0,0,0,0.08)" }}>
-            {/* Buyer + recipient */}
-            <div className="p-8" style={{ backgroundColor: C.cream }}>
-              <h3 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: C.bgDeep, fontWeight: 500 }}>
-                You (buyer)
-              </h3>
-              <PaperField label="Your LS Privilege email">
-                <input type="email" value={buyerEmail}
-                  onChange={(e) => setBuyerEmail(e.target.value)}
-                  placeholder="you@example.com" style={inputStyle}
-                />
-              </PaperField>
-              <MemberLookupChip member={buyerMember} email={buyerEmail} role="buyer" onJoin={onClose} />
-
-              <h3 className="mt-6" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: C.bgDeep, fontWeight: 500 }}>
-                Recipient
-              </h3>
-              <PaperField label="Their LS Privilege email">
-                <input type="email" value={recipientEmail}
-                  onChange={(e) => setRecipientEmail(e.target.value)}
-                  placeholder="recipient@example.com" style={inputStyle}
-                />
-              </PaperField>
-              <MemberLookupChip member={recipientMember} email={recipientEmail} role="recipient" onJoin={onClose} />
-              {sameMember && (
-                <div className="mt-2 p-2" style={{ backgroundColor: "rgba(184,133,46,0.10)", border: "1px solid rgba(184,133,46,0.45)", color: "#9A6B1E", fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", lineHeight: 1.5 }}>
-                  You can't gift to yourself — pick a different recipient.
-                </div>
-              )}
-            </div>
-
-            {/* Delivery + message */}
-            <div className="p-8" style={{ backgroundColor: C.paper }}>
-              <h3 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: C.bgDeep, fontWeight: 500 }}>
-                Delivery
-              </h3>
-              <PaperField label="Format">
-                <div className="flex gap-2 flex-wrap">
-                  {[
-                    { id: "email", label: "Email PDF" },
-                    { id: "print", label: "Printed certificate" },
-                  ].map((d) => {
-                    const sel = delivery === d.id;
-                    return (
-                      <button key={d.id}
-                        onClick={() => setDelivery(d.id)}
-                        style={{
-                          padding: "0.55rem 1rem",
-                          backgroundColor: sel ? C.bgDeep : "transparent",
-                          color: sel ? C.gold : C.bgDeep,
-                          border: `1px solid ${sel ? C.gold : "rgba(21,22,26,0.2)"}`,
-                          fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem",
-                          letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
-                          cursor: "pointer",
-                        }}
-                      >{d.label}</button>
-                    );
-                  })}
-                </div>
-              </PaperField>
-              <PaperField label="Deliver on (optional)">
-                <input type="date" value={deliverOn}
-                  onChange={(e) => setDeliverOn(e.target.value)}
-                  style={inputStyle}
-                />
-              </PaperField>
-              <PaperField label="Personal message">
-                <textarea value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  placeholder="A line or two — handwritten on the printed certificate, or shown above the PDF."
-                  rows={4}
-                  style={{ ...inputStyle, resize: "vertical" }}
-                />
-              </PaperField>
-            </div>
-          </div>
-
-        </PageSection>
-      )}
-
-      {/* Step 4 · Payment + submit. Lives outside the Step 3 PageSection
-          so the buyer reads it as a distinct stage — pick a method,
-          confirm the totals, pay. The CTA in the summary bar runs the
-          (mocked) gateway round-trip then calls issueGiftCard. */}
-      {!issued && (
-        <PageSection
-          eyebrow="Step 4 · Payment"
+          eyebrow="Step 3 · Payment"
           title="How would you like"
           italic="to pay?"
           intro="Pick a payment method. Cards and Apple Pay charge instantly through our secure gateway — your card details never touch our server. Benefit Pay redirects to your bank app; bank transfers reserve the card and issue once funds clear."
         >
+          {/* Buyer identification — the issued gift card is parked on
+              the buyer's LS Privilege account so they can browse it,
+              re-print it, or assign it to a recipient later from their
+              member portal. We match the email against the directory and
+              gate the submit until the row resolves. */}
+          <div className="p-7 mb-px" style={{ backgroundColor: C.cream }}>
+            <div className="flex items-start gap-3" style={{ marginBottom: 14 }}>
+              <div style={{ color: C.goldDeep, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, flexShrink: 0, marginTop: 2 }}>
+                LS Privilege only
+              </div>
+              <div style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", lineHeight: 1.55 }}>
+                Gift cards are issued to an LS Privilege account. The code lands in your member portal — you can keep it, send it to a recipient, or print the certificate from there. <button onClick={onClose} style={{ background: "transparent", border: "none", color: C.goldDeep, fontWeight: 700, cursor: "pointer", padding: 0, textDecoration: "underline" }}>Not a member yet? Join LS Privilege.</button>
+              </div>
+            </div>
+            <PaperField label="Your LS Privilege email">
+              <input type="email" value={buyerEmail}
+                onChange={(e) => setBuyerEmail(e.target.value)}
+                placeholder="you@example.com" style={inputStyle}
+                autoComplete="email"
+              />
+            </PaperField>
+            <MemberLookupChip member={buyerMember} email={buyerEmail} role="buyer" onJoin={onClose} />
+          </div>
+
           {/* Method picker — radio-style cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-px" style={{ backgroundColor: "rgba(0,0,0,0.08)" }}>
             {PAYMENT_METHODS.map((m) => {
@@ -835,8 +750,8 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-px" style={{ backgroundColor: "rgba(0,0,0,0.08)" }}>
           {[
             { n: "01", title: "Choose a suite + bundle", note: "Pick the suite type and the night tier. Discount applies automatically — bigger bundles save more." },
-            { n: "02", title: "Compose the gift",        note: "Recipient details, delivery format, personal message — assembled in one panel." },
-            { n: "03", title: "Code issued instantly",   note: "We generate a unique LS-GC-XXXX-XXXX code on submission. Share it however you like." },
+            { n: "02", title: "Pay & receive code",      note: "Pay with card, Apple Pay, Benefit Pay or bank transfer. We generate a unique LS-GC-XXXX-XXXX code and park it on your LS Privilege account." },
+            { n: "03", title: "Send from your portal",   note: "Open your LS Privilege account, add the recipient's email + a personal message, and we'll email the certificate. Or share the code directly." },
             { n: "04", title: "Recipient redeems",       note: "They enter the code during booking; prepaid nights apply automatically against the suite type." },
           ].map((s) => (
             <div key={s.n} className="p-7" style={{ backgroundColor: C.paper }}>
