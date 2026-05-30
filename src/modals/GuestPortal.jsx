@@ -20,7 +20,7 @@ import { Icon as ExtraIcon } from "../components/Icon.jsx";
 import { PortalThemeProvider, ThemeToggle, usePalette } from "./portal/theme.jsx";
 import { ToastHost, pushToast } from "./portal/admin/ui.jsx";
 import { GiftCardDocPreviewModal } from "./portal/admin/GiftCardDocs.jsx";
-import { NotificationBell } from "../components/NotificationBell.jsx";
+import { NotificationBell, MessagesQuickButton } from "../components/NotificationBell.jsx";
 import { MessageThread } from "../components/MessageThread.jsx";
 
 // ---------------------------------------------------------------------------
@@ -136,6 +136,17 @@ function GuestPortalInner({ onClose }) {
           </div>
         </div>
         <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+          {/* Quick jump to Messages with an unread counter — sits left of
+              the bell, mirroring the partner portal. Routes to the
+              Messages tab via the shared pendingNav mechanism. */}
+          {session && (
+            <MessagesQuickButton
+              audience="guest"
+              session={session}
+              palette={p}
+              onOpen={() => setPendingNav({ tab: "messages" })}
+            />
+          )}
           {/* Notification bell — visible only when a session is active so
               we have something to scope to. The audience filter pulls only
               this user's account-level notifications. */}
