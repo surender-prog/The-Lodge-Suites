@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle, ArrowRight, BedDouble, Briefcase, Building2, Calendar,
-  CalendarDays, CheckCircle2, ChevronLeft, ClipboardList, Coins, Copy, CreditCard,
+  CalendarDays, Check, CheckCircle2, ChevronLeft, ClipboardList, Coins, Copy, CreditCard,
   Crown, Download, Edit2, ExternalLink, Eye, EyeOff, FileBadge, FileText, Gift,
   Image as ImageIcon, KeyRound, Link as LinkIcon, Lock, LogIn, LogOut, Mail,
   MessageCircle, Minus, Paperclip, Phone, Plus, Printer,
@@ -13,7 +13,7 @@ import {
   whatsAppShareUrl, emailShareUrl, nativeShare, downloadBlob, tierVisuals, hotel,
 } from "../utils/membershipPass.js";
 import { useT } from "../i18n/LanguageContext.jsx";
-import { useData, applyTaxes, priceExtra, priceLabelFor, legalLine, roomFitsParty, buildCardOnFile, nightlyBreakdown, formatCurrency, resolveCurrency, MEAL_PLANS, mealPlanSupplement, mealPlanLabel, enabledMealPlansFor } from "../data/store.jsx";
+import { useData, applyTaxes, priceExtra, priceLabelFor, legalLine, roomFitsParty, buildCardOnFile, nightlyBreakdown, formatCurrency, resolveCurrency, MEAL_PLANS, mealPlanSupplement, mealPlanLabel, enabledMealPlansFor, roomTypeAvailable } from "../data/store.jsx";
 import { roomLabel, roomShort, sortRoomsByPrice, giftCardBookingBlockers } from "../lib/rooms.js";
 import { ensurePlanList, resolveDefaultPlan } from "./portal/ContractEditor.jsx";
 import { Icon as ExtraIcon } from "../components/Icon.jsx";
@@ -2646,15 +2646,40 @@ function GiftCardRow({ card, onShare, onPreview, onBook, p }) {
 // portal; stop-sale + event-period windows block submission outright.
 function BookWithGiftCardDialog({ card, member, onClose, p }) {
   const t = useT();
-  const { rooms, bookings, addBooking, calendar, eventSupplements, appendAuditLog } = useData();
+  const { rooms, bookings, roomUnits, addBooking, calendar, eventSupplements, appendAuditLog } = useData();
   const sourceRoom = useMemo(() => (rooms || []).find((r) => r.id === card.roomId), [rooms, card.roomId]);
   const remaining = (card.totalNights || 0) - (card.nightsUsed || 0);
+  const today = todayISO();
+  // Helper — checkout date = checkIn ISO + N days. Returns "" when the
+  // checkIn is blank / unparseable so the form gracefully degrades.
+  const addDays = (iso, days) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d)) return "";
+    d.setDate(d.getDate() + Math.max(1, Number(days) || 1));
+    return d.toISOString().slice(0, 10);
+  };
+
   // Default the target suite to the card's own room so "use as-is" is
   // the zero-click default. Member can pick a different (higher) suite
   // and the differential rolls in live.
   const [roomId, setRoomId]   = useState(card.roomId);
-  const [checkIn, setCheckIn] = useState("");
-  const [checkOut, setCheckOut] = useState("");
+  // Check-in is bounded to today onwards (no back-dating). Check-out is
+  // derived from check-in + the card's remaining nights so the member
+  // doesn't have to pick two dates — they can still adjust it manually
+  // to redeem partial nights / add overflow.
+  const [checkIn, setCheckInRaw] = useState("");
+  const [checkOut, setCheckOut]  = useState("");
+  const [checkoutTouched, setCheckoutTouched] = useState(false);
+  const setCheckIn = (iso) => {
+    setCheckInRaw(iso);
+    // Auto-derive check-out from check-in + remaining nights unless the
+    // member already adjusted it manually (we don't want to clobber a
+    // chosen partial-redemption / overflow date).
+    if (iso && !checkoutTouched) {
+      setCheckOut(addDays(iso, Math.max(1, remaining)));
+    }
+  };
   const [guests, setGuests]   = useState(2);
   const [notes, setNotes]     = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -2688,13 +2713,50 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
     [roomId, checkIn, checkOut, calendar, eventSupplements]
   );
 
+  // Upcoming blocked windows — the next 6 stop-sale / event ranges for
+  // the selected room, so the member sees what to avoid before they
+  // pick. HTML5 date inputs can't natively grey out specific cells, so
+  // this is the pragmatic alternative.
+  const upcomingBlocks = useMemo(() => {
+    const out = [];
+    const horizon = new Date();
+    horizon.setDate(horizon.getDate() + 365);
+    // Calendar overrides → stop-sale dates for this room
+    Object.entries(calendar || {}).forEach(([key, cell]) => {
+      if (!cell?.stopSale) return;
+      const [rid, iso] = key.split("|");
+      if (rid !== roomId) return;
+      const d = new Date(iso);
+      if (isNaN(d) || d < new Date(today) || d > horizon) return;
+      out.push({ from: iso, to: iso, kind: "stop-sale", label: cell.reason || "Stop-sale" });
+    });
+    // Event windows
+    (eventSupplements || []).forEach((evt) => {
+      if (!evt || evt.active === false) return;
+      const f = new Date(evt.fromDate);
+      if (isNaN(f) || f > horizon) return;
+      out.push({ from: evt.fromDate, to: evt.toDate, kind: "event", label: evt.name || evt.label || "Event window" });
+    });
+    return out.sort((a, b) => a.from.localeCompare(b.from)).slice(0, 6);
+  }, [calendar, eventSupplements, roomId, today]);
+
+  // Inventory check — separate from stop-sale/event blockers. When the
+  // calendar is clean AND there's room left, we auto-confirm. Otherwise
+  // the booking lands on-request for the operator to triage.
+  const inventoryAvailable = useMemo(() => {
+    if (!checkIn || !checkOut || nights <= 0) return false;
+    return roomTypeAvailable(roomId, checkIn, checkOut, 1, { rooms, bookings, roomUnits });
+  }, [roomId, checkIn, checkOut, nights, rooms, bookings, roomUnits]);
+
   // Stop-sale / event windows block submit outright per the operator's
   // policy. Other validations (date order, suite picked, party fits)
   // are softer — surface as warnings, only block submit when truly
-  // missing data.
+  // missing data. Auto-confirm requires BOTH: no blockers AND inventory.
   const datesValid = checkIn && checkOut && nights > 0;
   const partyFits  = targetRoom ? roomFitsParty(targetRoom, Number(guests) || 0, 0).ok : true;
   const canSubmit  = datesValid && partyFits && !blockers && !submitting && !!targetRoom;
+  const willAutoConfirm = canSubmit && inventoryAvailable;
+  const initialStatus   = willAutoConfirm ? "confirmed" : "on-request";
 
   const submit = () => {
     if (!canSubmit) return;
@@ -2718,17 +2780,19 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
         rate,
         total: totalDue,
         paid: 0,
-        // Hard-routed to on-request — admin must approve before the
-        // card is debited and the booking firms up.
-        status: "on-request",
+        // Routed to confirmed when the calendar is clean + inventory
+        // available, else falls back to on-request for the operator to
+        // triage. Either way the gift-card link is stamped so the admin
+        // can apply the redemption when they action the booking.
+        status: initialStatus,
         statusLog: [{
           ts,
           actorId:   member.id,
           actorName: member.name,
           actorRole: "member",
           from: null,
-          to: "on-request",
-          remark: `Member-initiated gift-card booking. Card ${card.code} · ${nightsCoveredByCard}/${nights} nights covered by card${isUpgrade ? ` · upgrade from ${roomLabel(sourceRoom, t)} → ${roomLabel(targetRoom, t)}` : ""}${overflowNights > 0 ? ` · ${overflowNights} overflow night(s) at rack` : ""}${notes ? ` · "${notes}"` : ""}`,
+          to: initialStatus,
+          remark: `${willAutoConfirm ? "Auto-confirmed (calendar clear + inventory available)" : "Submitted on-request"}. Card ${card.code} · ${nightsCoveredByCard}/${nights} nights covered by card${isUpgrade ? ` · upgrade from ${roomLabel(sourceRoom, t)} → ${roomLabel(targetRoom, t)}` : ""}${overflowNights > 0 ? ` · ${overflowNights} overflow night(s) at rack` : ""}${notes ? ` · "${notes}"` : ""}`,
         }],
         paymentStatus: "pending",
         // Gift-card linkage — admin redeems against this id on approval.
@@ -2752,7 +2816,9 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
         });
       } catch (_) {}
       pushToast({
-        message: `Booking request ${saved?.id || code} submitted — on request, awaiting hotel confirmation.`,
+        message: willAutoConfirm
+          ? `Booking ${saved?.id || code} confirmed — calendar clear, suite secured. Hotel will email payment instructions for the top-up.`
+          : `Booking request ${saved?.id || code} submitted — on request, awaiting hotel confirmation.`,
       });
       onClose?.();
     } finally {
@@ -2831,6 +2897,7 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
               <input
                 type="date"
                 value={checkIn}
+                min={today}
                 onChange={(e) => setCheckIn(e.target.value)}
                 style={{
                   width: "100%", padding: "0.55rem 0.7rem",
@@ -2847,7 +2914,11 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
               <input
                 type="date"
                 value={checkOut}
-                onChange={(e) => setCheckOut(e.target.value)}
+                // Must be after check-in. Defaults to check-in + remaining
+                // card nights; member can shorten (partial redemption) or
+                // extend (overflow at rack rate).
+                min={checkIn ? addDays(checkIn, 1) : today}
+                onChange={(e) => { setCheckoutTouched(true); setCheckOut(e.target.value); }}
                 style={{
                   width: "100%", padding: "0.55rem 0.7rem",
                   fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem",
@@ -2855,8 +2926,38 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
                   border: `1px solid ${p.border}`, outline: "none",
                 }}
               />
+              <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", marginTop: 4 }}>
+                {checkoutTouched
+                  ? "Manually set — clear the date to re-derive from check-in + remaining nights."
+                  : `Auto-set to check-in + ${remaining} night${remaining === 1 ? "" : "s"} (your card's balance).`}
+              </div>
             </div>
           </div>
+
+          {/* Blocked-date hint — HTML5 date inputs can't grey out
+              specific cells, so we surface the upcoming stop-sale +
+              event windows for the selected room here. The blocker
+              chip below catches anything the member picks regardless. */}
+          {upcomingBlocks.length > 0 && (
+            <div className="mt-3 p-3" style={{ backgroundColor: `${p.warn}10`, border: `1px solid ${p.warn}55` }}>
+              <div style={{ color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
+                Avoid these windows
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {upcomingBlocks.map((b, i) => (
+                  <span key={i} title={b.label} style={{
+                    fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem",
+                    padding: "2px 8px",
+                    color: p.warn,
+                    border: `1px solid ${p.warn}88`,
+                    backgroundColor: "transparent",
+                  }}>
+                    {b.from === b.to ? b.from : `${b.from} → ${b.to}`} · {b.label}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="mt-3">
             <label style={{ display: "block", color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
@@ -2908,6 +3009,30 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
               <p style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 8, lineHeight: 1.5 }}>
                 The top-up amount is collected separately — the hotel will reach out with payment instructions when they approve the request.
               </p>
+            </div>
+          )}
+
+          {/* Confirmation-status preview — tells the member up-front
+              whether the request will land confirmed or on-request,
+              so the Submit CTA below isn't a surprise either way. */}
+          {datesValid && !blockers && (
+            <div className="mt-3 p-3" style={{
+              backgroundColor: willAutoConfirm ? `${p.success}10` : `${p.warn}10`,
+              border: `1px solid ${willAutoConfirm ? p.success : p.warn}55`,
+              borderInlineStart: `4px solid ${willAutoConfirm ? p.success : p.warn}`,
+            }}>
+              <div style={{
+                color: willAutoConfirm ? p.success : p.warn,
+                fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+                letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4,
+              }}>
+                {willAutoConfirm ? "Will auto-confirm" : "Will land on-request"}
+              </div>
+              <div style={{ color: p.textPrimary, fontSize: "0.82rem", lineHeight: 1.5 }}>
+                {willAutoConfirm
+                  ? "These dates are clear and the suite has inventory. The booking is logged as confirmed straight away — the hotel just needs to send you payment instructions for the top-up."
+                  : "These dates are clear of stop-sale and event windows, but the suite is fully booked. Your request goes to reservations who'll confirm an alternative or wait-list you."}
+              </div>
             </div>
           )}
 
@@ -2966,7 +3091,12 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
               display: "inline-flex", alignItems: "center", gap: 6,
             }}
           >
-            {submitting ? "Submitting…" : <><Send size={12} /> Submit request</>}
+            {submitting
+              ? "Submitting…"
+              : willAutoConfirm
+                ? <><Check size={12} /> Confirm booking</>
+                : <><Send size={12} /> Submit request</>
+            }
           </button>
         </div>
       </div>
