@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { ROOMS as INITIAL_ROOMS } from "./rooms.js";
+import { roomLabel as resolveRoomLabel } from "../lib/rooms.js";
 import {
   notifyBookingCreated, notifyBookingStatusChange,
   notifyInvoiceIssued, notifyInvoiceStatusChange,
@@ -4209,6 +4210,12 @@ export function describePackageConditions(pkg, roomLabelFor = (id) => id) {
 
 export function DataProvider({ children }) {
   const [rooms,     setRooms]     = useState(INITIAL_ROOMS);
+  // Live ref to the rooms slice so non-React-state callbacks (e.g.
+  // issueGiftCard's invoice / payment description builders) can resolve
+  // a current room row without having to live in any callback's dep
+  // array — avoids re-creating handlers on every rooms change.
+  const roomsRef = useRef(INITIAL_ROOMS);
+  useEffect(() => { roomsRef.current = rooms; }, [rooms]);
   // Hydrate rooms from Supabase on mount when configured. The bundled
   // INITIAL_ROOMS stays as the source of truth for first paint (so the
   // homepage never flashes empty), then we replace it with whatever the
@@ -5765,15 +5772,13 @@ export function DataProvider({ children }) {
     const method = opts.paymentMethod || "card";
     const amount = Number(saved.paidAmount) || 0;
     if (amount > 0) {
-      // Pre-format the description so both the invoice line and the
-      // notification body read sensibly to a non-technical operator.
-      const desc = `Gift card · ${saved.totalNights} nights at the ${
-        saved.roomId === "studio"    ? "Lodge Studio"
-        : saved.roomId === "one-bed" ? "One-Bedroom Suite"
-        : saved.roomId === "two-bed" ? "Two-Bedroom Suite"
-        : saved.roomId === "three-bed" ? "Three-Bedroom Suite"
-        : saved.roomId
-      } · ${saved.discountPct}% buyer discount`;
+      // Resolve the suite label via the centralised helper so custom
+      // room types (set via Rooms & Rates → Add room type) show their
+      // operator-set publicName instead of the raw slug. Reads the
+      // current rooms slice from a ref so we don't have to add `rooms`
+      // to this callback's dep array and re-create it on every render.
+      const room = (roomsRef.current || []).find((r) => r.id === saved.roomId) || saved.roomId;
+      const desc = `Gift card · ${saved.totalNights} nights at the ${resolveRoomLabel(room)} · ${saved.discountPct}% buyer discount`;
       try {
         addInvoice({
           clientType: "guest",

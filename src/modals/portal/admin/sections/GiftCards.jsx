@@ -18,6 +18,8 @@ import {
   printGiftCardDoc,
   emailGiftCardDoc,
 } from "../GiftCardDocs.jsx";
+import { roomLabel } from "../../../../lib/rooms.js";
+import { useT } from "../../../../i18n/LanguageContext.jsx";
 
 // ---------------------------------------------------------------------------
 // GiftCards — admin workspace for the gift-card pre-purchase programme.
@@ -876,7 +878,8 @@ function RailRow({ p, label, value, bold = false, accent, muted = false }) {
 // cancel/expire if needed, copy the code to share.
 // ─────────────────────────────────────────────────────────────────────────
 function GiftCardDetail({ p, card, onClose, onUpdate, onRemove }) {
-  const { invoices, payments, hotelInfo, members, giftCardTiers, verifyGiftCardTransfer, staffSession } = useData();
+  const { invoices, payments, hotelInfo, members, giftCardTiers, verifyGiftCardTransfer, staffSession, rooms: allRooms } = useData();
+  const t = useT();
   const [draft, setDraft] = useState(card);
   // Which doc to preview — null hides the modal, "invoice" / "receipt"
   // pops the matching GiftCardDocPreviewModal.
@@ -965,12 +968,15 @@ function GiftCardDetail({ p, card, onClose, onUpdate, onRemove }) {
             <SelectField
               value={draft.roomId || card.roomId}
               onChange={(v) => set({ roomId: v })}
-              options={[
-                { value: "studio",    label: "Lodge Studio" },
-                { value: "one-bed",   label: "One-Bedroom Suite" },
-                { value: "two-bed",   label: "Two-Bedroom Suite" },
-                { value: "three-bed", label: "Three-Bedroom Suite" },
-              ]}
+              // Drive the options off the live rooms slice so custom
+              // suite types (added via Rooms & Rates → Add room type)
+              // appear with their operator-set publicName, not the raw
+              // slug. Fallback list keeps the four bundled types in
+              // order when the rooms slice hasn't hydrated yet.
+              options={(allRooms && allRooms.length > 0
+                ? allRooms
+                : [{ id: "studio" }, { id: "one-bed" }, { id: "two-bed" }, { id: "three-bed" }]
+              ).map((r) => ({ value: r.id, label: roomLabel(r, t) }))}
             />
           </FormGroup>
           <FormGroup label="Tier">
@@ -1135,9 +1141,9 @@ function GiftCardDetail({ p, card, onClose, onUpdate, onRemove }) {
             issuedDate={invoice?.issued ?? card.purchaseDate}
             status={invoice ? (invoice.status || "issued") : "missing"}
             onPreview={() => setPreviewKind("invoice")}
-            onDownload={() => downloadGiftCardDoc(card, "invoice", { hotel: hotelInfo, invoice, payment, tiers })}
-            onPrint={() => printGiftCardDoc(card, "invoice", { hotel: hotelInfo, invoice, payment, tiers })}
-            onEmail={() => emailGiftCardDoc(card, "invoice", hotelInfo)}
+            onDownload={() => downloadGiftCardDoc(card, "invoice", { hotel: hotelInfo, invoice, payment, tiers, rooms: allRooms })}
+            onPrint={() => printGiftCardDoc(card, "invoice", { hotel: hotelInfo, invoice, payment, tiers, rooms: allRooms })}
+            onEmail={() => emailGiftCardDoc(card, "invoice", hotelInfo, { rooms: allRooms })}
           />
           <DocRow
             p={p}
@@ -1149,9 +1155,9 @@ function GiftCardDetail({ p, card, onClose, onUpdate, onRemove }) {
             status={payment ? (payment.status || "captured") : "missing"}
             extra={payment?.method ? `Method: ${(payment.method || "").charAt(0).toUpperCase() + (payment.method || "").slice(1)}` : null}
             onPreview={() => setPreviewKind("receipt")}
-            onDownload={() => downloadGiftCardDoc(card, "receipt", { hotel: hotelInfo, invoice, payment, tiers })}
-            onPrint={() => printGiftCardDoc(card, "receipt", { hotel: hotelInfo, invoice, payment, tiers })}
-            onEmail={() => emailGiftCardDoc(card, "receipt", hotelInfo)}
+            onDownload={() => downloadGiftCardDoc(card, "receipt", { hotel: hotelInfo, invoice, payment, tiers, rooms: allRooms })}
+            onPrint={() => printGiftCardDoc(card, "receipt", { hotel: hotelInfo, invoice, payment, tiers, rooms: allRooms })}
+            onEmail={() => emailGiftCardDoc(card, "receipt", hotelInfo, { rooms: allRooms })}
           />
         </div>
       </Card>

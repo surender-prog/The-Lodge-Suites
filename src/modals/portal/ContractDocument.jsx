@@ -2,6 +2,8 @@ import React from "react";
 import { Download, Mail, Printer, Send, X } from "lucide-react";
 import { usePalette } from "./theme.jsx";
 import { legalLine, summarizeTax, useData, formatCurrency, resolveCurrency, getCurrentCurrency, MEAL_PLANS, mealPlanLabel, mealPlanSupplement, enabledMealPlansFor } from "../../data/store.jsx";
+import { roomLabel as resolveRoomLabel } from "../../lib/rooms.js";
+import { useT } from "../../i18n/LanguageContext.jsx";
 import { ensurePlanList, resolveDefaultPlan } from "./ContractEditor.jsx";
 
 // ---------------------------------------------------------------------------
@@ -75,6 +77,7 @@ const hasAnyRates = (m) => Object.values(m || {}).some(v => Number(v) > 0);
 // ---------------------------------------------------------------------------
 export function ContractDocumentView({ contract, kind }) {
   const data = useData();
+  const t = useT();
   const HOTEL = data?.hotelInfo || FALLBACK_HOTEL;
   // Tax summary pulled live from the configured Tax Setup pattern so any
   // rate / name / component change in admin updates every contract.
@@ -387,12 +390,7 @@ export function ContractDocumentView({ contract, kind }) {
                 {rooms.map((rm) => (
                   <tr key={rm.id}>
                     <td style={tdStyle}>
-                      <strong>
-                        {rm.id === "studio"    ? "Lodge Studio" :
-                         rm.id === "one-bed"   ? "One-Bedroom Suite" :
-                         rm.id === "two-bed"   ? "Two-Bedroom Suite" :
-                         rm.id === "three-bed" ? "Three-Bedroom Suite" : rm.id}
-                      </strong>
+                      <strong>{resolveRoomLabel(rm, t)}</strong>
                     </td>
                     {planObjs.map((pl) => {
                       const supp = mealPlanSupplement(rm, pl.code);
@@ -894,10 +892,10 @@ export function buildContractHtml(contract, kind, { hotel, tax, rooms } = {}) {
     }).join("");
 
     const roomRows = (rooms || []).map((rm) => {
-      const name = rm.id === "studio"    ? "Lodge Studio"
-                : rm.id === "one-bed"   ? "One-Bedroom Suite"
-                : rm.id === "two-bed"   ? "Two-Bedroom Suite"
-                : rm.id === "three-bed" ? "Three-Bedroom Suite" : rm.id;
+      // Non-hook context (HTML builder for download/print/email) — no
+      // i18n function available, so the helper falls back through
+      // publicName then humanised id. Matches the React view above.
+      const name = resolveRoomLabel(rm);
       const cells = planObjs.map((pl) => {
         const supp = mealPlanSupplement(rm, pl.code);
         const isDef = pl.code === defPlan;

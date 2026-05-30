@@ -2,6 +2,8 @@ import React from "react";
 import { Download, FileText, Mail, Printer, Receipt, X } from "lucide-react";
 import { usePalette } from "../theme.jsx";
 import { applyTaxes, inverseApplyTaxes, legalLine, summarizeTax, useData, formatCurrency, getCurrentCurrency } from "../../../data/store.jsx";
+import { roomLabel as resolveRoomLabel } from "../../../lib/rooms.js";
+import { useT } from "../../../i18n/LanguageContext.jsx";
 
 // ---------------------------------------------------------------------------
 // BookingDocs — printable Invoice + Receipt documents for an individual
@@ -97,8 +99,10 @@ function buildFolio(booking, tax, rooms, extras) {
 // ---------------------------------------------------------------------------
 export function BookingDocView({ booking, kind, tax, rooms, extras }) {
   const data = useData();
+  const t = useT();
   const HOTEL = data?.hotelInfo || FALLBACK_HOTEL;
   const folio = buildFolio(booking, tax, rooms, extras);
+  const suiteLabel = folio.room ? resolveRoomLabel(folio.room, t) : "—";
   const isConfirm = kind === "confirmation";
   const isReceipt = kind === "receipt";
   const docNo = isReceipt
@@ -193,7 +197,7 @@ export function BookingDocView({ booking, kind, tax, rooms, extras }) {
           </div>
           <div style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: "1.2rem", fontWeight: 600 }}>{booking.id}</div>
           <div style={{ color: "#444", fontSize: "0.84rem", marginTop: 4 }}>
-            {folio.room ? `${folio.room.id === "studio" ? "Lodge Studio" : folio.room.id === "one-bed" ? "One-Bedroom Suite" : folio.room.id === "two-bed" ? "Two-Bedroom Suite" : "Three-Bedroom Suite"}` : "—"}
+            {suiteLabel}
           </div>
           <div style={{ color: "#666", fontSize: "0.78rem", marginTop: 4 }}>
             {fmtDate(booking.checkIn)} → {fmtDate(booking.checkOut)} · {folio.nights} night{folio.nights === 1 ? "" : "s"} · {booking.guests} guest{booking.guests === 1 ? "" : "s"}
@@ -234,7 +238,7 @@ export function BookingDocView({ booking, kind, tax, rooms, extras }) {
           <tr>
             <td style={tdStyle}><strong>Suite charge</strong>
               <div style={{ color: "#666", fontSize: "0.74rem", marginTop: 2 }}>
-                {folio.room?.id === "studio" ? "Lodge Studio" : folio.room?.id === "one-bed" ? "One-Bedroom Suite" : folio.room?.id === "two-bed" ? "Two-Bedroom Suite" : folio.room?.id === "three-bed" ? "Three-Bedroom Suite" : "Suite"} · {fmtDate(booking.checkIn)} – {fmtDate(booking.checkOut)}
+                {folio.room ? suiteLabel : "Suite"} · {fmtDate(booking.checkIn)} – {fmtDate(booking.checkOut)}
               </div>
               {/* Meal plan — stamped on the booking at checkout and folded
                   into the suite charge. Shows the plan + per-stay cost so
@@ -397,11 +401,10 @@ export function buildBookingDocHtml(booking, kind, { tax, rooms, hotel } = {}) {
   const statusColorMap = { confirmed: "#2563EB", "in-house": "#16A34A", "checked-out": "#64748B", cancelled: "#DC2626" };
   const statusColor = statusColorMap[booking.status] || "#6B7280";
   const statusLabel = statusLabelMap[booking.status] || booking.status || "Confirmed";
-  const roomLabel = folio.room?.id === "studio" ? "Lodge Studio"
-    : folio.room?.id === "one-bed" ? "One-Bedroom Suite"
-    : folio.room?.id === "two-bed" ? "Two-Bedroom Suite"
-    : folio.room?.id === "three-bed" ? "Three-Bedroom Suite"
-    : "Suite";
+  // Non-hook call site — pass the resolved room row (it carries publicName)
+  // and omit the i18n function. The helper will fall back to publicName then
+  // a humanised id, which matches the React view's render via the t-aware path.
+  const roomLabel = folio.room ? resolveRoomLabel(folio.room) : "Suite";
 
   const taxRows = (folio.components || []).map((c) => `<tr>
     <td colspan="3" class="muted">${escapeHtml(c.label)}${c.type === "percentage" && c.rate ? ` (${c.rate}%)` : ""}</td>

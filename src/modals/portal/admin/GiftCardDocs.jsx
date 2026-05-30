@@ -2,6 +2,8 @@ import React from "react";
 import { Download, Mail, Printer, X } from "lucide-react";
 import { usePalette } from "../theme.jsx";
 import { legalLine, useData, formatCurrency, DEFAULT_GIFT_CARD_TIERS, computeGiftCardPrice, getCurrentCurrency } from "../../../data/store.jsx";
+import { roomLabel as resolveRoomLabel } from "../../../lib/rooms.js";
+import { useT } from "../../../i18n/LanguageContext.jsx";
 
 // ---------------------------------------------------------------------------
 // GiftCardDocs — printable Invoice + Receipt for a gift card purchase.
@@ -35,12 +37,16 @@ const todayLong = () => new Date().toLocaleDateString("en-GB", { day: "numeric",
 const fmtDate   = (iso) => iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—";
 const fmtTs     = (iso) => iso ? new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 
-const ROOM_LABEL_FULL = {
-  studio:      "Lodge Studio",
-  "one-bed":   "One-Bedroom Suite",
-  "two-bed":   "Two-Bedroom Suite",
-  "three-bed": "Three-Bedroom Suite",
-};
+// Resolve a card's suite label from the LIVE rooms slice (operator-set
+// publicName flows through here) + the i18n function when available.
+// `rooms` is optional — when omitted (HTML builders called without
+// access to the React data hook) the helper falls back through
+// publicName then a humanised id, matching the React view.
+function resolveCardSuiteLabel(card, rooms, t) {
+  if (!card) return "";
+  const room = (rooms || []).find((r) => r && r.id === card.roomId);
+  return resolveRoomLabel(room || card.roomId, t);
+}
 
 // Locate an invoice / payment record tied to this card. Cards are bound
 // by giftCardId on both ledgers (set by `issueGiftCard` in the store).
@@ -63,7 +69,9 @@ function findPaymentForCard(payments, card) {
 // ---------------------------------------------------------------------------
 export function GiftCardDocView({ card, kind }) {
   const data = useData();
+  const t = useT();
   const HOTEL = data?.hotelInfo || FALLBACK_HOTEL;
+  const suiteLabel = resolveCardSuiteLabel(card, data?.rooms, t);
   const invoice = findInvoiceForCard(data?.invoices, card);
   const payment = findPaymentForCard(data?.payments, card);
   // Read the live admin-editable tier master via useData; fall back to
@@ -243,7 +251,7 @@ export function GiftCardDocView({ card, kind }) {
               {nightsInWords(card.totalNights)} {card.totalNights === 1 ? "Night" : "Nights"}
             </div>
             <div style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: "1.5rem", fontWeight: 500, marginTop: 4, color: "#15161A" }}>
-              at the {ROOM_LABEL_FULL[card.roomId] || card.roomId}
+              at the {suiteLabel}
             </div>
             <div style={{ marginTop: 14, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", color: "#444", letterSpacing: "0.04em" }}>
               {(card.totalNights || 0) - (card.nightsUsed || 0)} of {card.totalNights} nights remaining ·
@@ -264,7 +272,7 @@ export function GiftCardDocView({ card, kind }) {
           </h3>
           <div style={{ fontSize: "0.86rem", lineHeight: 1.7, color: "#222" }}>
             <p style={{ margin: 0 }}>
-              Present this certificate at check-in along with photo ID matching the bearer details above. Nights apply automatically against the <strong>{ROOM_LABEL_FULL[card.roomId] || card.roomId}</strong> up to the remaining balance.
+              Present this certificate at check-in along with photo ID matching the bearer details above. Nights apply automatically against the <strong>{suiteLabel}</strong> up to the remaining balance.
             </p>
             <ul style={{ marginTop: 10, paddingInlineStart: 20, listStyle: "disc", color: "#222" }}>
               <li>At check-in — show the certificate to the front-desk team.</li>
@@ -294,7 +302,7 @@ export function GiftCardDocView({ card, kind }) {
               <td style={tdStyle}>
                 <div><strong>Gift card purchase</strong></div>
                 <div style={{ color: "#555", fontSize: "0.76rem", marginTop: 2 }}>
-                  {card.code} · {card.totalNights} nights at the {ROOM_LABEL_FULL[card.roomId] || card.roomId}
+                  {card.code} · {card.totalNights} nights at the {suiteLabel}
                 </div>
                 {payment?.method && (
                   <div style={{ color: "#555", fontSize: "0.76rem", marginTop: 2 }}>
@@ -338,7 +346,7 @@ export function GiftCardDocView({ card, kind }) {
           <tbody>
             <tr>
               <td style={tdStyle}>
-                <strong>Gift card · {ROOM_LABEL_FULL[card.roomId] || card.roomId}</strong>
+                <strong>Gift card · {suiteLabel}</strong>
                 <div style={{ color: "#555", fontSize: "0.76rem", marginTop: 2 }}>
                   Pre-purchased nights · redeem with code {card.code}
                   {tier ? ` · ${tier.label}` : ""}
@@ -389,7 +397,7 @@ export function GiftCardDocView({ card, kind }) {
             </p>
             <p style={{ marginTop: 8 }}>
               <strong>Redemption:</strong> the recipient enters the code <strong style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>{card.code}</strong>
-              {" "}during booking. Prepaid nights apply automatically against the {ROOM_LABEL_FULL[card.roomId] || card.roomId}
+              {" "}during booking. Prepaid nights apply automatically against the {suiteLabel}
               {" "}up to the remaining balance ({(card.totalNights || 0) - (card.nightsUsed || 0)} of {card.totalNights} nights).
             </p>
             {card.message && (
@@ -432,8 +440,11 @@ const tdNumStyle = { ...tdStyle, fontVariantNumeric: "tabular-nums", fontWeight:
 // HTML string builder — mirrors the React view 1:1. Used by the download
 // and print helpers below.
 // ---------------------------------------------------------------------------
-export function buildGiftCardDocHtml(card, kind, { hotel, invoice, payment, tiers } = {}) {
+export function buildGiftCardDocHtml(card, kind, { hotel, invoice, payment, tiers, rooms } = {}) {
   const HOTEL = hotel || FALLBACK_HOTEL;
+  // Resolve once and reuse — callers that don't pass `rooms` still get
+  // a sensible fallback (publicName on the matched row, or humanised id).
+  const suiteLabel = resolveCardSuiteLabel(card, rooms);
   // Caller passes the live tier master via opts.tiers. Fall back to the
   // seed when not provided (e.g. legacy callers / direct script use).
   const tierList = (tiers && tiers.length > 0) ? tiers : DEFAULT_GIFT_CARD_TIERS;
@@ -550,7 +561,7 @@ export function buildGiftCardDocHtml(card, kind, { hotel, invoice, payment, tier
     <div style="margin-top:28px;padding:28px 32px;background:rgba(201,169,97,0.10);border:1.5px solid #C9A961;text-align:center;">
       <div class="eyebrow">The gift</div>
       <div style="font-family:'Cormorant Garamond',Georgia,serif;font-style:italic;font-size:3rem;font-weight:500;margin-top:6px;line-height:1.05;color:#15161A;">${escapeHtml(wordNights)} ${card.totalNights === 1 ? "Night" : "Nights"}</div>
-      <div style="font-family:'Cormorant Garamond',Georgia,serif;font-size:1.5rem;font-weight:500;margin-top:4px;color:#15161A;">at the ${escapeHtml(ROOM_LABEL_FULL[card.roomId] || card.roomId)}</div>
+      <div style="font-family:'Cormorant Garamond',Georgia,serif;font-size:1.5rem;font-weight:500;margin-top:4px;color:#15161A;">at the ${escapeHtml(suiteLabel)}</div>
       <div style="margin-top:14px;font-size:12px;color:#444;letter-spacing:0.04em;">${remainingNights} of ${card.totalNights} nights remaining · valid until <strong style="color:#15161A;">${escapeHtml(fmtDate(card.validUntil))}</strong></div>
       ${card.message ? `<div style="margin-top:18px;padding-top:14px;border-top:1px dashed #C9A961;font-family:'Cormorant Garamond',Georgia,serif;font-style:italic;font-size:1.15rem;color:#222;max-width:520px;margin:18px auto 0;">"${escapeHtml(card.message)}"</div>` : ""}
       <div style="margin-top:${card.message ? 12 : 18}px;font-size:11.5px;color:#555;letter-spacing:0.05em;">From <strong style="color:#15161A;">${escapeHtml(card.senderName || "—")}</strong></div>
@@ -558,7 +569,7 @@ export function buildGiftCardDocHtml(card, kind, { hotel, invoice, payment, tier
 
     <h3>How to redeem</h3>
     <div style="font-size:13px;line-height:1.7;color:#222;">
-      <p style="margin:0;">Present this certificate at check-in along with photo ID matching the bearer details above. Nights apply automatically against the <strong>${escapeHtml(ROOM_LABEL_FULL[card.roomId] || card.roomId)}</strong> up to the remaining balance.</p>
+      <p style="margin:0;">Present this certificate at check-in along with photo ID matching the bearer details above. Nights apply automatically against the <strong>${escapeHtml(suiteLabel)}</strong> up to the remaining balance.</p>
       <ul style="margin-top:10px;padding-inline-start:20px;list-style:disc;color:#222;">
         <li>At check-in — show the certificate to the front-desk team.</li>
         <li>By email — forward to <strong>${escapeHtml(HOTEL.email)}</strong> with your preferred dates.</li>
@@ -577,7 +588,7 @@ export function buildGiftCardDocHtml(card, kind, { hotel, invoice, payment, tier
         <tr>
           <td>
             <strong>Gift card purchase</strong>
-            <div class="muted" style="font-size:11.5px;margin-top:2px;">${escapeHtml(card.code)} · ${card.totalNights} nights at the ${escapeHtml(ROOM_LABEL_FULL[card.roomId] || card.roomId)}</div>
+            <div class="muted" style="font-size:11.5px;margin-top:2px;">${escapeHtml(card.code)} · ${card.totalNights} nights at the ${escapeHtml(suiteLabel)}</div>
             ${payment?.method ? `<div class="muted" style="font-size:11.5px;margin-top:2px;">Method: <strong>${escapeHtml((payment.method || "").charAt(0).toUpperCase() + (payment.method || "").slice(1))}</strong>${payment.ts ? ` · ${escapeHtml(fmtTs(payment.ts))}` : ""}</div>` : ""}
           </td>
           <td class="num">${escapeHtml(formatCurrency(payment?.amount ?? card.paidAmount))}</td>
@@ -594,7 +605,7 @@ export function buildGiftCardDocHtml(card, kind, { hotel, invoice, payment, tier
       <tbody>
         <tr>
           <td>
-            <strong>Gift card · ${escapeHtml(ROOM_LABEL_FULL[card.roomId] || card.roomId)}</strong>
+            <strong>Gift card · ${escapeHtml(suiteLabel)}</strong>
             <div class="muted" style="font-size:11.5px;margin-top:2px;">Pre-purchased nights · redeem with code ${escapeHtml(card.code)}${tier ? ` · ${escapeHtml(tier.label)}` : ""}</div>
           </td>
           <td class="num">${card.totalNights} nights</td>
@@ -614,7 +625,7 @@ export function buildGiftCardDocHtml(card, kind, { hotel, invoice, payment, tier
 
   <div style="margin-top:24px;font-size:13px;line-height:1.7;color:#222;">
     <p>All amounts are in <strong>${escapeHtml(ccy)}</strong>. Gift cards are non-refundable but transferable until first redemption; full balance carries over across multiple stays within the validity window.</p>
-    <p style="margin-top:8px;"><strong>Redemption:</strong> the recipient enters the code <strong class="code">${escapeHtml(card.code)}</strong> during booking. Prepaid nights apply automatically against the ${escapeHtml(ROOM_LABEL_FULL[card.roomId] || card.roomId)} up to the remaining balance (${(card.totalNights || 0) - (card.nightsUsed || 0)} of ${card.totalNights} nights).</p>
+    <p style="margin-top:8px;"><strong>Redemption:</strong> the recipient enters the code <strong class="code">${escapeHtml(card.code)}</strong> during booking. Prepaid nights apply automatically against the ${escapeHtml(suiteLabel)} up to the remaining balance (${(card.totalNights || 0) - (card.nightsUsed || 0)} of ${card.totalNights} nights).</p>
     ${card.message ? `<p style="margin-top:8px;"><strong>Personal message on file:</strong> ${escapeHtml(card.message)}</p>` : ""}
   </div>
 
@@ -662,8 +673,11 @@ export function printGiftCardDoc(card, kind, opts = {}) {
   return true;
 }
 
-export function emailGiftCardDoc(card, kind, hotel) {
+export function emailGiftCardDoc(card, kind, hotel, opts = {}) {
   const HOTEL = hotel || FALLBACK_HOTEL;
+  // `opts.rooms` is optional — the helper falls back through publicName
+  // and then a humanised id when the live rooms slice isn't available.
+  const suiteLabel = resolveCardSuiteLabel(card, opts.rooms);
   const isReceipt     = kind === "receipt";
   const isCertificate = kind === "certificate";
   const subject = isCertificate
@@ -683,7 +697,7 @@ export function emailGiftCardDoc(card, kind, hotel) {
     "",
     `Gift card:     ${card.code}`,
     `Recipient:     ${card.recipientName || "—"}`,
-    `Suite type:    ${ROOM_LABEL_FULL[card.roomId] || card.roomId}`,
+    `Suite type:    ${suiteLabel}`,
     `Nights:        ${card.totalNights}`,
     `Discount:      ${card.discountPct}%`,
     `Paid:          ${formatCurrency(card.paidAmount)}`,
@@ -712,9 +726,12 @@ export function GiftCardDocPreviewModal({ card, kind, onClose }) {
   const hotel = data?.hotelInfo;
   const invoice = findInvoiceForCard(data?.invoices, card);
   const payment = findPaymentForCard(data?.payments, card);
-  // Pass the live tier master through to the doc-builder helpers so the
-  // exported PDF/print/email all reflect the admin's edits to tier labels.
+  // Pass the live tier master + rooms slice through to the doc-builder
+  // helpers so the exported PDF/print/email all reflect the admin's
+  // edits to tier labels AND custom room types render with their
+  // operator-set publicName instead of the raw slug.
   const tiers = data?.giftCardTiers;
+  const rooms = data?.rooms;
   if (!card) return null;
   return (
     <div className="fixed inset-0 z-50 flex flex-col" style={{ backgroundColor: "rgba(15,16,20,0.85)" }}>
@@ -723,15 +740,15 @@ export function GiftCardDocPreviewModal({ card, kind, onClose }) {
           {kind === "receipt" ? "Receipt preview" : "Invoice preview"} · {card.code}
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => emailGiftCardDoc(card, kind, hotel)} title="Email"
+          <button onClick={() => emailGiftCardDoc(card, kind, hotel, { rooms })} title="Email"
             style={btn(p)} onMouseEnter={btnHover(p)} onMouseLeave={btnLeave(p)}>
             <Mail size={12} /> Email
           </button>
-          <button onClick={() => downloadGiftCardDoc(card, kind, { hotel, invoice, payment, tiers })} title="Download HTML"
+          <button onClick={() => downloadGiftCardDoc(card, kind, { hotel, invoice, payment, tiers, rooms })} title="Download HTML"
             style={btn(p)} onMouseEnter={btnHover(p)} onMouseLeave={btnLeave(p)}>
             <Download size={12} /> Download
           </button>
-          <button onClick={() => printGiftCardDoc(card, kind, { hotel, invoice, payment, tiers })} title="Print"
+          <button onClick={() => printGiftCardDoc(card, kind, { hotel, invoice, payment, tiers, rooms })} title="Print"
             style={btn(p)} onMouseEnter={btnHover(p)} onMouseLeave={btnLeave(p)}>
             <Printer size={12} /> Print
           </button>

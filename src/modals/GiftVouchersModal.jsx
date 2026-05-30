@@ -14,6 +14,8 @@ import {
   computeGiftCardPrice,
   useData,
 } from "../data/store.jsx";
+import { roomLabel } from "../lib/rooms.js";
+import { useT } from "../i18n/LanguageContext.jsx";
 // Note: this modal uses the unified `issueGiftCard` flow which creates
 // the gift card AND posts the matching invoice + payment receipt in one
 // shot, so the buyer's transaction is properly accounted for from the
@@ -74,6 +76,7 @@ const FAQS = [
 
 export const GiftVouchersModal = ({ open, onClose, onBook }) => {
   const { rooms, hotelInfo, addGiftCard, members, giftCardTiers } = useData();
+  const t = useT();
   // Tiers come straight off the live admin-editable slice. Empty array
   // fallback uses the bundled defaults so the modal still renders when
   // an over-zealous admin deletes all the tiers.
@@ -228,13 +231,7 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
                 Request received
               </div>
               <div className="mt-1" style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic", fontSize: "2.1rem", lineHeight: 1.1 }}>
-                {issued.totalNights} nights at the {
-                  issued.roomId === "studio"    ? "Lodge Studio"
-                  : issued.roomId === "one-bed"   ? "One-Bedroom Suite"
-                  : issued.roomId === "two-bed"   ? "Two-Bedroom Suite"
-                  : issued.roomId === "three-bed" ? "Three-Bedroom Suite"
-                  : issued.roomId
-                }
+                {issued.totalNights} nights at the {roomLabel((rooms || []).find((r) => r.id === issued.roomId) || issued.roomId, t)}
               </div>
               <div className="mt-2" style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem", lineHeight: 1.55 }}>
                 Thank you — our reservations team will reach out to <strong style={{ color: C.cream }}>{issued.senderEmail}</strong> with payment instructions. Once the payment is confirmed the redeemable code will appear in your LS Privilege portal and we'll email a copy for your records.
@@ -308,10 +305,7 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
                   fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem",
                   color: C.bgDeep, fontWeight: 500, lineHeight: 1.05,
                 }}>
-                  {r.id === "studio" ? "Lodge Studio"
-                    : r.id === "one-bed" ? "One-Bedroom Suite"
-                    : r.id === "two-bed" ? "Two-Bedroom Suite"
-                    : r.id === "three-bed" ? "Three-Bedroom Suite" : r.id}
+                  {roomLabel(r, t)}
                 </div>
                 <div style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", marginTop: 6, lineHeight: 1.5 }}>
                   {SUITE_BLURBS[r.id] || ""}
@@ -457,12 +451,7 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
                 Your request
               </div>
               <div className="mt-1" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", fontStyle: "italic", lineHeight: 1.1 }}>
-                {tier.nights} nights at the {
-                  room?.id === "studio" ? "Lodge Studio"
-                  : room?.id === "one-bed" ? "One-Bedroom Suite"
-                  : room?.id === "two-bed" ? "Two-Bedroom Suite"
-                  : room?.id === "three-bed" ? "Three-Bedroom Suite" : room?.id
-                } · save {tier.discountPct}%
+                {tier.nights} nights at the {roomLabel(room, t)} · save {tier.discountPct}%
               </div>
               <div className="flex items-baseline gap-3 mt-2 flex-wrap">
                 <span style={{ color: C.textDim, fontSize: "0.86rem", textDecoration: "line-through" }}>{formatCurrency(price.gross)}</span>

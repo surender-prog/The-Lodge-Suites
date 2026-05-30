@@ -7,6 +7,8 @@ import {
 import { usePalette } from "./theme.jsx";
 import { supabase, SUPABASE_CONFIGURED } from "../../lib/supabase.js";
 import { formatCurrency, MEAL_PLANS, mealPlanSupplement, useData } from "../../data/store.jsx";
+import { roomLabel } from "../../lib/rooms.js";
+import { useT } from "../../i18n/LanguageContext.jsx";
 import { pushToast } from "./admin/ui.jsx";
 
 // ---------------------------------------------------------------------------
@@ -277,6 +279,7 @@ export function defaultAgencyDraft(existingIds = []) {
 
 export function ContractEditor({ open, onClose, contract, kind, onSave, onRemove }) {
   const p = usePalette();
+  const t = useT();
   // Live rooms slice — drives the supplement matrix below the meal-plan
   // picker so the operator sees exactly what the negotiated default
   // costs across the property's suites. The rates themselves are
@@ -2151,10 +2154,7 @@ export function MealPlanSupplementMatrix({ p, rooms, selectedPlan, selectedPlans
                   fontFamily: "'Cormorant Garamond', serif", fontSize: "0.95rem",
                   whiteSpace: "nowrap",
                 }}>
-                  {r.id === "studio"     ? "Lodge Studio" :
-                   r.id === "one-bed"    ? "One-Bedroom Suite" :
-                   r.id === "two-bed"    ? "Two-Bedroom Suite" :
-                   r.id === "three-bed"  ? "Three-Bedroom Suite" : r.id}
+                  {roomLabel(r, t)}
                 </td>
                 {MEAL_PLANS.map((m) => {
                   const isPickedCell  = pickedSet.has(m.code);

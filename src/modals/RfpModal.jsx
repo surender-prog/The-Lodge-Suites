@@ -6,6 +6,8 @@ import {
 import { C } from "../data/tokens.js";
 import { IMG } from "../data/images.js";
 import { useData } from "../data/store.jsx";
+import { roomLabel } from "../lib/rooms.js";
+import { useT } from "../i18n/LanguageContext.jsx";
 import { EditorialPage, PageSection } from "./EditorialPage.jsx";
 import { PhoneInput } from "../components/PhoneInput.jsx";
 
@@ -85,13 +87,11 @@ const STAY_TYPE_OPTIONS = [
   { value: "mixed",      label: "Mixed transient + long-stay" },
   { value: "project",    label: "Project / event-based" },
 ];
-const SUITE_PREFERENCES = [
-  { value: "studio",     label: "Lodge Studio" },
-  { value: "one-bed",    label: "One-Bedroom Suite" },
-  { value: "two-bed",    label: "Two-Bedroom Suite" },
-  { value: "three-bed",  label: "Three-Bedroom Suite" },
-  { value: "mixed",      label: "Mix · operator's choice" },
-];
+// Static "mixed" option always appended at the bottom of the suite
+// preference picker. The actual suite-type options are derived from
+// the live rooms slice inside the component so custom types (set via
+// Rooms & Rates → Add room type) appear with their operator-set names.
+const SUITE_PREFERENCES_MIXED = { value: "mixed", label: "Mix · operator's choice" };
 const PAYMENT_TERM_OPTIONS = [
   { value: "Net 30", label: "Net 30" },
   { value: "Net 45", label: "Net 45" },
@@ -100,7 +100,12 @@ const PAYMENT_TERM_OPTIONS = [
 ];
 
 export const RfpModal = ({ open, onClose }) => {
-  const { addRfp, hotelInfo } = useData();
+  const { addRfp, hotelInfo, rooms: allRooms } = useData();
+  const t = useT();
+  const suitePreferences = useMemo(() => {
+    const fromRooms = (allRooms || []).map((r) => ({ value: r.id, label: roomLabel(r, t) }));
+    return [...fromRooms, SUITE_PREFERENCES_MIXED];
+  }, [allRooms, t]);
   // Sidebar "Prefer to talk first?" contact pulls from the live property
   // identity so admin edits in Property Info reach this page. Existing
   // hardcoded strings are kept as fallbacks.
@@ -425,7 +430,7 @@ export const RfpModal = ({ open, onClose }) => {
                     <Select value={draft.stayType} onChange={(v) => set({ stayType: v })} options={STAY_TYPE_OPTIONS} />
                   </Field>
                   <Field label="Suite preference">
-                    <Select value={draft.suite} onChange={(v) => set({ suite: v })} options={SUITE_PREFERENCES} />
+                    <Select value={draft.suite} onChange={(v) => set({ suite: v })} options={suitePreferences} />
                   </Field>
                   <Field label="Preferred payment terms">
                     <Select value={draft.paymentTerms} onChange={(v) => set({ paymentTerms: v })} options={PAYMENT_TERM_OPTIONS} />
