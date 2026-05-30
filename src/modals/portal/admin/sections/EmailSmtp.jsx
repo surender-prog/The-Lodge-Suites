@@ -67,21 +67,47 @@ export const EmailSmtp = () => {
     }
     setTesting(true);
     setTimeout(() => {
-      const ok = Boolean(draft.username && draft.password && draft.fromEmail);
+      // Build a missing-fields list so the failure message points the
+      // operator at the exact field to fix, instead of the generic
+      // "missing credentials or sender". Treat whitespace-only values
+      // as empty.
+      const username  = String(draft.username  || "").trim();
+      const password  = String(draft.password  || "").trim();
+      const fromEmail = String(draft.fromEmail || "").trim();
+      // SMTP best practice: most providers send AS the authenticated
+      // user. When the operator left "From email" blank but the
+      // username IS an email address (as Netsol / Gmail / O365 require),
+      // adopt it as the from address rather than blocking the test —
+      // mirrors how most desktop mail clients behave.
+      const usernameLooksLikeEmail = /.+@.+\..+/.test(username);
+      const effectiveFromEmail = fromEmail || (usernameLooksLikeEmail ? username : "");
+
+      const missing = [];
+      if (!username) missing.push("Username");
+      if (!password) missing.push("Password");
+      if (!effectiveFromEmail) missing.push("From email");
+
+      const ok = missing.length === 0;
       const ts = new Date().toISOString();
       const next = {
         ...draft,
+        // Persist the auto-derived From email so it shows up in the UI
+        // (and on the next test) once the operator hits Save.
+        fromEmail: effectiveFromEmail,
         lastTestedAt: ts,
         lastTestStatus: ok ? "success" : "failed",
         lastTestMessage: ok
-          ? `Connected to ${draft.host}:${draft.port} as ${draft.username}`
-          : "Missing credentials or sender — fill in username, password and From email.",
+          ? `Connected to ${draft.host}:${draft.port} as ${username}` +
+            (fromEmail ? "" : " · From email defaulted to username")
+          : `Fill in ${missing.join(", ")} before testing.`,
       };
       setDraft(next);
       updateSmtpConfig(next);
       setTesting(false);
       pushToast({
-        message: ok ? "SMTP test passed" : "SMTP test failed — check credentials",
+        message: ok
+          ? "SMTP test passed"
+          : `SMTP test failed — ${missing.length === 1 ? missing[0] + " is empty" : missing.join(", ") + " are empty"}`,
         kind: ok ? undefined : "warn",
       });
     }, 1100);
@@ -236,13 +262,21 @@ export const EmailSmtp = () => {
               placeholder="The Lodge Suites · Reservations"
             />
           </FormGroup>
-          <FormGroup label="From email" className="mt-4">
+          <FormGroup label="From email · required" className="mt-4">
             <TextField
               type="email"
               value={draft.fromEmail}
               onChange={(v) => set({ fromEmail: v })}
-              placeholder="reservations@thelodgesuites.com"
+              placeholder={
+                /.+@.+\..+/.test(draft.username || "")
+                  ? `${draft.username} (defaulted from username)`
+                  : "reservations@thelodgesuites.com"
+              }
             />
+            <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", marginTop: 6, lineHeight: 1.5 }}>
+              Leave blank to default to the SMTP username — most providers
+              (Netsol, Gmail, O365) only let you send as the authenticated user.
+            </div>
           </FormGroup>
           <FormGroup label="Reply-to email" className="mt-4">
             <TextField
