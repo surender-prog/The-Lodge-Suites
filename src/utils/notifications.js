@@ -37,6 +37,8 @@ const KINDS = {
   "invoice-cancelled": { severity: "warn",    label: "Invoice cancelled" },
   "payment-received":  { severity: "success", label: "Payment received" },
   "payment-refunded":  { severity: "warn",    label: "Payment refunded" },
+  "member-joined":     { severity: "info",    label: "New LS Privilege member" },
+  "member-welcome":    { severity: "success", label: "Welcome to LS Privilege" },
 };
 export const NOTIFICATION_KINDS = KINDS;
 
@@ -329,6 +331,32 @@ export function notifyPaymentReceived(payment, deps = {}) {
       refType: "payment", refId: payment.id || null,
     }));
   }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// LS Privilege member sign-up. Fires whenever a guest joins via the public
+// JoinModal so the partner-portal bell flags the new record for KYC
+// verification, and a welcome message lands on the member's own portal.
+// ---------------------------------------------------------------------------
+export function notifyMemberJoined(member) {
+  if (!member) return [];
+  const out = [];
+  const channelHint = member.phone ? ` · ${member.phone}` : "";
+  out.push(makeNotification("member-joined", {
+    title: `New LS Privilege sign-up · ${member.name || "Guest"}`,
+    body:  `${member.name || "Guest"} (${member.email || "no email"}${channelHint}) joined as a ${member.tier || "silver"} member${member.country ? ` from ${member.country}` : ""}. KYC pending — verify ID + photo before issuing benefits.`,
+    recipientType: "staff",
+    refType: "member", refId: member.id || null,
+  }));
+  // Mirror to the member's own portal so they see a welcome card the
+  // first time they sign in.
+  out.push(makeNotification("member-welcome", {
+    title: `Welcome to LS Privilege · ${member.id || ""}`,
+    body:  `Your account is live. Reservations will verify your ID at check-in; in the meantime, browse offers + earn points on direct bookings.`,
+    recipientType: "member", recipientId: member.id || null,
+    refType: "member", refId: member.id || null,
+  }));
   return out;
 }
 

@@ -5,10 +5,11 @@ import { Field, GoldBtn, Input } from "../components/primitives.jsx";
 import { PhoneInput } from "../components/PhoneInput.jsx";
 import { useT } from "../i18n/LanguageContext.jsx";
 import { useData } from "../data/store.jsx";
+import { notifyMemberJoined } from "../utils/notifications.js";
 
 export const JoinModal = ({ open, onClose }) => {
   const t = useT();
-  const { addMember } = useData();
+  const { addMember, appendNotifications } = useData();
   const [data, setData] = useState({ name: "", email: "", phone: "", country: "Bahrain" });
   const [done, setDone] = useState(false);
   const [memberId, setMemberId] = useState(null);
@@ -25,6 +26,15 @@ export const JoinModal = ({ open, onClose }) => {
       country: data.country,
       tier: "silver",
     });
+    // Fire staff + member notifications so the partner-portal bell flags
+    // the new sign-up for KYC verification, and the member's own portal
+    // greets them with a welcome card on first sign-in. addMember returns
+    // the saved record (including the generated id) — passing that through
+    // gives the staff notification a proper deep-link refId.
+    try { appendNotifications?.(notifyMemberJoined(saved || {
+      ...data,
+      tier: "silver",
+    })); } catch (_) {}
     setMemberId(saved?.id || null);
     setDone(true);
   };

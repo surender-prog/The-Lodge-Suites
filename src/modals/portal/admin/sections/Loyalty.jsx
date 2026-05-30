@@ -77,6 +77,17 @@ export const Loyalty = ({ params, clearParams }) => {
   const topTier = tiers[tiers.length - 1];
   const verifiedCount = members.filter(isVerified).length;
   const verifiedPct = members.length ? Math.round((verifiedCount / members.length) * 100) : 0;
+  // "NEW" cohort — public sign-ups awaiting first-time KYC verification.
+  // Same rule as the per-row badge: joined within 14 days AND no idNumber
+  // on file. Drives both the filter chip and the count.
+  const isNewMember = (m) => {
+    if (!m || isVerified(m) || m.idNumber) return false;
+    if (!m.joined) return false;
+    const d = new Date(m.joined);
+    if (isNaN(d)) return false;
+    return (Date.now() - d.getTime()) / 86400000 <= 14;
+  };
+  const newCount = members.filter(isNewMember).length;
 
   const filteredMembers = useMemo(() => {
     const q = memberSearch.trim().toLowerCase();
@@ -84,6 +95,7 @@ export const Loyalty = ({ params, clearParams }) => {
       if (memberTierFilter !== "all" && m.tier !== memberTierFilter) return false;
       if (memberStatusFilter === "verified" && !isVerified(m)) return false;
       if (memberStatusFilter === "pending"  &&  isVerified(m)) return false;
+      if (memberStatusFilter === "new"      && !isNewMember(m)) return false;
       if (!q) return true;
       const hay = `${m.name} ${m.email} ${m.id} ${m.phone || ""} ${m.country || ""}`.toLowerCase();
       return hay.includes(q);
@@ -358,6 +370,9 @@ export const Loyalty = ({ params, clearParams }) => {
             <FilterChip active={memberStatusFilter === "all"}      onClick={() => setMemberStatusFilter("all")}      p={p}>All</FilterChip>
             <FilterChip active={memberStatusFilter === "verified"} onClick={() => setMemberStatusFilter("verified")} color={p.success} p={p}>Verified</FilterChip>
             <FilterChip active={memberStatusFilter === "pending"}  onClick={() => setMemberStatusFilter("pending")}  color={p.warn}    p={p}>Pending</FilterChip>
+            <FilterChip active={memberStatusFilter === "new"}      onClick={() => setMemberStatusFilter("new")}      color={p.accent}  p={p}>
+              ★ New{newCount > 0 ? ` · ${newCount}` : ""}
+            </FilterChip>
           </div>
         </div>
 
@@ -381,8 +396,17 @@ export const Loyalty = ({ params, clearParams }) => {
               const redeemable = Math.floor(m.points / loyalty.redeemBhdPerPoints);
               const verified = isVerified(m);
               const partial = !verified && (m.idNumber || m.photo);
+              // "NEW" surfaces a sign-up that the operator hasn't actioned
+              // yet — joined within the last 14 days AND still missing
+              // verification (no idNumber on file). Once the operator
+              // approves KYC the badge clears automatically.
+              const joinedAt = m.joined ? new Date(m.joined) : null;
+              const daysSinceJoin = joinedAt && !isNaN(joinedAt)
+                ? Math.max(0, Math.floor((Date.now() - joinedAt.getTime()) / 86400000))
+                : Infinity;
+              const isNew = !verified && !m.idNumber && daysSinceJoin <= 14;
               return (
-                <tr key={m.id}>
+                <tr key={m.id} style={isNew ? { backgroundColor: `${p.accent}08` } : undefined}>
                   <Td>
                     <button
                       onClick={() => setViewingProfile(m)}
@@ -398,13 +422,34 @@ export const Loyalty = ({ params, clearParams }) => {
                     >
                       <Avatar member={m} tier={tier} />
                       <div className="min-w-0">
-                        <div className="group-hover:underline" style={{
+                        <div className="group-hover:underline flex items-center gap-2 flex-wrap" style={{
                           fontFamily: "'Cormorant Garamond', serif",
                           fontSize: "1.05rem",
                           color: p.textPrimary,
                           textDecorationColor: p.accent,
                           textUnderlineOffset: 3,
-                        }}>{m.name}</div>
+                        }}>
+                          <span>{m.name}</span>
+                          {isNew && (
+                            <span
+                              title={`Joined ${daysSinceJoin === 0 ? "today" : `${daysSinceJoin} day${daysSinceJoin === 1 ? "" : "s"} ago`} — awaiting KYC verification`}
+                              style={{
+                                fontFamily: "'Manrope', sans-serif",
+                                fontSize: "0.56rem",
+                                letterSpacing: "0.22em",
+                                textTransform: "uppercase",
+                                fontWeight: 700,
+                                padding: "2px 7px",
+                                color: "#FFFFFF",
+                                backgroundColor: p.accent,
+                                border: `1px solid ${p.accent}`,
+                                lineHeight: 1.2,
+                              }}
+                            >
+                              ★ New
+                            </span>
+                          )}
+                        </div>
                         <div style={{ color: p.accent, fontSize: "0.7rem", fontWeight: 600, letterSpacing: "0.05em" }}>{m.id}</div>
                       </div>
                     </button>

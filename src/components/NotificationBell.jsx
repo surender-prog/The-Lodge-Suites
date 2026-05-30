@@ -56,6 +56,7 @@ const FILTERS = [
   { id: "bookings",  label: "Bookings", match: (n) => n.refType === "booking" },
   { id: "invoices",  label: "Invoices", match: (n) => n.refType === "invoice" },
   { id: "payments",  label: "Payments", match: (n) => n.refType === "payment" },
+  { id: "members",   label: "Members",  match: (n) => n.refType === "member" },
 ];
 
 // Palette can be a usePalette() result or null — when null we render a
