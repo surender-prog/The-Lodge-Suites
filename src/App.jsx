@@ -101,6 +101,7 @@ export default function App() {
         open={vouchersOpen}
         onClose={() => setVouchersOpen(false)}
         onBook={() => openBooking()}
+        onJoin={() => { setVouchersOpen(false); setJoinOpen(true); }}
       />
       <JuffairModal
         open={juffairOpen}

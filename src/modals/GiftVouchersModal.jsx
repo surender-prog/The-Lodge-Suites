@@ -74,7 +74,11 @@ const FAQS = [
     a: "Yes — bespoke gifting (50, 100, 365 nights) and corporate bulk programmes are handled by our sales team. Tap 'Talk to sales' below and we'll be in touch within one business day." },
 ];
 
-export const GiftVouchersModal = ({ open, onClose, onBook }) => {
+export const GiftVouchersModal = ({ open, onClose, onBook, onJoin }) => {
+  // Wired by App.jsx to close this modal and pop the JoinModal. Falls
+  // back to onClose so the page still behaves predictably (no dead
+  // click) if a host forgets to pass onJoin.
+  const handleJoin = typeof onJoin === "function" ? onJoin : onClose;
   const { rooms, hotelInfo, addGiftCard, members, giftCardTiers } = useData();
   const t = useT();
   // Tiers come straight off the live admin-editable slice. Empty array
@@ -431,7 +435,7 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
                 LS Privilege only
               </div>
               <div style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", lineHeight: 1.55 }}>
-                Gift cards live on an LS Privilege account. The request is logged against your member record so the team can confirm pricing and reach out about payment. <button onClick={onClose} style={{ background: "transparent", border: "none", color: C.goldDeep, fontWeight: 700, cursor: "pointer", padding: 0, textDecoration: "underline" }}>Not a member yet? Join LS Privilege.</button>
+                Gift cards live on an LS Privilege account. The request is logged against your member record so the team can confirm pricing and reach out about payment. <button onClick={handleJoin} style={{ background: "transparent", border: "none", color: C.goldDeep, fontWeight: 700, cursor: "pointer", padding: 0, textDecoration: "underline" }}>Not a member yet? Join LS Privilege.</button>
               </div>
             </div>
             <PaperField label="Your LS Privilege email">
@@ -441,7 +445,7 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
                 autoComplete="email"
               />
             </PaperField>
-            <MemberLookupChip member={buyerMember} email={buyerEmail} role="buyer" onJoin={onClose} />
+            <MemberLookupChip member={buyerMember} email={buyerEmail} role="buyer" onJoin={handleJoin} />
           </div>
 
           {/* Summary + submit bar */}
