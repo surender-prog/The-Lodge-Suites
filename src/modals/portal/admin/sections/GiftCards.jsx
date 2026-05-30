@@ -88,7 +88,8 @@ function exportGiftCardsCsv(cards, tiers) {
 
 export const GiftCards = () => {
   const p = usePalette();
-  const { giftCards, issueGiftCard, updateGiftCard, removeGiftCard, rooms, invoices, payments, members, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers } = useData();
+  const { giftCards, issueGiftCard, updateGiftCard, removeGiftCard, rooms, updateRoom, invoices, payments, members, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers } = useData();
+  const t = useT();
   // Live tier list — falls back to bundled defaults when the admin
   // has cleared the slice (extremely rare; mostly a safety net).
   const tiers = useMemo(
@@ -298,6 +299,64 @@ export const GiftCards = () => {
           )}
         </Card>
       </div>
+
+      {/* Upgrade-supplement matrix — per-room per-night fee charged when
+          a card from a LOWER-fee room is redeemed against a HIGHER-fee
+          room. The booking flow computes the differential as
+          max(0, target.fee - source.fee) × nights. */}
+      <Card
+        title="Gift-card upgrade supplements"
+        padded={false}
+        className="mb-4"
+        action={
+          <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem" }}>
+            per room · per night
+          </span>
+        }
+      >
+        <div className="px-5 py-3" style={{ borderBottom: `1px solid ${p.border}`, color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", lineHeight: 1.55 }}>
+          When a member redeems a card against a higher-category suite, the per-night cost they're asked to top up is
+          <strong style={{ color: p.textSecondary }}> max(0, target − source)</strong> × nights. Set each suite's value relative to the lowest tier (typically <strong style={{ color: p.textSecondary }}>0</strong>).
+        </div>
+        <TableShell>
+          <thead>
+            <tr>
+              <Th>Suite</Th>
+              <Th align="end">Rack / night</Th>
+              <Th align="end">Upgrade supplement (BHD / night)</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {(rooms || []).map((r) => (
+              <tr key={r.id}>
+                <Td>
+                  <div style={{ color: p.textPrimary, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.05rem" }}>
+                    {roomLabel(r, t)}
+                  </div>
+                  <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem" }}>
+                    {r.id}
+                  </div>
+                </Td>
+                <Td align="end" muted>{formatCurrency(r.price || 0)}</Td>
+                <Td align="end" style={{ width: 220 }}>
+                  <TextField
+                    type="number"
+                    value={Number(r.giftCardUpgradeFeePerNight || 0)}
+                    onChange={(v) => {
+                      const n = Number(v);
+                      updateRoom(r.id, { giftCardUpgradeFeePerNight: Number.isFinite(n) && n >= 0 ? n : 0 });
+                    }}
+                    suffix="BHD"
+                  />
+                </Td>
+              </tr>
+            ))}
+            {(rooms || []).length === 0 && (
+              <tr><td colSpan={3} className="px-4 py-6 text-center" style={{ color: p.textMuted, fontSize: "0.84rem" }}>No rooms configured.</td></tr>
+            )}
+          </tbody>
+        </TableShell>
+      </Card>
 
       {/* Filter bar */}
       <Card padded={false} className="mb-4">
@@ -1870,14 +1929,17 @@ function TierMixEditor({ p, tiers, giftCards, onClose, onSave, onReset }) {
                       </FormGroup>
                     </div>
 
-                    {/* Discount % */}
+                    {/* Discount % — buyer-side discount the gift-card price
+                        is computed at. "10" here means the buyer pays
+                        the rack rate × nights − 10%. The recipient sees
+                        the full face value on the certificate. */}
                     <div className="col-span-3 md:col-span-1">
-                      <FormGroup label="Discount">
+                      <FormGroup label="Discount %">
                         <TextField
                           type="number"
                           value={t.discountPct}
                           onChange={(v) => updateRow(i, { discountPct: v })}
-                          suffix="%"
+                          suffix="% off"
                         />
                       </FormGroup>
                     </div>

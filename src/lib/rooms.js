@@ -30,6 +30,56 @@ function humaniseRoomId(id) {
     .join(" ");
 }
 
+// Walk every night in [checkIn, checkOut) and surface the first
+// blocker that would prevent a gift-card booking from being accepted:
+//   * stop-sale flag in the calendar overrides for this room/date
+//   * any active event-supplement window that covers this date
+// Returns null when the window is clear, otherwise an object the UI
+// can show as an inline warning + reason. Pure — no React deps.
+export function giftCardBookingBlockers({ roomId, checkIn, checkOut, calendar, eventSupplements }) {
+  if (!roomId || !checkIn || !checkOut) return null;
+  const start = new Date(checkIn);
+  const end   = new Date(checkOut);
+  if (isNaN(start) || isNaN(end) || end <= start) return null;
+  const stopSaleHits = [];
+  const eventHits    = [];
+  for (let d = new Date(start); d < end; d.setDate(d.getDate() + 1)) {
+    const iso = d.toISOString().slice(0, 10);
+    const cell = calendar?.[`${roomId}|${iso}`];
+    if (cell?.stopSale) stopSaleHits.push({ date: iso, reason: cell.reason || "Stop-sale" });
+    (eventSupplements || []).forEach((evt) => {
+      if (!evt || evt.active === false) return;
+      const f = new Date(evt.fromDate);
+      const t = new Date(evt.toDate);
+      if (isNaN(f) || isNaN(t)) return;
+      if (d >= f && d <= t) {
+        // Different surfaces label events with different field names —
+        // `name` is the canonical one (used by eventSupplements seed),
+        // but contracts attached to RFPs use `label`. Fall through both.
+        eventHits.push({ date: iso, eventId: evt.id, label: evt.name || evt.label || "Event window" });
+      }
+    });
+  }
+  if (stopSaleHits.length === 0 && eventHits.length === 0) return null;
+  return {
+    stopSale: stopSaleHits,
+    events:   eventHits,
+    // De-duped one-line summary the caller can drop into a warning.
+    summary: (() => {
+      const parts = [];
+      if (stopSaleHits.length) {
+        const reasons = [...new Set(stopSaleHits.map((h) => h.reason))].slice(0, 3).join(", ");
+        parts.push(`Stop-sale on ${stopSaleHits.length} night${stopSaleHits.length === 1 ? "" : "s"}${reasons ? ` (${reasons})` : ""}`);
+      }
+      if (eventHits.length) {
+        const evtLabels = [...new Set(eventHits.map((h) => h.label))].slice(0, 3).join(", ");
+        parts.push(`Event window: ${evtLabels}`);
+      }
+      return parts.join(" · ");
+    })(),
+  };
+}
+
 export function roomLabel(room, t) {
   if (!room && !arguments.length) return "";
   const id = typeof room === "string" ? room : room?.id;
@@ -98,6 +148,11 @@ export function dbRoomToClient(row) {
     // Useful when the hotel wants to hold inventory back (corporate-only,
     // owner blocks, walk-in stock) without removing physical rooms.
     sellLimit:          row.sell_limit != null ? Number(row.sell_limit) : null,
+    // Per-night upgrade supplement charged when a gift card from a
+    // lower-fee room is redeemed against this room. Stored on every
+    // suite — the booking flow computes the differential as
+    // max(0, target.fee - source.fee).
+    giftCardUpgradeFeePerNight: Number(row.gift_card_upgrade_fee_per_night || 0),
     isActive:           row.is_active !== false,
     displayOrder:       row.display_order || 0,
   };
@@ -125,6 +180,10 @@ export function clientPatchToDb(patch) {
     // exactly that way in DB so the constraint check stays readable.
     const v = patch.sellLimit;
     out.sell_limit = (v === null || v === "" || Number.isNaN(Number(v))) ? null : Number(v);
+  }
+  if (patch.giftCardUpgradeFeePerNight !== undefined) {
+    const v = Number(patch.giftCardUpgradeFeePerNight);
+    out.gift_card_upgrade_fee_per_night = Number.isFinite(v) && v >= 0 ? v : 0;
   }
   if (patch.isActive           !== undefined) out.is_active            = patch.isActive;
   if (patch.displayOrder       !== undefined) out.display_order        = patch.displayOrder;

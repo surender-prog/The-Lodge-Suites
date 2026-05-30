@@ -14,6 +14,7 @@ import {
 } from "../utils/membershipPass.js";
 import { useT } from "../i18n/LanguageContext.jsx";
 import { useData, applyTaxes, priceExtra, priceLabelFor, legalLine, roomFitsParty, buildCardOnFile, nightlyBreakdown, formatCurrency, resolveCurrency, MEAL_PLANS, mealPlanSupplement, mealPlanLabel, enabledMealPlansFor } from "../data/store.jsx";
+import { roomLabel, giftCardBookingBlockers } from "../lib/rooms.js";
 import { ensurePlanList, resolveDefaultPlan } from "./portal/ContractEditor.jsx";
 import { Icon as ExtraIcon } from "../components/Icon.jsx";
 import { PortalThemeProvider, ThemeToggle, usePalette } from "./portal/theme.jsx";
@@ -2357,6 +2358,7 @@ function MemberGiftCardsTab({ member, cards, transferGiftCard }) {
   const p = usePalette();
   const [sharingFor, setSharingFor] = useState(null); // card object | null
   const [previewing, setPreviewing] = useState(null); // card object | null
+  const [bookingFor, setBookingFor] = useState(null); // card object | null
 
   const issued = (cards || []).filter((c) => c.status === "issued");
   const redeemed = (cards || []).filter((c) => c.status === "redeemed");
@@ -2397,6 +2399,7 @@ function MemberGiftCardsTab({ member, cards, transferGiftCard }) {
                 card={c}
                 onShare={() => setSharingFor(c)}
                 onPreview={() => setPreviewing(c)}
+                onBook={() => setBookingFor(c)}
                 p={p}
               />
             ))}
@@ -2472,6 +2475,15 @@ function MemberGiftCardsTab({ member, cards, transferGiftCard }) {
       {previewing && (
         <GiftCardCertificateModal card={previewing} onClose={() => setPreviewing(null)} p={p} />
       )}
+
+      {bookingFor && (
+        <BookWithGiftCardDialog
+          card={bookingFor}
+          member={member}
+          onClose={() => setBookingFor(null)}
+          p={p}
+        />
+      )}
     </div>
   );
 }
@@ -2479,7 +2491,7 @@ function MemberGiftCardsTab({ member, cards, transferGiftCard }) {
 // One row in the member's gift-card list. Reused for all three groupings
 // (sharable, transferred, redeemed) — the variant flips on the card's
 // status and `transferredTo` field.
-function GiftCardRow({ card, onShare, onPreview, p }) {
+function GiftCardRow({ card, onShare, onPreview, onBook, p }) {
   const remaining = (card.totalNights || 0) - (card.nightsUsed || 0);
   const transferred = !!card.transferredTo;
   const fullyRedeemed = card.status === "redeemed";
@@ -2584,6 +2596,26 @@ function GiftCardRow({ card, onShare, onPreview, p }) {
         >
           <Printer size={11} /> View certificate
         </button>
+        {onBook && !fullyRedeemed && (
+          <button
+            onClick={onBook}
+            className="inline-flex items-center gap-1.5"
+            style={{
+              color: p.accent,
+              fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+              letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+              padding: "0.45rem 0.95rem",
+              border: `1px solid ${p.accent}`,
+              backgroundColor: "transparent",
+              cursor: "pointer",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = `${p.accent}10`; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+            title="Submit a booking request that draws on this card's prepaid nights"
+          >
+            <CalendarDays size={11} /> Book this card
+          </button>
+        )}
         {onShare && !transferred && !fullyRedeemed && (
           <button
             onClick={onShare}
@@ -2601,6 +2633,343 @@ function GiftCardRow({ card, onShare, onPreview, p }) {
             <UserPlus size={11} /> Share with guest
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+// Inline mini-form that lets a member spend their gift-card nights on
+// a real booking — same suite type (free) or a higher-category suite
+// (member tops up the per-night differential the admin set in
+// Gift Cards → Upgrade supplements). Every submission lands as
+// status="on-request" so the operator approves it from the partner
+// portal; stop-sale + event-period windows block submission outright.
+function BookWithGiftCardDialog({ card, member, onClose, p }) {
+  const t = useT();
+  const { rooms, bookings, addBooking, calendar, eventSupplements, appendAuditLog } = useData();
+  const sourceRoom = useMemo(() => (rooms || []).find((r) => r.id === card.roomId), [rooms, card.roomId]);
+  const remaining = (card.totalNights || 0) - (card.nightsUsed || 0);
+  // Default the target suite to the card's own room so "use as-is" is
+  // the zero-click default. Member can pick a different (higher) suite
+  // and the differential rolls in live.
+  const [roomId, setRoomId]   = useState(card.roomId);
+  const [checkIn, setCheckIn] = useState("");
+  const [checkOut, setCheckOut] = useState("");
+  const [guests, setGuests]   = useState(2);
+  const [notes, setNotes]     = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const targetRoom = useMemo(() => (rooms || []).find((r) => r.id === roomId), [rooms, roomId]);
+
+  const nights = useMemo(() => {
+    if (!checkIn || !checkOut) return 0;
+    const a = new Date(checkIn);
+    const b = new Date(checkOut);
+    if (isNaN(a) || isNaN(b)) return 0;
+    const ms = b - a;
+    return ms > 0 ? Math.round(ms / 86400000) : 0;
+  }, [checkIn, checkOut]);
+
+  const sourceFee = Number(sourceRoom?.giftCardUpgradeFeePerNight || 0);
+  const targetFee = Number(targetRoom?.giftCardUpgradeFeePerNight || 0);
+  const perNightDiff = Math.max(0, targetFee - sourceFee);
+  const isUpgrade = roomId !== card.roomId;
+  // Nights paid by the card (capped by what's left); anything over is
+  // billed at the rack rate. We surface both so the member sees the
+  // operator's commitment explicitly.
+  const nightsCoveredByCard = Math.min(nights, remaining);
+  const overflowNights      = Math.max(0, nights - remaining);
+  const upgradeCost   = +(perNightDiff * nightsCoveredByCard).toFixed(3);
+  const overflowCost  = +(overflowNights * (Number(targetRoom?.price || 0))).toFixed(3);
+  const totalDue      = +(upgradeCost + overflowCost).toFixed(3);
+
+  const blockers = useMemo(
+    () => giftCardBookingBlockers({ roomId, checkIn, checkOut, calendar, eventSupplements }),
+    [roomId, checkIn, checkOut, calendar, eventSupplements]
+  );
+
+  // Stop-sale / event windows block submit outright per the operator's
+  // policy. Other validations (date order, suite picked, party fits)
+  // are softer — surface as warnings, only block submit when truly
+  // missing data.
+  const datesValid = checkIn && checkOut && nights > 0;
+  const partyFits  = targetRoom ? roomFitsParty(targetRoom, Number(guests) || 0, 0).ok : true;
+  const canSubmit  = datesValid && partyFits && !blockers && !submitting && !!targetRoom;
+
+  const submit = () => {
+    if (!canSubmit) return;
+    setSubmitting(true);
+    try {
+      const code = `LS-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+      const rate = Number(targetRoom?.price || 0);
+      const ts = new Date().toISOString();
+      const saved = addBooking({
+        id: code,
+        guest: member.name,
+        email: member.email,
+        phone: member.phone || "",
+        source: "member",
+        memberId: member.id,
+        roomId,
+        checkIn,
+        checkOut,
+        nights,
+        guests: Number(guests) || 1,
+        rate,
+        total: totalDue,
+        paid: 0,
+        // Hard-routed to on-request — admin must approve before the
+        // card is debited and the booking firms up.
+        status: "on-request",
+        statusLog: [{
+          ts,
+          actorId:   member.id,
+          actorName: member.name,
+          actorRole: "member",
+          from: null,
+          to: "on-request",
+          remark: `Member-initiated gift-card booking. Card ${card.code} · ${nightsCoveredByCard}/${nights} nights covered by card${isUpgrade ? ` · upgrade from ${roomLabel(sourceRoom, t)} → ${roomLabel(targetRoom, t)}` : ""}${overflowNights > 0 ? ` · ${overflowNights} overflow night(s) at rack` : ""}${notes ? ` · "${notes}"` : ""}`,
+        }],
+        paymentStatus: "pending",
+        // Gift-card linkage — admin redeems against this id on approval.
+        redeemingGiftCardId: card.id,
+        redeemingGiftCardCode: card.code,
+        giftCardNightsRequested: nightsCoveredByCard,
+        giftCardUpgradeCost:    upgradeCost,
+        giftCardOverflowCost:   overflowCost,
+        notes,
+      });
+      try {
+        appendAuditLog?.({
+          kind: "gift-card-booking-request",
+          actorId:   member.id,
+          actorName: member.name,
+          actorRole: "member",
+          targetKind: "booking",
+          targetId:   saved?.id || code,
+          targetName: member.name,
+          details: `Request to redeem ${card.code} (${nightsCoveredByCard}/${nights} nights) at ${roomLabel(targetRoom, t)} ${checkIn} → ${checkOut}${perNightDiff > 0 ? ` · top-up BHD ${perNightDiff}/n` : ""}`,
+        });
+      } catch (_) {}
+      pushToast({
+        message: `Booking request ${saved?.id || code} submitted — on request, awaiting hotel confirmation.`,
+      });
+      onClose?.();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-xl"
+        style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.accent}`, fontFamily: "'Manrope', sans-serif" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 py-4 flex items-center gap-2" style={{ borderBottom: `1px solid ${p.border}` }}>
+          <CalendarDays size={14} style={{ color: p.accent }} />
+          <span style={{ color: p.accent, fontSize: "0.66rem", letterSpacing: "0.28em", textTransform: "uppercase", fontWeight: 700 }}>
+            Book with gift card · {card.code}
+          </span>
+        </div>
+        <div className="px-5 py-4" style={{ color: p.textSecondary, fontSize: "0.84rem", lineHeight: 1.55 }}>
+          <p style={{ color: p.textMuted, fontSize: "0.78rem", marginBottom: 14 }}>
+            <strong style={{ color: p.textPrimary }}>{remaining} night{remaining === 1 ? "" : "s"}</strong> remaining on this card for the {roomLabel(sourceRoom, t)}. Pick the same suite to redeem at no extra cost, or upgrade to a higher category and top up the per-night supplement set by the hotel.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label style={{ display: "block", color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
+                Suite
+              </label>
+              <select
+                value={roomId}
+                onChange={(e) => setRoomId(e.target.value)}
+                style={{
+                  width: "100%", padding: "0.55rem 0.7rem",
+                  fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem",
+                  backgroundColor: p.inputBg, color: p.textPrimary,
+                  border: `1px solid ${p.border}`, outline: "none",
+                }}
+              >
+                {(rooms || [])
+                  .filter((r) => r && (r.isActive !== false))
+                  .map((r) => {
+                    const diff = Math.max(0, Number(r.giftCardUpgradeFeePerNight || 0) - sourceFee);
+                    const tag = r.id === card.roomId
+                      ? "card's suite · no top-up"
+                      : diff > 0 ? `+ BHD ${diff} / night` : "no top-up";
+                    return <option key={r.id} value={r.id}>{roomLabel(r, t)} — {tag}</option>;
+                  })}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: "block", color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
+                Guests
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={guests}
+                onChange={(e) => setGuests(e.target.value)}
+                style={{
+                  width: "100%", padding: "0.55rem 0.7rem",
+                  fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem",
+                  backgroundColor: p.inputBg, color: p.textPrimary,
+                  border: `1px solid ${p.border}`, outline: "none",
+                }}
+              />
+            </div>
+            <div>
+              <label style={{ display: "block", color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
+                Check-in
+              </label>
+              <input
+                type="date"
+                value={checkIn}
+                onChange={(e) => setCheckIn(e.target.value)}
+                style={{
+                  width: "100%", padding: "0.55rem 0.7rem",
+                  fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem",
+                  backgroundColor: p.inputBg, color: p.textPrimary,
+                  border: `1px solid ${p.border}`, outline: "none",
+                }}
+              />
+            </div>
+            <div>
+              <label style={{ display: "block", color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
+                Check-out
+              </label>
+              <input
+                type="date"
+                value={checkOut}
+                onChange={(e) => setCheckOut(e.target.value)}
+                style={{
+                  width: "100%", padding: "0.55rem 0.7rem",
+                  fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem",
+                  backgroundColor: p.inputBg, color: p.textPrimary,
+                  border: `1px solid ${p.border}`, outline: "none",
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="mt-3">
+            <label style={{ display: "block", color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
+              Notes for reservations (optional)
+            </label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              placeholder="Arrival time, special requests, etc."
+              style={{
+                width: "100%", padding: "0.55rem 0.7rem",
+                fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem",
+                backgroundColor: p.inputBg, color: p.textPrimary,
+                border: `1px solid ${p.border}`, outline: "none",
+                resize: "vertical",
+              }}
+            />
+          </div>
+
+          {/* Cost summary */}
+          {datesValid && targetRoom && (
+            <div className="mt-4 p-3" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
+              <div style={{ color: p.textMuted, fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
+                Cost summary · {nights} night{nights === 1 ? "" : "s"}
+              </div>
+              <div className="space-y-1" style={{ fontSize: "0.84rem" }}>
+                <div className="flex justify-between">
+                  <span style={{ color: p.textSecondary }}>Covered by card</span>
+                  <span style={{ color: p.success, fontWeight: 600 }}>{nightsCoveredByCard} night{nightsCoveredByCard === 1 ? "" : "s"}</span>
+                </div>
+                {isUpgrade && perNightDiff > 0 && (
+                  <div className="flex justify-between">
+                    <span style={{ color: p.textSecondary }}>Upgrade top-up · {nightsCoveredByCard} × BHD {perNightDiff}</span>
+                    <span style={{ color: p.textPrimary, fontWeight: 600 }}>{formatCurrency(upgradeCost)}</span>
+                  </div>
+                )}
+                {overflowNights > 0 && (
+                  <div className="flex justify-between">
+                    <span style={{ color: p.warn }}>Overflow · {overflowNights} × BHD {Number(targetRoom?.price || 0)} rack</span>
+                    <span style={{ color: p.warn, fontWeight: 600 }}>{formatCurrency(overflowCost)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between pt-2" style={{ borderTop: `1px solid ${p.border}` }}>
+                  <span style={{ color: p.textPrimary, fontWeight: 700 }}>Top-up to pay</span>
+                  <span style={{ color: p.accent, fontWeight: 700, fontSize: "1.05rem" }}>{formatCurrency(totalDue)}</span>
+                </div>
+              </div>
+              <p style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 8, lineHeight: 1.5 }}>
+                The top-up amount is collected separately — the hotel will reach out with payment instructions when they approve the request.
+              </p>
+            </div>
+          )}
+
+          {/* Blockers — stop-sale OR event window */}
+          {blockers && (
+            <div className="mt-3 p-3" style={{ backgroundColor: `${p.danger}10`, border: `1px solid ${p.danger}55`, borderInlineStart: `4px solid ${p.danger}` }}>
+              <div style={{ color: p.danger, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>
+                Cannot book these dates
+              </div>
+              <div style={{ color: p.textPrimary, fontSize: "0.84rem", lineHeight: 1.5 }}>
+                {blockers.summary}
+              </div>
+              <p style={{ color: p.textMuted, fontSize: "0.72rem", marginTop: 6 }}>
+                Pick different dates, or contact reservations directly to negotiate availability.
+              </p>
+            </div>
+          )}
+
+          {/* Party-fit soft warning */}
+          {!partyFits && targetRoom && (
+            <div className="mt-3 p-3" style={{ backgroundColor: `${p.warn}10`, border: `1px solid ${p.warn}55` }}>
+              <span style={{ color: p.warn, fontSize: "0.82rem" }}>
+                {roomFitsParty(targetRoom, Number(guests) || 0, 0).reason}. Reduce the party or pick a larger suite.
+              </span>
+            </div>
+          )}
+        </div>
+        <div className="px-5 py-3 flex items-center justify-end gap-2" style={{ borderTop: `1px solid ${p.border}` }}>
+          <button
+            onClick={onClose}
+            style={{
+              backgroundColor: "transparent",
+              color: p.textMuted,
+              border: `1px solid ${p.border}`,
+              padding: "0.5rem 1rem",
+              fontFamily: "'Manrope', sans-serif",
+              fontSize: "0.66rem", fontWeight: 600,
+              letterSpacing: "0.2em", textTransform: "uppercase",
+              cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={canSubmit ? submit : undefined}
+            disabled={!canSubmit}
+            style={{
+              backgroundColor: canSubmit ? p.accent : "transparent",
+              color: canSubmit ? (p.theme === "light" ? "#FFFFFF" : "#15161A") : p.textDim,
+              border: `1px solid ${canSubmit ? p.accent : p.border}`,
+              padding: "0.5rem 1rem",
+              fontFamily: "'Manrope', sans-serif",
+              fontSize: "0.66rem", fontWeight: 700,
+              letterSpacing: "0.2em", textTransform: "uppercase",
+              cursor: canSubmit ? "pointer" : "not-allowed",
+              display: "inline-flex", alignItems: "center", gap: 6,
+            }}
+          >
+            {submitting ? "Submitting…" : <><Send size={12} /> Submit request</>}
+          </button>
+        </div>
       </div>
     </div>
   );
