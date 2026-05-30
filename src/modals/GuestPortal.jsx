@@ -1464,6 +1464,24 @@ function BookingDetail({
                 <div style={{ color: p.textPrimary, fontSize: "0.88rem", marginTop: 4, lineHeight: 1.5 }}>{booking.notes}</div>
               </div>
             )}
+            {/* Gift-card redemption remark — surfaces the source card +
+                nights drawn so the member (and any operator viewing this)
+                can reconcile the booking against the gift card. */}
+            {booking.redeemingGiftCardCode && (
+              <div className="p-3" style={{ backgroundColor: `${p.accent}10`, border: `1px solid ${p.accent}55`, borderInlineStart: `3px solid ${p.accent}` }}>
+                <div className="flex items-center gap-1.5" style={{ color: p.accent, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700 }}>
+                  <Gift size={11} /> Redeemed from gift card
+                </div>
+                <div className="mt-2" style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: "0.9rem", color: p.textPrimary, letterSpacing: "0.05em" }}>
+                  {booking.redeemingGiftCardCode}
+                </div>
+                <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 4, lineHeight: 1.5 }}>
+                  {Number(booking.giftCardNightsRequested) || booking.nights} night{(Number(booking.giftCardNightsRequested) || booking.nights) === 1 ? "" : "s"} drawn from card
+                  {Number(booking.giftCardUpgradeCost) > 0 ? ` · ${fmtBhd(booking.giftCardUpgradeCost)} upgrade top-up` : ""}
+                  {Number(booking.giftCardOverflowCost) > 0 ? ` · ${fmtBhd(booking.giftCardOverflowCost)} overflow` : ""}
+                </div>
+              </div>
+            )}
           </div>
         </Card>
 
@@ -2683,6 +2701,16 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
   const [guests, setGuests]   = useState(2);
   const [notes, setNotes]     = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // Payment for any top-up (upgrade differential + overflow nights at
+  // rack). Mirrors the BookStay flow: pay-on-arrival (default) or
+  // pay-now, with an optional card-on-file to guarantee the room.
+  // Only surfaced when there's actually a charge due.
+  const [payTiming, setPayTiming] = useState("later"); // "later" | "now"
+  const [holdWithCard, setHoldWithCard] = useState(false);
+  const [cardName, setCardName] = useState("");
+  const [cardNum, setCardNum]   = useState("");
+  const [cardExp, setCardExp]   = useState("");
+  const [cardCvc, setCardCvc]   = useState("");
 
   const targetRoom = useMemo(() => (rooms || []).find((r) => r.id === roomId), [rooms, roomId]);
 
@@ -2748,13 +2776,29 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
     return roomTypeAvailable(roomId, checkIn, checkOut, 1, { rooms, bookings, roomUnits });
   }, [roomId, checkIn, checkOut, nights, rooms, bookings, roomUnits]);
 
+  // A top-up is due whenever an upgrade differential or overflow night
+  // exists. The payment section only shows in that case — a same-suite,
+  // within-balance redemption is free and skips payment entirely.
+  const hasTopUp = totalDue > 0;
+  // PAY_NOW discount mirrors the BookStay flow (5% off in exchange for
+  // non-refundable terms). Only applies to the top-up amount.
+  const PAY_NOW_PCT = 5;
+  const payNowDiscount = (hasTopUp && payTiming === "now") ? +(totalDue * PAY_NOW_PCT / 100).toFixed(3) : 0;
+  const netTopUp = +(totalDue - payNowDiscount).toFixed(3);
+  // Card required when paying now, OR when the member opts to hold the
+  // room with a card. Minimal validation — the gateway does the real
+  // work; we only gate on the fields being non-empty.
+  const cardNeeded = hasTopUp && (payTiming === "now" || holdWithCard);
+  const cardComplete = cardName.trim().length >= 2 && cardNum.replace(/\D/g, "").length >= 12 && cardExp.trim().length >= 4 && cardCvc.trim().length >= 3;
+  const cardMissing = cardNeeded && !cardComplete;
+
   // Stop-sale / event windows block submit outright per the operator's
   // policy. Other validations (date order, suite picked, party fits)
   // are softer — surface as warnings, only block submit when truly
   // missing data. Auto-confirm requires BOTH: no blockers AND inventory.
   const datesValid = checkIn && checkOut && nights > 0;
   const partyFits  = targetRoom ? roomFitsParty(targetRoom, Number(guests) || 0, 0).ok : true;
-  const canSubmit  = datesValid && partyFits && !blockers && !submitting && !!targetRoom;
+  const canSubmit  = datesValid && partyFits && !blockers && !submitting && !!targetRoom && !cardMissing;
   const willAutoConfirm = canSubmit && inventoryAvailable;
   const initialStatus   = willAutoConfirm ? "confirmed" : "on-request";
 
@@ -2765,6 +2809,25 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
       const code = `LS-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
       const rate = Number(targetRoom?.price || 0);
       const ts = new Date().toISOString();
+      // Build the card-on-file payload when one was captured. The raw PAN
+      // never persists — buildCardOnFile masks it before write.
+      let cardOnFile = null;
+      if (cardNeeded && cardComplete) {
+        // buildCardOnFile expects { name, number, exp } — same shape the
+        // BookStay flow + public BookingModal use, so the card-vault admin
+        // view + maskCardNumber render this consistently.
+        try { cardOnFile = buildCardOnFile({ name: cardName, number: cardNum, exp: cardExp }); } catch (_) {}
+      }
+      const guaranteed = !!cardOnFile;
+      // Pay-now means the top-up is charged immediately (non-refundable);
+      // pay-later collects on arrival. The booking's `total` is the net
+      // top-up after any pay-now discount.
+      const payNow = hasTopUp && payTiming === "now";
+      const paymentNote = hasTopUp
+        ? (payNow
+            ? `Top-up ${formatCurrency(netTopUp)} · pay now (non-refundable, ${PAY_NOW_PCT}% off)`
+            : `Top-up ${formatCurrency(totalDue)} · pay on arrival${guaranteed ? " · card on file" : ""}`)
+        : "No top-up — fully covered by card.";
       const saved = addBooking({
         id: code,
         guest: member.name,
@@ -2778,7 +2841,7 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
         nights,
         guests: Number(guests) || 1,
         rate,
-        total: totalDue,
+        total: netTopUp,
         paid: 0,
         // Routed to confirmed when the calendar is clean + inventory
         // available, else falls back to on-request for the operator to
@@ -2792,15 +2855,28 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
           actorRole: "member",
           from: null,
           to: initialStatus,
-          remark: `${willAutoConfirm ? "Auto-confirmed (calendar clear + inventory available)" : "Submitted on-request"}. Card ${card.code} · ${nightsCoveredByCard}/${nights} nights covered by card${isUpgrade ? ` · upgrade from ${roomLabel(sourceRoom, t)} → ${roomLabel(targetRoom, t)}` : ""}${overflowNights > 0 ? ` · ${overflowNights} overflow night(s) at rack` : ""}${notes ? ` · "${notes}"` : ""}`,
+          remark: `${willAutoConfirm ? "Auto-confirmed (calendar clear + inventory available)" : "Submitted on-request"}. Card ${card.code} · ${nightsCoveredByCard}/${nights} nights covered by card${isUpgrade ? ` · upgrade from ${roomLabel(sourceRoom, t)} → ${roomLabel(targetRoom, t)}` : ""}${overflowNights > 0 ? ` · ${overflowNights} overflow night(s) at rack` : ""}${hasTopUp ? ` · ${paymentNote}` : ""}${notes ? ` · "${notes}"` : ""}`,
         }],
-        paymentStatus: "pending",
+        // Payment ledger state mirrors the BookStay flow's semantics:
+        // pay-now sits "pending" until the operator records the actual
+        // charge; pay-on-arrival with a card is a "deposit" guarantee;
+        // no-card pay-on-arrival is "pending".
+        paymentStatus: payNow ? "pending" : guaranteed ? "deposit" : "pending",
+        paymentTiming: hasTopUp ? payTiming : "later",
+        nonRefundable: payNow,
+        payNowDiscountPct: payNow ? PAY_NOW_PCT : 0,
+        payNowDiscount,
+        cardOnFile,
+        guaranteed,
+        guaranteeMode: guaranteed ? "card" : "none",
+        paymentNote,
         // Gift-card linkage — admin redeems against this id on approval.
         redeemingGiftCardId: card.id,
         redeemingGiftCardCode: card.code,
         giftCardNightsRequested: nightsCoveredByCard,
         giftCardUpgradeCost:    upgradeCost,
         giftCardOverflowCost:   overflowCost,
+        giftCardTopUpGross:     totalDue,
         notes,
       });
       try {
@@ -3211,11 +3287,16 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
                     </div>
                     <div className="text-end">
                       <div style={{ color: p.textMuted, fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
-                        Top-up to pay
+                        {hasTopUp ? "Top-up to pay" : "Total"}
                       </div>
                       <div style={{ color: p.accent, fontFamily: "'Cormorant Garamond', serif", fontWeight: 600, fontSize: "2rem", lineHeight: 1 }}>
-                        {formatCurrency(totalDue)}
+                        {formatCurrency(netTopUp)}
                       </div>
+                      {payNowDiscount > 0 && (
+                        <div style={{ color: p.textMuted, fontSize: "0.72rem", textDecoration: "line-through" }}>
+                          {formatCurrency(totalDue)}
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="space-y-2" style={{ fontSize: "0.86rem" }}>
@@ -3235,10 +3316,126 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
                         <span style={{ color: p.warn, fontWeight: 600 }}>{formatCurrency(overflowCost)}</span>
                       </div>
                     )}
+                    {payNowDiscount > 0 && (
+                      <div className="flex justify-between py-1.5" style={{ borderTop: `1px solid ${p.border}` }}>
+                        <span style={{ color: p.success }}>Pay-now discount · {PAY_NOW_PCT}%</span>
+                        <span style={{ color: p.success, fontWeight: 600 }}>− {formatCurrency(payNowDiscount)}</span>
+                      </div>
+                    )}
                   </div>
                   <p style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 14, lineHeight: 1.55 }}>
-                    The top-up is collected separately — the hotel will email payment instructions when they approve the booking. Card nights are debited only on approval.
+                    {hasTopUp
+                      ? "Card nights are debited on approval. The top-up below is settled per your chosen payment option."
+                      : "Fully covered by your gift card — no top-up due. Card nights are debited on approval."}
                   </p>
+                </div>
+              )}
+
+              {/* Step 4 · Payment — only when there's a top-up to collect.
+                  Mirrors the BookStay flow: pay-on-arrival (default) or
+                  pay-now (5% off, non-refundable), with an optional
+                  card-on-file to hold the room. A same-suite, within-
+                  balance redemption skips this entirely. */}
+              {datesValid && targetRoom && hasTopUp && (
+                <div className="p-6" style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}` }}>
+                  <div className="flex items-center gap-2 mb-1">
+                    <Lock size={13} style={{ color: p.accent }} />
+                    <div style={sectionTitle}>Step 4 · Payment</div>
+                  </div>
+                  <div style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic", fontSize: "1.4rem", color: p.textPrimary, lineHeight: 1.1, marginTop: 4, marginBottom: 4 }}>
+                    Settle the {formatCurrency(totalDue)} top-up.
+                  </div>
+                  <p style={{ color: p.textMuted, fontSize: "0.78rem", lineHeight: 1.55, marginBottom: 16 }}>
+                    Card nights stay free — this only covers the upgrade {overflowNights > 0 ? "and overflow " : ""}charge.
+                  </p>
+
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <PortalPaymentChoice
+                      active={payTiming === "later"}
+                      title="Pay on arrival"
+                      hint="Settle at check-in. Add a card below to guarantee the room, or leave it non-guaranteed (held until 3pm on arrival)."
+                      onClick={() => setPayTiming("later")}
+                      p={p}
+                    />
+                    <PortalPaymentChoice
+                      active={payTiming === "now"}
+                      title="Pay now"
+                      hint={`${PAY_NOW_PCT}% off the top-up in exchange for non-refundable terms. Card charged on approval.`}
+                      badge={`Save ${PAY_NOW_PCT}%`}
+                      onClick={() => setPayTiming("now")}
+                      p={p}
+                    />
+                  </div>
+
+                  {/* Hold-with-card toggle — only meaningful for pay-on-arrival
+                      (pay-now always needs a card). */}
+                  {payTiming === "later" && (
+                    <label className="flex items-start gap-3 mt-4 p-3" style={{ border: `1px solid ${p.border}`, backgroundColor: p.bgPanelAlt, cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={holdWithCard}
+                        onChange={(e) => setHoldWithCard(e.target.checked)}
+                        style={{ marginTop: 3, accentColor: p.accent }}
+                      />
+                      <span>
+                        <span style={{ color: p.textPrimary, fontSize: "0.86rem", fontWeight: 600 }}>Hold my room with a card</span>
+                        <span style={{ display: "block", color: p.textMuted, fontSize: "0.74rem", marginTop: 2, lineHeight: 1.5 }}>
+                          Recommended for late arrivals. The room is held all day — you're only charged if you cancel after the deadline or no-show. Card details auto-purge 30 days after the stay.
+                        </span>
+                      </span>
+                    </label>
+                  )}
+
+                  {/* Card capture — shown when pay-now OR hold-with-card. */}
+                  {cardNeeded && (
+                    <div className="mt-4 grid gap-3">
+                      {payTiming === "now" && (
+                        <div className="p-3" style={{ backgroundColor: `${p.warn}14`, border: `1px solid ${p.warn}45`, fontSize: "0.78rem", lineHeight: 1.55, color: p.textPrimary }}>
+                          <div style={{ color: p.warn, fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>
+                            Non-refundable · Save {PAY_NOW_PCT}%
+                          </div>
+                          The top-up is charged on approval and is non-refundable — no refunds for cancellations, modifications, no-shows, or early check-out.
+                        </div>
+                      )}
+                      <label className="block">
+                        <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Name on card</div>
+                        <input value={cardName} onChange={(e) => setCardName(e.target.value)} className="w-full outline-none" style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }} />
+                      </label>
+                      <div className="grid grid-cols-3 gap-3">
+                        <label className="block col-span-3">
+                          <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Card number</div>
+                          <input value={cardNum} onChange={(e) => setCardNum(e.target.value)} placeholder="•••• •••• •••• ••••" className="w-full outline-none" style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }} />
+                        </label>
+                        <label className="block">
+                          <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Exp</div>
+                          <input value={cardExp} onChange={(e) => setCardExp(e.target.value)} placeholder="MM/YY" className="w-full outline-none" style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }} />
+                        </label>
+                        <label className="block">
+                          <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>CVC</div>
+                          <input value={cardCvc} onChange={(e) => setCardCvc(e.target.value)} placeholder="•••" className="w-full outline-none" style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }} />
+                        </label>
+                      </div>
+                      {cardMissing && (
+                        <div style={{ color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.5 }}>
+                          Card details required for {payTiming === "now" ? "pay-now bookings" : "holding the room with a card"}.
+                        </div>
+                      )}
+                      <div className="flex items-start gap-2" style={{ color: p.textMuted, fontSize: "0.72rem", lineHeight: 1.5 }}>
+                        <Lock size={11} style={{ marginTop: 2, flexShrink: 0 }} />
+                        Card details are tokenised by our gateway and never stored in full. {payTiming === "now" ? "Charged on approval." : "Only charged on late-cancel / no-show."}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Non-guaranteed notice — no card on a pay-on-arrival booking */}
+                  {payTiming === "later" && !holdWithCard && (
+                    <div className="mt-4 p-3 flex items-start gap-2" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
+                      <Lock size={12} style={{ color: p.textMuted, marginTop: 2, flexShrink: 0 }} />
+                      <span style={{ color: p.textMuted, fontSize: "0.76rem", lineHeight: 1.55 }}>
+                        <strong style={{ color: p.textPrimary }}>Non-guaranteed.</strong> No card on file — your room is held until <strong style={{ color: p.textPrimary }}>3pm</strong> on the arrival day. Tick "Hold my room with a card" above to hold it all day.
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
             </section>
@@ -3255,7 +3452,7 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
                 {checkIn} → {checkOut} · {roomLabel(targetRoom, t)} · {Number(guests) || 1} guest{Number(guests) === 1 ? "" : "s"}
               </span>
               <span style={{ color: p.accent, fontWeight: 700, marginInlineStart: 12, fontVariantNumeric: "tabular-nums" }}>
-                {formatCurrency(totalDue)} top-up
+                {hasTopUp ? `${formatCurrency(netTopUp)} top-up · ${payTiming === "now" ? "pay now" : "pay on arrival"}` : "No top-up — covered by card"}
               </span>
             </>
           ) : (

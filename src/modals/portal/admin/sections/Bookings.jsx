@@ -1848,6 +1848,58 @@ function BookingEditor({ booking, onClose }) {
             </div>
           </Card>
 
+          {/* Gift-card redemption — reconciliation panel. Only shown when
+              this booking draws on a gift card. Surfaces the card code +
+              the nights/charges split so accounts can tie the booking to
+              the card ledger and debit the right number of nights on
+              approval. Read-only: the link is set at booking time. */}
+          {draft.redeemingGiftCardCode && (
+            <Card title="Gift-card redemption">
+              <div className="p-4" style={{ backgroundColor: `${p.accent}10`, border: `1px solid ${p.accent}55`, borderInlineStart: `3px solid ${p.accent}` }}>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div>
+                    <div style={{ color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                      Redeemed against card
+                    </div>
+                    <div className="mt-1 flex items-center gap-2">
+                      <code style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: "0.95rem", color: p.textPrimary, letterSpacing: "0.06em" }}>
+                        {draft.redeemingGiftCardCode}
+                      </code>
+                      <button
+                        onClick={() => { try { navigator.clipboard?.writeText(draft.redeemingGiftCardCode); pushToast({ message: "Gift-card code copied." }); } catch (_) {} }}
+                        title="Copy code"
+                        style={{ color: p.accent, padding: "2px 7px", border: `1px solid ${p.accent}`, backgroundColor: "transparent", fontFamily: "'Manrope', sans-serif", fontSize: "0.56rem", letterSpacing: "0.2em", textTransform: "uppercase", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
+                      ><Copy size={10} /> Copy</button>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-px mt-4" style={{ backgroundColor: p.border }}>
+                  <div className="p-3" style={{ backgroundColor: p.bgPanel }}>
+                    <div style={{ color: p.textMuted, fontSize: "0.58rem", letterSpacing: "0.2em", textTransform: "uppercase", fontWeight: 700 }}>Nights from card</div>
+                    <div style={{ color: p.textPrimary, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.3rem", fontWeight: 500, marginTop: 2 }}>
+                      {Number(draft.giftCardNightsRequested) || draft.nights || 0}
+                    </div>
+                  </div>
+                  <div className="p-3" style={{ backgroundColor: p.bgPanel }}>
+                    <div style={{ color: p.textMuted, fontSize: "0.58rem", letterSpacing: "0.2em", textTransform: "uppercase", fontWeight: 700 }}>Upgrade top-up</div>
+                    <div style={{ color: Number(draft.giftCardUpgradeCost) > 0 ? p.textPrimary : p.textMuted, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.3rem", fontWeight: 500, marginTop: 2 }}>
+                      {formatCurrency(Number(draft.giftCardUpgradeCost) || 0)}
+                    </div>
+                  </div>
+                  <div className="p-3" style={{ backgroundColor: p.bgPanel }}>
+                    <div style={{ color: p.textMuted, fontSize: "0.58rem", letterSpacing: "0.2em", textTransform: "uppercase", fontWeight: 700 }}>Overflow (rack)</div>
+                    <div style={{ color: Number(draft.giftCardOverflowCost) > 0 ? p.warn : p.textMuted, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.3rem", fontWeight: 500, marginTop: 2 }}>
+                      {formatCurrency(Number(draft.giftCardOverflowCost) || 0)}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", marginTop: 10, lineHeight: 1.5 }}>
+                  On approval, debit <strong style={{ color: p.textPrimary }}>{Number(draft.giftCardNightsRequested) || draft.nights || 0}</strong> night{(Number(draft.giftCardNightsRequested) || draft.nights) === 1 ? "" : "s"} from card <strong style={{ color: p.textPrimary }}>{draft.redeemingGiftCardCode}</strong> in the Gift Cards section. The top-up{Number(draft.giftCardOverflowCost) > 0 ? " + overflow" : ""} is collected separately.
+                </div>
+              </div>
+            </Card>
+          )}
+
           {/* Status & lifecycle — the current status is informational (not
               clickable); operators flip via the "Change to →" pills below,
               which open StatusChangeDialog so every transition lands with
