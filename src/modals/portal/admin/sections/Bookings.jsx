@@ -326,8 +326,15 @@ export const Bookings = ({ onNavigate, params, clearParams }) => {
             </tr>
           </thead>
           <tbody>
-            {pageItems.map((b) => (
-              <tr key={b.id}>
+            {pageItems.map((b) => {
+              // "Void" bookings — cancelled / rejected / sold-out — are
+              // rows for stays that didn't happen. Strike them through and
+              // dim the row so the operator can scan past them at a glance
+              // while the record stays on file for the audit trail.
+              const isVoid = ["cancelled", "rejected", "sold-out"].includes(b.status);
+              const voidLine = isVoid ? { textDecoration: "line-through", textDecorationThickness: "1px" } : undefined;
+              return (
+              <tr key={b.id} style={isVoid ? { opacity: 0.6 } : undefined}>
                 <Td>
                   <button
                     onClick={() => setEditing({ ...b })}
@@ -340,6 +347,7 @@ export const Bookings = ({ onNavigate, params, clearParams }) => {
                         color: p.accent, fontWeight: 700, fontSize: "0.78rem", letterSpacing: "0.05em",
                         textDecorationColor: p.accent, textUnderlineOffset: 3,
                         fontFamily: "ui-monospace, Menlo, monospace",
+                        ...voidLine,
                       }}>{b.id}</div>
                   </button>
                 </Td>
@@ -358,6 +366,7 @@ export const Bookings = ({ onNavigate, params, clearParams }) => {
                             fontFamily: "'Cormorant Garamond', serif", fontSize: "1.05rem",
                             color: p.textPrimary,
                             textDecorationColor: p.accent, textUnderlineOffset: 3,
+                            ...voidLine,
                           }}>{b.guest}</div>
                           {guestMember && (
                             <span title={`LS Privilege · ${guestMember.id}`}
@@ -380,10 +389,10 @@ export const Bookings = ({ onNavigate, params, clearParams }) => {
                     {SOURCE_LABEL[b.source]}
                   </span>
                 </Td>
-                <Td>{roomLabel(rooms.find((r) => r.id === b.roomId) || b.roomId, t)}</Td>
-                <Td muted>{fmtDate(b.checkIn, lang)} → {fmtDate(b.checkOut, lang)}</Td>
-                <Td align="end">{b.nights}</Td>
-                <Td align="end" className="font-semibold">{formatCurrency(b.total)}</Td>
+                <Td style={voidLine}>{roomLabel(rooms.find((r) => r.id === b.roomId) || b.roomId, t)}</Td>
+                <Td muted style={voidLine}>{fmtDate(b.checkIn, lang)} → {fmtDate(b.checkOut, lang)}</Td>
+                <Td align="end" style={voidLine}>{b.nights}</Td>
+                <Td align="end" className="font-semibold" style={voidLine}>{formatCurrency(b.total)}</Td>
                 <Td>
                   {/* Distinguish "Pay-now, card captured, awaiting the
                       operator's Mark-as-charged" from a plain pending
@@ -428,7 +437,8 @@ export const Bookings = ({ onNavigate, params, clearParams }) => {
                   <RowActions booking={b} onEdit={() => setEditing({ ...b })} />
                 </Td>
               </tr>
-            ))}
+              );
+            })}
             {filtered.length === 0 && (
               <tr><td colSpan={10} className="px-4 py-10 text-center" style={{ color: p.textMuted, fontSize: "0.88rem" }}>No bookings match the current filters.</td></tr>
             )}
