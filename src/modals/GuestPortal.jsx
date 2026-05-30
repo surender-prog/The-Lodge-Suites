@@ -5873,6 +5873,10 @@ function ConfirmStep({
 }) {
   const t = useT();
   const p = usePalette();
+  // Live rooms slice — the suite-summary rows resolve their label via
+  // roomLabel(rooms.find(...)). Without this, `rooms` is undefined and
+  // the component throws the moment a suite is in the cart.
+  const { rooms } = useData();
   return (
     <>
       <Card title="Review & confirm">
@@ -6251,6 +6255,10 @@ function PortalPaymentChoice({ active, title, hint, badge, onClick, p }) {
 // ─── Sticky reservation rail ────────────────────────────────────────────
 function ReservationRail({ p, checkIn, checkOut, nights, stayTotals, partySize, extrasList, subTotalRoom, grandTotal, taxBreakdown, taxIncluded, guest, bookFor, totalAdults, totalChildren, payNowDiscount = 0, payNowDiscountPct = 0, commissionDeduction = 0, commissionPct = 0, grandTotalNet, mealPlan, mealPlanTotal = 0 }) {
   const t = useT();
+  // Live rooms slice — suite rows resolve their label via
+  // roomLabel(rooms.find(...)); without it `rooms` is undefined and the
+  // rail throws as soon as a suite is added to the reservation.
+  const { rooms } = useData();
   const guestsLabel = (() => {
     const a = Number(totalAdults) || 0;
     const c = Number(totalChildren) || 0;
