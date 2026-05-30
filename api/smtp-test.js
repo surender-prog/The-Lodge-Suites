@@ -16,66 +16,7 @@
 // site (or localhost during dev).
 
 import nodemailer from "nodemailer";
-
-// Hosts whose Origin header is allowed to call this endpoint. Localhost
-// covers `npm run dev`; the Vercel host is matched fuzzily so preview /
-// production deployments work without a per-deploy update.
-const ORIGIN_ALLOWLIST = [
-  "http://localhost:5173",
-  "http://localhost:3000",
-  "http://127.0.0.1:5173",
-];
-
-function isAllowedOrigin(origin = "") {
-  if (!origin) return true; // Some browsers omit Origin on same-origin POSTs.
-  if (ORIGIN_ALLOWLIST.includes(origin)) return true;
-  try {
-    const { host } = new URL(origin);
-    // Accept any *.vercel.app deployment (preview + production share the
-    // same project; both should be able to test SMTP from the operator UI).
-    if (host.endsWith(".vercel.app")) return true;
-    // Accept the canonical apex domain if/when one's configured.
-    if (host === "thelodgesuites.com" || host.endsWith(".thelodgesuites.com")) return true;
-  } catch (_) {}
-  return false;
-}
-
-// Translate the operator's encryption choice into the nodemailer
-// transport's `secure` flag + STARTTLS hint. `tls`  = STARTTLS on 587;
-// `ssl` = SMTPS on 465; `none` = plain SMTP (rare, mostly dev).
-function transportOptionsFor({ host, port, encryption, username, password }) {
-  const portNum = Number(port) || 587;
-  const secure  = encryption === "ssl" || portNum === 465;
-  return {
-    host,
-    port: portNum,
-    secure,
-    auth: { user: username, pass: password },
-    // STARTTLS is the default when secure=false on port 587, but make it
-    // explicit so a misconfigured port doesn't fall back to plaintext AUTH.
-    requireTLS: encryption !== "none" && !secure,
-    tls: {
-      // Most providers ship valid certs. Operators on custom self-signed
-      // domains can add their own override later; for now we keep
-      // verification strict so we don't lie about a secure handshake.
-      rejectUnauthorized: true,
-    },
-    // Don't hang the serverless function on a dead host — Vercel kills
-    // the invocation around 10s anyway and we'd prefer a real error.
-    connectionTimeout: 8000,
-    greetingTimeout:   8000,
-    socketTimeout:     8000,
-  };
-}
-
-function buildFromHeader({ fromName, fromEmail, username }) {
-  const addr = String(fromEmail || username || "").trim();
-  const name = String(fromName || "").trim();
-  if (!addr) return null;
-  if (!name) return addr;
-  // Quote the display name so commas / unicode don't break the header.
-  return `"${name.replace(/"/g, '\\"')}" <${addr}>`;
-}
+import { isAllowedOrigin, transportOptionsFor, buildFromHeader, simplifyError } from "./_smtp.js";
 
 export default async function handler(req, res) {
   // CORS / origin check.
@@ -192,29 +133,4 @@ export default async function handler(req, res) {
       raw: err.code || err.responseCode || null,
     });
   }
-}
-
-// Nodemailer / SMTP errors can be cryptic. Surface a friendlier
-// one-liner the operator can act on — the raw .code / .responseCode
-// rides alongside as `raw` for support requests.
-function simplifyError(err) {
-  if (!err) return "Unknown SMTP error";
-  const msg = String(err.message || err);
-  // Common patterns operators run into.
-  if (/EAUTH/i.test(err.code || "") || /authentication failed|535/i.test(msg)) {
-    return "Authentication failed — username or password rejected by the SMTP server.";
-  }
-  if (/ECONNREFUSED/i.test(err.code || "")) {
-    return "Connection refused — wrong host or port, or the server isn't reachable from Vercel.";
-  }
-  if (/ETIMEDOUT|ESOCKET|ETIMEOUT/i.test(err.code || "")) {
-    return "Connection timed out — host unreachable, port blocked, or firewall is dropping the request.";
-  }
-  if (/self.signed|unable to verify|cert/i.test(msg)) {
-    return "TLS certificate validation failed — the server is presenting an untrusted cert.";
-  }
-  if (/STARTTLS|wrong version/i.test(msg)) {
-    return "TLS handshake failed — try switching encryption (STARTTLS vs SSL/TLS) or check the port (587 vs 465).";
-  }
-  return msg;
 }

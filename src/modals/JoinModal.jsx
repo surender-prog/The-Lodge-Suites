@@ -35,6 +35,26 @@ export const JoinModal = ({ open, onClose }) => {
       ...data,
       tier: "silver",
     })); } catch (_) {}
+    // Fire the real welcome email via the server-side sender. It reads
+    // the saved SMTP config with the service-role key (the password is
+    // never exposed to this anon client), so registration triggers an
+    // actual email without holding credentials. Fire-and-forget: a slow
+    // or unconfigured mail server must never block the success panel.
+    const recipientEmail = (saved?.email || data.email || "").trim();
+    if (recipientEmail) {
+      try {
+        fetch("/api/send-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            kind: "welcome",
+            to: recipientEmail,
+            name: saved?.name || data.name,
+            memberId: saved?.id || null,
+          }),
+        }).catch(() => {});
+      } catch (_) {}
+    }
     setMemberId(saved?.id || null);
     setDone(true);
   };
