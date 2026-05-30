@@ -3768,8 +3768,10 @@ export function computeGiftCardPrice({ nights, discountPct, ratePerNight }) {
 }
 
 // Find an active card for redemption. Returns null on miss / wrong
-// status. Card is "active" when status is "issued" and there's at
-// least one night left.
+// status. Card is "active" ONLY when status === "issued" (admin has
+// processed the buyer's payment and released the code). Any other
+// status — "requested" (awaiting admin payment processing),
+// "cancelled", "expired", "redeemed" — is rejected.
 export function findRedeemableGiftCard(cards, code) {
   if (!code) return null;
   const want = normaliseGiftCardCode(code);
@@ -3777,7 +3779,7 @@ export function findRedeemableGiftCard(cards, code) {
   return (cards || []).find((c) => {
     const carryCode = normaliseGiftCardCode(c.code);
     if (carryCode !== want) return false;
-    if (c.status === "cancelled" || c.status === "expired") return false;
+    if (c.status !== "issued") return false;
     const remaining = (c.totalNights || 0) - (c.nightsUsed || 0);
     return remaining > 0;
   }) || null;

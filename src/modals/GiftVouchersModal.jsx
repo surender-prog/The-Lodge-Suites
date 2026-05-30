@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from "react";
 import {
-  Banknote, BedDouble, Calendar, Check, Coffee, Copy, CreditCard, Gift,
-  Heart, Loader2, Lock, Mail, Send, ShieldCheck, Smartphone, Sparkles,
-  Star, Users, Utensils, Wallet,
+  BedDouble, Calendar, Check, Coffee, Gift,
+  Heart, Loader2, Mail, Send, ShieldCheck, Sparkles,
+  Star, Users, Utensils,
 } from "lucide-react";
 import { C } from "../data/tokens.js";
 import { IMG } from "../data/images.js";
@@ -53,18 +53,9 @@ const OCCASIONS = [
 // through `issueGiftCard(payload, { paymentMethod })` which posts a
 // receipt with `method` set to `key` — so the admin Gift Cards detail
 // drawer and the Payments ledger see the method the buyer chose.
-//
-// Card and Apple Pay simulate a 1.4s gateway round-trip (no card
-// number is captured on our DOM — in production this would redirect
-// to Stripe Checkout / Apple Pay sheet). Benefit Pay and Bank transfer
-// just record the picked method + a reference / note the buyer can
-// hand back to accounts if there's a query.
-const PAYMENT_METHODS = [
-  { key: "card",        label: "Credit or debit card", icon: CreditCard, blurb: "Visa / Mastercard / Amex. Charged through our secure payment gateway — your card details never touch our server.", processed: true, feePct: 2.5 },
-  { key: "apple-pay",   label: "Apple Pay",            icon: Wallet,     blurb: "Confirm with Face ID or Touch ID on this device. Works wherever Apple Pay is supported.", processed: true, feePct: 2.5 },
-  { key: "benefit-pay", label: "Benefit Pay",          icon: Smartphone, blurb: "Bahrain's national mobile-payment system. You'll be redirected to your bank's app to authorise.", processed: true, feePct: 0.5 },
-  { key: "transfer",    label: "Bank transfer",        icon: Banknote,   blurb: "We email you the IBAN + amount. Card is issued the moment funds clear (usually next working day).", processed: false, feePct: 0 },
-];
+// (Payment options used to live on this page; they've moved to the
+// admin — buyers submit a request, the hotel processes payment and
+// flips the card from "requested" to "issued".)
 
 const FAQS = [
   { id: "validity",  q: "How long is a gift card valid?",
@@ -82,7 +73,7 @@ const FAQS = [
 ];
 
 export const GiftVouchersModal = ({ open, onClose, onBook }) => {
-  const { rooms, hotelInfo, issueGiftCard, members, giftCardTiers } = useData();
+  const { rooms, hotelInfo, addGiftCard, members, giftCardTiers } = useData();
   // Tiers come straight off the live admin-editable slice. Empty array
   // fallback uses the bundled defaults so the modal still renders when
   // an over-zealous admin deletes all the tiers.
@@ -101,16 +92,12 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
   // separate composer step but have moved into the LS Privilege member
   // portal — buyers send / re-print their cards from there.
   const [buyerEmail, setBuyerEmail] = useState("");
-  // Payment method + buyer-facing payment metadata. `cardName` is the
-  // only field we capture for card methods — full card numbers go
-  // through the gateway, never our DOM. `transferRef` is a free-text
-  // reference the buyer can use when wiring the bank transfer so
-  // accounting can match the inbound payment to this card.
-  const [paymentMethod, setPaymentMethod] = useState("card");
-  const [cardName,      setCardName]      = useState("");
-  const [transferRef,   setTransferRef]   = useState("");
-  // `processing` drives the "Pay X · BHD …" → spinner state during the
-  // simulated gateway round-trip. Set false once issueGiftCard returns.
+  // `processing` drives the "Submit request" → spinner state during
+  // the addGiftCard write. Payment options have moved to the admin —
+  // the public form just captures intent + buyer identity. Hotel
+  // accounts process the payment offline (Benefit Pay, bank transfer,
+  // POS, etc.) and flip the card from "requested" to "issued" from
+  // the gift cards admin section.
   const [processing, setProcessing] = useState(false);
   // Show-issued-code panel after a successful purchase so the buyer
   // (or the operator standing behind them) can copy the code to share.
@@ -133,78 +120,37 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
     return (members || []).find((m) => (m.email || "").toLowerCase() === e) || null;
   }, [buyerEmail, members]);
 
-  // Active payment method record. Falls back to the first method if the
-  // picked key was removed from the catalogue (defensive).
-  const paymentMeta = useMemo(
-    () => PAYMENT_METHODS.find((m) => m.key === paymentMethod) || PAYMENT_METHODS[0],
-    [paymentMethod]
-  );
-  // Card and Apple Pay require the cardholder name. Bank transfer
-  // requires a non-empty reference so accounts can match the wire.
-  // Benefit Pay needs nothing extra — the bank app collects auth.
-  const paymentReady = useMemo(() => {
-    if (paymentMethod === "card" || paymentMethod === "apple-pay") return cardName.trim().length >= 2;
-    if (paymentMethod === "transfer") return transferRef.trim().length >= 3;
-    return true;
-  }, [paymentMethod, cardName, transferRef]);
-
-  // Public purchase flow only needs the buyer to be an LS Privilege
-  // member — the card is issued to their account. Recipient assignment
-  // (and delivery / personal message) happens later from the member
-  // portal once the card is on file.
-  const canSubmit = !!buyerMember
-    && paymentReady
-    && !processing;
+  // Public form only needs the buyer to be an LS Privilege member —
+  // no payment fields gate the submit anymore. Payment is handled by
+  // the hotel offline once the request lands.
+  const canSubmit = !!buyerMember && !processing;
 
   const handleSubmit = async () => {
-    if (!buyerMember) { pushToast({ message: "Enter your LS Privilege email to continue.", kind: "warn" }); return; }
-    if (paymentMethod === "card" && cardName.trim().length < 2) {
-      pushToast({ message: "Enter the name on your card to continue.", kind: "warn" }); return;
+    if (!buyerMember) {
+      pushToast({ message: "Enter your LS Privilege email to continue.", kind: "warn" });
+      return;
     }
-    if (paymentMethod === "apple-pay" && cardName.trim().length < 2) {
-      pushToast({ message: "Enter the Apple Pay account name to continue.", kind: "warn" }); return;
-    }
-    if (paymentMethod === "transfer" && transferRef.trim().length < 3) {
-      pushToast({ message: "Pick a short reference so we can match your wire.", kind: "warn" }); return;
-    }
-
-    // Mocked gateway round-trip — in production this is where the
-    // Stripe / Apple Pay / Benefit Pay sheet pops, the user confirms,
-    // and we get back an authorisation id. For now we simulate the
-    // delay so the buyer sees the "processing" state and the operator
-    // gets a realistic timing for UX testing.
     setProcessing(true);
     try {
-      if (paymentMeta.processed) {
-        await new Promise((resolve) => setTimeout(resolve, 1400));
-      }
-
-      // Compose a human-readable note for the payment receipt so
-      // accounts can see at a glance how the buyer paid. The note
-      // shows up on the receipt PDF and on the Payments admin row.
-      const noteParts = [];
-      if (paymentMethod === "card")        noteParts.push(`Card · ${cardName.trim()}`);
-      if (paymentMethod === "apple-pay")   noteParts.push(`Apple Pay · ${cardName.trim()}`);
-      if (paymentMethod === "benefit-pay") noteParts.push("Benefit Pay · mobile auth");
-      if (paymentMethod === "transfer")    noteParts.push(`Bank transfer · ref ${transferRef.trim()}`);
-
-      const saved = issueGiftCard({
+      // Status starts at "requested" — the card is on file but NOT
+      // redeemable (findRedeemableGiftCard only honours status="issued").
+      // The hotel processes the buyer's payment offline (Benefit Pay,
+      // bank transfer, in-person, etc.) and flips the card to "issued"
+      // from the gift cards admin section, which also generates the
+      // invoice + payment receipt at that point.
+      const saved = addGiftCard({
         tierId: tier.id,
         roomId: room.id,
         totalNights: tier.nights,
         discountPct: tier.discountPct,
         ratePerNight,
         faceValue: price.gross,
-        // Bank transfer is "pending settlement" but we still record
-        // the same paid amount — the operator switches the card from
-        // "pending" → "issued" once the wire clears. For the four
-        // card-style methods the funds are captured straight away.
-        paidAmount: price.net,
-        // Recipient is left blank at purchase time — the buyer assigns
-        // one later from their LS Privilege portal. The card initially
-        // belongs to the buyer's own account (recipientMemberId mirrors
-        // the buyer so the read-side that looks up cards "owned" by a
-        // member still finds it).
+        paidAmount: 0,
+        status: "requested",
+        // Recipient is left blank at request time — the buyer assigns
+        // one later from their LS Privilege portal. recipientMemberId
+        // mirrors the buyer so the read-side that looks up cards
+        // "owned" by a member still surfaces the request.
         recipientMemberId: buyerMember.id,
         recipientName:     buyerMember.name,
         recipientEmail:    buyerMember.email,
@@ -214,33 +160,26 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
         message:           "",
         delivery:          "email",
         deliverOn:         null,
-        // Surface the method on the card itself too — the admin
-        // detail drawer reads it for the "Paid via" chip even before
-        // the operator opens the linked receipt.
-        paymentMethod,
-        paymentNote:  noteParts.join(" · "),
-      }, { paymentMethod });
-
-      // Stash the same payment metadata on the issued payload so the
-      // success panel can confirm "Paid via …" without re-querying.
-      setIssued(saved ? { ...saved, paymentMethod, paymentNote: noteParts.join(" · ") } : saved);
+        // Stamp the requested amount on the card so the admin sees
+        // exactly what to invoice when they process payment.
+        requestedAmount: price.net,
+      });
+      setIssued(saved || null);
       pushToast({
-        message: paymentMethod === "transfer"
-          ? `Gift card ${saved?.code} reserved — we'll email the IBAN.`
-          : `Payment confirmed · gift card ${saved?.code} issued.`,
+        message: saved
+          ? `Request received · we'll be in touch about payment for ${saved.code}.`
+          : "Couldn't submit your request. Please try again.",
+        kind: saved ? undefined : "warn",
       });
     } finally {
       setProcessing(false);
     }
   };
 
-  // Reset + close — used by the "Done" button in the issued panel.
+  // Reset + close — used by the "Done" button in the success panel.
   const closeAfterIssue = () => {
     setIssued(null);
     setBuyerEmail("");
-    setPaymentMethod("card");
-    setCardName("");
-    setTransferRef("");
     onClose?.();
   };
 
@@ -272,96 +211,75 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
         </button>
       }
     >
-      {/* Issued-code success panel — replaces the composer once a card
-          has been issued so the buyer can copy the code to share. Also
-          confirms the payment method + reference so the buyer leaves
-          with a clear "paid via …" trail. */}
-      {issued && (() => {
-        const issuedMethodMeta = PAYMENT_METHODS.find((m) => m.key === issued.paymentMethod) || PAYMENT_METHODS[0];
-        const IssuedIc = issuedMethodMeta.icon;
-        const pendingTransfer = issued.paymentMethod === "transfer";
-        return (
-          <div className="p-7 mb-12" style={{
-            backgroundColor: C.bgDeep, color: C.cream,
-            border: `1px solid ${C.gold}`,
-          }}>
-            <div className="flex items-start gap-4 flex-wrap">
-              <div className="flex-1 min-w-0">
-                <div style={{ color: C.gold, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.28em", textTransform: "uppercase", fontWeight: 700 }}>
-                  {pendingTransfer ? "Gift card reserved" : "Gift card issued"}
-                </div>
-                <div className="mt-1" style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic", fontSize: "2.1rem", lineHeight: 1.1 }}>
-                  {issued.totalNights} nights for {issued.recipientName}
-                </div>
-                <div className="mt-1" style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}>
-                  {pendingTransfer
-                    ? "We've emailed you the IBAN — the card activates the moment your transfer clears (usually next working day). The code below is locked in for the recipient now."
-                    : "Save this code — the recipient enters it during booking to redeem the prepaid nights."}
-                </div>
-                <div className="mt-4 inline-flex items-center gap-3 px-4 py-3" style={{ backgroundColor: "rgba(201,169,97,0.12)", border: `1px solid ${C.gold}` }}>
-                  <code style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: "1rem", color: C.cream, letterSpacing: "0.08em" }}>{issued.code}</code>
-                  <button
-                    onClick={() => {
-                      if (navigator.clipboard) navigator.clipboard.writeText(issued.code);
-                      pushToast({ message: "Code copied to clipboard." });
-                    }}
-                    style={{
-                      color: C.gold, padding: "0.3rem 0.7rem",
-                      fontFamily: "'Manrope', sans-serif", fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
-                      border: `1px solid ${C.gold}`, backgroundColor: "transparent", cursor: "pointer",
-                      display: "inline-flex", alignItems: "center", gap: 5,
-                    }}
-                  ><Copy size={11} /> Copy</button>
-                </div>
+      {/* Request-received panel — the buyer's request is on file but
+          no code is shown (the card is in "requested" status and not
+          yet redeemable). The hotel reaches out via the buyer's email
+          with payment instructions; once payment lands they flip it
+          to "issued" and the buyer/recipient sees the redeemable
+          code in the LS Privilege portal. */}
+      {issued && (
+        <div className="p-7 mb-12" style={{
+          backgroundColor: C.bgDeep, color: C.cream,
+          border: `1px solid ${C.gold}`,
+        }}>
+          <div className="flex items-start gap-4 flex-wrap">
+            <div className="flex-1 min-w-0">
+              <div style={{ color: C.gold, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.28em", textTransform: "uppercase", fontWeight: 700 }}>
+                Request received
+              </div>
+              <div className="mt-1" style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic", fontSize: "2.1rem", lineHeight: 1.1 }}>
+                {issued.totalNights} nights at the {
+                  issued.roomId === "studio"    ? "Lodge Studio"
+                  : issued.roomId === "one-bed"   ? "One-Bedroom Suite"
+                  : issued.roomId === "two-bed"   ? "Two-Bedroom Suite"
+                  : issued.roomId === "three-bed" ? "Three-Bedroom Suite"
+                  : issued.roomId
+                }
+              </div>
+              <div className="mt-2" style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem", lineHeight: 1.55 }}>
+                Thank you — our reservations team will reach out to <strong style={{ color: C.cream }}>{issued.senderEmail}</strong> with payment instructions. Once the payment is confirmed the redeemable code will appear in your LS Privilege portal and we'll email a copy for your records.
+              </div>
 
-                {/* Payment receipt strip */}
-                <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-px" style={{ backgroundColor: "rgba(201,169,97,0.18)" }}>
-                  <div className="p-3" style={{ backgroundColor: "rgba(15,16,20,0.4)" }}>
-                    <div style={{ color: C.gold, fontFamily: "'Manrope', sans-serif", fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
-                      Amount {pendingTransfer ? "due" : "charged"}
-                    </div>
-                    <div className="mt-1 inline-flex items-center gap-2" style={{ color: C.cream, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", fontWeight: 500 }}>
-                      {formatCurrency(issued.paidAmount)}
-                    </div>
+              <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-px" style={{ backgroundColor: "rgba(201,169,97,0.18)" }}>
+                <div className="p-3" style={{ backgroundColor: "rgba(15,16,20,0.4)" }}>
+                  <div style={{ color: C.gold, fontFamily: "'Manrope', sans-serif", fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                    Request reference
                   </div>
-                  <div className="p-3" style={{ backgroundColor: "rgba(15,16,20,0.4)" }}>
-                    <div style={{ color: C.gold, fontFamily: "'Manrope', sans-serif", fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
-                      Paid via
-                    </div>
-                    <div className="mt-1 inline-flex items-center gap-2" style={{ color: C.cream, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem", fontWeight: 600 }}>
-                      <IssuedIc size={13} style={{ color: C.gold }} /> {issuedMethodMeta.label}
-                      {pendingTransfer && (
-                        <span style={{ marginInlineStart: 6, color: "#E0B85E", fontSize: "0.58rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, padding: "1px 6px", border: "1px solid #E0B85E" }}>Pending</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="p-3" style={{ backgroundColor: "rgba(15,16,20,0.4)" }}>
-                    <div style={{ color: C.gold, fontFamily: "'Manrope', sans-serif", fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
-                      Reference
-                    </div>
-                    <div className="mt-1" style={{ color: C.cream, fontFamily: "ui-monospace, Menlo, monospace", fontSize: "0.78rem" }}>
-                      {issued.paymentNote || issued.code}
-                    </div>
+                  <div className="mt-1" style={{ color: C.cream, fontFamily: "ui-monospace, Menlo, monospace", fontSize: "0.84rem", letterSpacing: "0.04em" }}>
+                    {issued.id}
                   </div>
                 </div>
-                <div className="mt-3" style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem" }}>
-                  A receipt has been emailed to {issued.senderEmail || "you"}. The full invoice + payment receipt are filed in your LS Privilege account.
+                <div className="p-3" style={{ backgroundColor: "rgba(15,16,20,0.4)" }}>
+                  <div style={{ color: C.gold, fontFamily: "'Manrope', sans-serif", fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                    Amount due
+                  </div>
+                  <div className="mt-1" style={{ color: C.cream, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", fontWeight: 500 }}>
+                    {formatCurrency(issued.requestedAmount || issued.faceValue)}
+                  </div>
+                </div>
+                <div className="p-3" style={{ backgroundColor: "rgba(15,16,20,0.4)" }}>
+                  <div style={{ color: C.gold, fontFamily: "'Manrope', sans-serif", fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                    Status
+                  </div>
+                  <div className="mt-1 inline-flex items-center gap-2" style={{ color: "#E0B85E", fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, padding: "2px 8px", border: "1px solid #E0B85E" }}>
+                    Awaiting payment
+                  </div>
                 </div>
               </div>
-              <button
-                onClick={closeAfterIssue}
-                style={{
-                  padding: "0.85rem 1.4rem", backgroundColor: C.gold, color: C.bgDeep,
-                  fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem",
-                  letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
-                  border: `1px solid ${C.gold}`, cursor: "pointer", whiteSpace: "nowrap",
-                  display: "inline-flex", alignItems: "center", gap: 8,
-                }}
-              ><Check size={13} /> Done</button>
             </div>
+            <button
+              onClick={closeAfterIssue}
+              style={{
+                padding: "0.85rem 1.4rem", backgroundColor: C.gold, color: C.bgDeep,
+                fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem",
+                letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+                border: `1px solid ${C.gold}`, cursor: "pointer", whiteSpace: "nowrap",
+                display: "inline-flex", alignItems: "center", gap: 8,
+              }}
+            ><Check size={13} /> Done</button>
           </div>
-        );
-      })()}
+        </div>
+      )}
 
       {/* Suite picker */}
       <PageSection
@@ -496,31 +414,30 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
         </div>
       </PageSection>
 
-      {/* Step 3 · Payment + buyer identification. The composer (recipient
-          / delivery / personal message) has moved out of the public
-          purchase flow — buyers receive the code into their own LS
-          Privilege account and assign it to a recipient later from the
-          member portal. The only thing we still need at checkout is the
-          buyer's email so the issued card lands on the right account. */}
+      {/* Step 3 · Submit request. Payment options have moved into the
+          admin workflow — buyers submit intent + their LS Privilege
+          email, and the hotel reaches out with payment instructions
+          (Benefit Pay, bank transfer, in-person, etc.). On payment
+          confirmation the admin flips the card from "requested" to
+          "issued" and the redeemable code becomes visible in the
+          buyer's LS Privilege portal. */}
       {!issued && (
         <PageSection
-          eyebrow="Step 3 · Payment"
-          title="How would you like"
-          italic="to pay?"
-          intro="Pick a payment method. Cards and Apple Pay charge instantly through our secure gateway — your card details never touch our server. Benefit Pay redirects to your bank app; bank transfers reserve the card and issue once funds clear."
+          eyebrow="Step 3 · Submit request"
+          title="Send it to"
+          italic="reservations."
+          intro="No payment is taken on this page. We log your request and our reservations team reaches out via email with the payment options available to you (Benefit Pay, bank transfer, in-person at the front desk). Once payment is confirmed the gift card becomes redeemable in your LS Privilege portal."
         >
-          {/* Buyer identification — the issued gift card is parked on
-              the buyer's LS Privilege account so they can browse it,
-              re-print it, or assign it to a recipient later from their
-              member portal. We match the email against the directory and
-              gate the submit until the row resolves. */}
+          {/* Buyer identification — the requested card is parked on the
+              buyer's LS Privilege account. We match the email against
+              the directory and gate the submit until the row resolves. */}
           <div className="p-7 mb-px" style={{ backgroundColor: C.cream }}>
             <div className="flex items-start gap-3" style={{ marginBottom: 14 }}>
               <div style={{ color: C.goldDeep, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, flexShrink: 0, marginTop: 2 }}>
                 LS Privilege only
               </div>
               <div style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", lineHeight: 1.55 }}>
-                Gift cards are issued to an LS Privilege account. The code lands in your member portal — you can keep it, send it to a recipient, or print the certificate from there. <button onClick={onClose} style={{ background: "transparent", border: "none", color: C.goldDeep, fontWeight: 700, cursor: "pointer", padding: 0, textDecoration: "underline" }}>Not a member yet? Join LS Privilege.</button>
+                Gift cards live on an LS Privilege account. The request is logged against your member record so the team can confirm pricing and reach out about payment. <button onClick={onClose} style={{ background: "transparent", border: "none", color: C.goldDeep, fontWeight: 700, cursor: "pointer", padding: 0, textDecoration: "underline" }}>Not a member yet? Join LS Privilege.</button>
               </div>
             </div>
             <PaperField label="Your LS Privilege email">
@@ -533,126 +450,11 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
             <MemberLookupChip member={buyerMember} email={buyerEmail} role="buyer" onJoin={onClose} />
           </div>
 
-          {/* Method picker — radio-style cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-px" style={{ backgroundColor: "rgba(0,0,0,0.08)" }}>
-            {PAYMENT_METHODS.map((m) => {
-              const sel = paymentMethod === m.key;
-              const Icon = m.icon;
-              return (
-                <button key={m.key}
-                  onClick={() => setPaymentMethod(m.key)}
-                  className="text-start p-6 transition-colors"
-                  style={{
-                    backgroundColor: sel ? C.cream : C.paper,
-                    borderLeft: sel ? `3px solid ${C.gold}` : "3px solid transparent",
-                    cursor: "pointer",
-                  }}
-                  onMouseEnter={(e) => { if (!sel) e.currentTarget.style.backgroundColor = C.cream; }}
-                  onMouseLeave={(e) => { if (!sel) e.currentTarget.style.backgroundColor = C.paper; }}
-                >
-                  <div className="flex items-center gap-3">
-                    <Icon size={22} style={{ color: C.goldDeep, flexShrink: 0 }} />
-                    <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", color: C.bgDeep, fontWeight: 500, lineHeight: 1.1 }}>
-                      {m.label}
-                    </div>
-                  </div>
-                  <div style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.8rem", marginTop: 10, lineHeight: 1.55 }}>
-                    {m.blurb}
-                  </div>
-                  {sel && (
-                    <div className="mt-3 inline-flex items-center gap-1" style={{
-                      color: C.goldDeep, fontFamily: "'Manrope', sans-serif",
-                      fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
-                    }}>
-                      <Check size={11} /> Selected
-                    </div>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Method-specific capture — kept deliberately minimal. For
-              card and Apple Pay we only ask for the cardholder name
-              (the real flow redirects to the gateway). For Benefit Pay
-              nothing extra is needed. For bank transfer we capture a
-              short reference and surface the hotel's IBAN. */}
-          <div className="mt-px p-7" style={{ backgroundColor: C.cream }}>
-            {(paymentMethod === "card" || paymentMethod === "apple-pay") && (
-              <>
-                <div className="flex items-start gap-3 mb-4">
-                  <Lock size={14} style={{ color: C.goldDeep, flexShrink: 0, marginTop: 4 }} />
-                  <div style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", lineHeight: 1.5 }}>
-                    Secure payment via our gateway. Card number, expiry and CVV are entered on the gateway's hosted page, not here — we never see or store them. You'll be returned to this page once authorised.
-                  </div>
-                </div>
-                <PaperField label={paymentMethod === "card" ? "Name on card" : "Apple Pay account name"}>
-                  <input type="text" value={cardName}
-                    onChange={(e) => setCardName(e.target.value)}
-                    placeholder={paymentMethod === "card" ? "As printed on the card" : "Your Apple Pay account name"}
-                    autoComplete="cc-name"
-                    style={inputStyle}
-                  />
-                </PaperField>
-                {/* Processing fee disclosure — keeps the buyer informed. */}
-                <div className="mt-4 inline-flex items-center gap-2 px-3 py-2" style={{ backgroundColor: "rgba(201,169,97,0.10)", border: `1px solid rgba(201,169,97,0.35)` }}>
-                  <CreditCard size={12} style={{ color: C.goldDeep, flexShrink: 0 }} />
-                  <span style={{ color: C.bgDeep, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem" }}>
-                    {paymentMeta.feePct}% processing fee absorbed by the property — the amount charged to your card is exactly <strong>{formatCurrency(price.net)}</strong>.
-                  </span>
-                </div>
-              </>
-            )}
-
-            {paymentMethod === "benefit-pay" && (
-              <div className="flex items-start gap-3">
-                <Smartphone size={20} style={{ color: C.goldDeep, flexShrink: 0, marginTop: 2 }} />
-                <div>
-                  <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.3rem", color: C.bgDeep, fontWeight: 500, lineHeight: 1.1 }}>
-                    You'll be handed over to Benefit Pay.
-                  </div>
-                  <div style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", lineHeight: 1.6, marginTop: 6 }}>
-                    Tap "Pay" below and you'll be redirected to your bank's mobile app to authorise the {formatCurrency(price.net)} payment. Once approved you'll be brought back here with your gift card code.
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {paymentMethod === "transfer" && (
-              <>
-                <div className="flex items-start gap-3 mb-4">
-                  <Banknote size={20} style={{ color: C.goldDeep, flexShrink: 0, marginTop: 2 }} />
-                  <div>
-                    <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.3rem", color: C.bgDeep, fontWeight: 500, lineHeight: 1.1 }}>
-                      We'll email you the IBAN.
-                    </div>
-                    <div style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", lineHeight: 1.6, marginTop: 6 }}>
-                      Tap "Reserve & email IBAN" and we'll send you the bank details + your reference number. The card is held for you and activates the moment funds clear (typically next working day).
-                    </div>
-                    {hotelInfo?.iban && (
-                      <div className="mt-3 inline-flex items-center gap-2 px-3 py-2" style={{ backgroundColor: "rgba(0,0,0,0.04)", border: `1px solid rgba(0,0,0,0.08)` }}>
-                        <span style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}>IBAN</span>
-                        <code style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: "0.84rem", color: C.bgDeep, letterSpacing: "0.04em" }}>{hotelInfo.iban}</code>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <PaperField label="Your reference (so we can match your wire)">
-                  <input type="text" value={transferRef}
-                    onChange={(e) => setTransferRef(e.target.value)}
-                    placeholder={`e.g. ${(buyerMember?.name || "GIFT").split(" ")[0].toUpperCase()}-${tier.nights}N`}
-                    style={inputStyle}
-                  />
-                </PaperField>
-              </>
-            )}
-          </div>
-
           {/* Summary + submit bar */}
           <div className="mt-px p-6 flex flex-wrap items-center justify-between gap-4" style={{ backgroundColor: C.bgDeep, color: C.cream }}>
             <div>
               <div style={{ color: C.gold, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
-                Your purchase
+                Your request
               </div>
               <div className="mt-1" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", fontStyle: "italic", lineHeight: 1.1 }}>
                 {tier.nights} nights at the {
@@ -671,9 +473,8 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
                   ({ccy} {Math.round(price.net / tier.nights)} / night)
                 </span>
               </div>
-              <div className="mt-2 inline-flex items-center gap-2" style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem" }}>
-                {(() => { const Ic = paymentMeta.icon; return <Ic size={11} style={{ color: C.gold }} />; })()}
-                Paying via <strong style={{ color: C.cream }}>{paymentMeta.label}</strong>
+              <div className="mt-2" style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem" }}>
+                Reservations will confirm pricing and email payment instructions.
               </div>
             </div>
             <button
@@ -694,24 +495,9 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
               onMouseLeave={(e) => { if (canSubmit && !processing) e.currentTarget.style.backgroundColor = C.gold; }}
             >
               {processing ? (
-                <>
-                  <Loader2 size={13} style={{ animation: "spin 0.9s linear infinite" }} />
-                  {paymentMethod === "card"         ? "Charging your card…"
-                    : paymentMethod === "apple-pay"   ? "Confirming with Apple Pay…"
-                    : paymentMethod === "benefit-pay" ? "Connecting to Benefit Pay…"
-                    : "Reserving your card…"}
-                </>
+                <><Loader2 size={13} style={{ animation: "spin 0.9s linear infinite" }} /> Submitting request…</>
               ) : (
-                <>
-                  {paymentMethod === "transfer"
-                    ? <><Banknote size={13} /> Reserve & email IBAN · {formatCurrency(price.net)}</>
-                    : paymentMethod === "apple-pay"
-                      ? <><Wallet size={13} /> Pay with Apple Pay · {formatCurrency(price.net)}</>
-                      : paymentMethod === "benefit-pay"
-                        ? <><Smartphone size={13} /> Pay with Benefit Pay · {formatCurrency(price.net)}</>
-                        : <><CreditCard size={13} /> Pay with card · {formatCurrency(price.net)}</>
-                  }
-                </>
+                <><Send size={13} /> Submit request · {formatCurrency(price.net)}</>
               )}
             </button>
           </div>
@@ -750,9 +536,9 @@ export const GiftVouchersModal = ({ open, onClose, onBook }) => {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-px" style={{ backgroundColor: "rgba(0,0,0,0.08)" }}>
           {[
             { n: "01", title: "Choose a suite + bundle", note: "Pick the suite type and the night tier. Discount applies automatically — bigger bundles save more." },
-            { n: "02", title: "Pay & receive code",      note: "Pay with card, Apple Pay, Benefit Pay or bank transfer. We generate a unique LS-GC-XXXX-XXXX code and park it on your LS Privilege account." },
-            { n: "03", title: "Send from your portal",   note: "Open your LS Privilege account, add the recipient's email + a personal message, and we'll email the certificate. Or share the code directly." },
-            { n: "04", title: "Recipient redeems",       note: "They enter the code during booking; prepaid nights apply automatically against the suite type." },
+            { n: "02", title: "Submit your request",     note: "Submit the request with your LS Privilege email. Our reservations team confirms pricing and emails the payment options available to you." },
+            { n: "03", title: "Pay & receive code",      note: "Pay via Benefit Pay, bank transfer or in person at the front desk. Once payment lands the code is issued and visible in your LS Privilege portal." },
+            { n: "04", title: "Recipient redeems",       note: "Send the code from your portal; the recipient enters it during booking and prepaid nights apply automatically against the suite type." },
           ].map((s) => (
             <div key={s.n} className="p-7" style={{ backgroundColor: C.paper }}>
               <div style={{ color: C.goldDeep, fontFamily: "'Cormorant Garamond', serif", fontSize: "2.4rem", fontWeight: 400, fontStyle: "italic", lineHeight: 1 }}>
