@@ -2826,251 +2826,452 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
     }
   };
 
+  // Reusable label / input chrome so every field on the form reads the
+  // same way. Kept inline (rather than module-level helpers) because the
+  // styles need the live palette.
+  const labelStyle = { display: "block", color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 8 };
+  const fieldStyle = {
+    width: "100%", padding: "0.7rem 0.85rem",
+    fontFamily: "'Manrope', sans-serif", fontSize: "0.92rem",
+    backgroundColor: p.inputBg, color: p.textPrimary,
+    border: `1px solid ${p.border}`, outline: "none",
+  };
+  const sectionTitle = { color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.28em", textTransform: "uppercase", fontWeight: 700 };
+  // Hero card on the rail — show the source card details prominently.
+  const sourceCardPrice  = Number(sourceRoom?.price || 0);
+  const cardFaceValue    = Number(card.faceValue || card.paidAmount || 0);
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center px-4"
-      style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
-      onClick={onClose}
+      className="fixed inset-0 z-[60] flex flex-col"
+      style={{ backgroundColor: p.bgPage, fontFamily: "'Manrope', sans-serif" }}
     >
-      <div
-        className="w-full max-w-xl"
-        style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.accent}`, fontFamily: "'Manrope', sans-serif" }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="px-5 py-4 flex items-center gap-2" style={{ borderBottom: `1px solid ${p.border}` }}>
-          <CalendarDays size={14} style={{ color: p.accent }} />
-          <span style={{ color: p.accent, fontSize: "0.66rem", letterSpacing: "0.28em", textTransform: "uppercase", fontWeight: 700 }}>
-            Book with gift card · {card.code}
-          </span>
+      {/* Header — full-width brand bar with eyebrow + Close. */}
+      <header className="flex items-center justify-between gap-3 px-6 md:px-10 py-4 flex-shrink-0" style={{ borderBottom: `1px solid ${p.border}`, backgroundColor: p.bgPanel }}>
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center justify-center flex-shrink-0" style={{
+            width: 40, height: 40,
+            border: `1px solid ${p.accent}`, backgroundColor: `${p.accent}14`,
+          }}>
+            <Gift size={18} style={{ color: p.accent }} />
+          </div>
+          <div className="min-w-0">
+            <div style={{ color: p.accent, fontSize: "0.6rem", letterSpacing: "0.3em", textTransform: "uppercase", fontWeight: 700 }}>
+              Book with gift card
+            </div>
+            <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.45rem", fontStyle: "italic", color: p.textPrimary, lineHeight: 1.1 }}>
+              {card.code}
+            </div>
+          </div>
         </div>
-        <div className="px-5 py-4" style={{ color: p.textSecondary, fontSize: "0.84rem", lineHeight: 1.55 }}>
-          <p style={{ color: p.textMuted, fontSize: "0.78rem", marginBottom: 14 }}>
-            <strong style={{ color: p.textPrimary }}>{remaining} night{remaining === 1 ? "" : "s"}</strong> remaining on this card for the {roomLabel(sourceRoom, t)}. Pick the same suite to redeem at no extra cost, or upgrade to a higher category and top up the per-night supplement set by the hotel.
-          </p>
+        <button
+          onClick={onClose}
+          className="flex items-center gap-2 flex-shrink-0"
+          style={{
+            fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase",
+            fontWeight: 700, color: p.textMuted, padding: "0.55rem 0.95rem", border: `1px solid ${p.border}`, backgroundColor: "transparent",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = p.accent; e.currentTarget.style.borderColor = p.accent; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = p.textMuted; e.currentTarget.style.borderColor = p.border; }}
+          aria-label="Close"
+        >
+          <X size={14} /> Close
+        </button>
+      </header>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label style={{ display: "block", color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
-                Suite
-              </label>
-              <select
-                value={roomId}
-                onChange={(e) => setRoomId(e.target.value)}
-                style={{
-                  width: "100%", padding: "0.55rem 0.7rem",
-                  fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem",
-                  backgroundColor: p.inputBg, color: p.textPrimary,
-                  border: `1px solid ${p.border}`, outline: "none",
-                }}
-              >
-                {sortRoomsByPrice((rooms || []).filter((r) => r && (r.isActive !== false)))
-                  .map((r) => {
-                    const diff = Math.max(0, Number(r.giftCardUpgradeFeePerNight || 0) - sourceFee);
-                    const tag = r.id === card.roomId
-                      ? "card's suite · no top-up"
-                      : diff > 0 ? `+ BHD ${diff} / night` : "no top-up";
-                    return <option key={r.id} value={r.id}>{roomLabel(r, t)} — {tag}</option>;
-                  })}
-              </select>
-            </div>
-            <div>
-              <label style={{ display: "block", color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
-                Guests
-              </label>
-              <input
-                type="number"
-                min={1}
-                value={guests}
-                onChange={(e) => setGuests(e.target.value)}
-                style={{
-                  width: "100%", padding: "0.55rem 0.7rem",
-                  fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem",
-                  backgroundColor: p.inputBg, color: p.textPrimary,
-                  border: `1px solid ${p.border}`, outline: "none",
-                }}
-              />
-            </div>
-            <div>
-              <label style={{ display: "block", color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
-                Check-in
-              </label>
-              <input
-                type="date"
-                value={checkIn}
-                min={today}
-                onChange={(e) => setCheckIn(e.target.value)}
-                style={{
-                  width: "100%", padding: "0.55rem 0.7rem",
-                  fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem",
-                  backgroundColor: p.inputBg, color: p.textPrimary,
-                  border: `1px solid ${p.border}`, outline: "none",
-                }}
-              />
-            </div>
-            <div>
-              <label style={{ display: "block", color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
-                Check-out
-              </label>
-              <input
-                type="date"
-                value={checkOut}
-                // Must be after check-in. Defaults to check-in + remaining
-                // card nights; member can shorten (partial redemption) or
-                // extend (overflow at rack rate).
-                min={checkIn ? addDays(checkIn, 1) : today}
-                onChange={(e) => { setCheckoutTouched(true); setCheckOut(e.target.value); }}
-                style={{
-                  width: "100%", padding: "0.55rem 0.7rem",
-                  fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem",
-                  backgroundColor: p.inputBg, color: p.textPrimary,
-                  border: `1px solid ${p.border}`, outline: "none",
-                }}
-              />
-              <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", marginTop: 4 }}>
-                {checkoutTouched
-                  ? "Manually set — clear the date to re-derive from check-in + remaining nights."
-                  : `Auto-set to check-in + ${remaining} night${remaining === 1 ? "" : "s"} (your card's balance).`}
-              </div>
-            </div>
-          </div>
+      {/* Body — two-column on md+, gift-card hero left, form right. */}
+      <main className="flex-1 overflow-y-auto">
+        <div className="max-w-6xl mx-auto px-6 md:px-10 py-8">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
 
-          {/* Blocked-date hint — HTML5 date inputs can't grey out
-              specific cells, so we surface the upcoming stop-sale +
-              event windows for the selected room here. The blocker
-              chip below catches anything the member picks regardless. */}
-          {upcomingBlocks.length > 0 && (
-            <div className="mt-3 p-3" style={{ backgroundColor: `${p.warn}10`, border: `1px solid ${p.warn}55` }}>
-              <div style={{ color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
-                Avoid these windows
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {upcomingBlocks.map((b, i) => (
-                  <span key={i} title={b.label} style={{
-                    fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem",
-                    padding: "2px 8px",
-                    color: p.warn,
-                    border: `1px solid ${p.warn}88`,
-                    backgroundColor: "transparent",
-                  }}>
-                    {b.from === b.to ? b.from : `${b.from} → ${b.to}`} · {b.label}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="mt-3">
-            <label style={{ display: "block", color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
-              Notes for reservations (optional)
-            </label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              placeholder="Arrival time, special requests, etc."
-              style={{
-                width: "100%", padding: "0.55rem 0.7rem",
-                fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem",
-                backgroundColor: p.inputBg, color: p.textPrimary,
-                border: `1px solid ${p.border}`, outline: "none",
-                resize: "vertical",
-              }}
-            />
-          </div>
-
-          {/* Cost summary */}
-          {datesValid && targetRoom && (
-            <div className="mt-4 p-3" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
-              <div style={{ color: p.textMuted, fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>
-                Cost summary · {nights} night{nights === 1 ? "" : "s"}
-              </div>
-              <div className="space-y-1" style={{ fontSize: "0.84rem" }}>
-                <div className="flex justify-between">
-                  <span style={{ color: p.textSecondary }}>Covered by card</span>
-                  <span style={{ color: p.success, fontWeight: 600 }}>{nightsCoveredByCard} night{nightsCoveredByCard === 1 ? "" : "s"}</span>
-                </div>
-                {isUpgrade && perNightDiff > 0 && (
-                  <div className="flex justify-between">
-                    <span style={{ color: p.textSecondary }}>Upgrade top-up · {nightsCoveredByCard} × BHD {perNightDiff}</span>
-                    <span style={{ color: p.textPrimary, fontWeight: 600 }}>{formatCurrency(upgradeCost)}</span>
-                  </div>
-                )}
-                {overflowNights > 0 && (
-                  <div className="flex justify-between">
-                    <span style={{ color: p.warn }}>Overflow · {overflowNights} × BHD {Number(targetRoom?.price || 0)} rack</span>
-                    <span style={{ color: p.warn, fontWeight: 600 }}>{formatCurrency(overflowCost)}</span>
-                  </div>
-                )}
-                <div className="flex justify-between pt-2" style={{ borderTop: `1px solid ${p.border}` }}>
-                  <span style={{ color: p.textPrimary, fontWeight: 700 }}>Top-up to pay</span>
-                  <span style={{ color: p.accent, fontWeight: 700, fontSize: "1.05rem" }}>{formatCurrency(totalDue)}</span>
-                </div>
-              </div>
-              <p style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 8, lineHeight: 1.5 }}>
-                The top-up amount is collected separately — the hotel will reach out with payment instructions when they approve the request.
-              </p>
-            </div>
-          )}
-
-          {/* Confirmation-status preview — tells the member up-front
-              whether the request will land confirmed or on-request,
-              so the Submit CTA below isn't a surprise either way. */}
-          {datesValid && !blockers && (
-            <div className="mt-3 p-3" style={{
-              backgroundColor: willAutoConfirm ? `${p.success}10` : `${p.warn}10`,
-              border: `1px solid ${willAutoConfirm ? p.success : p.warn}55`,
-              borderInlineStart: `4px solid ${willAutoConfirm ? p.success : p.warn}`,
-            }}>
-              <div style={{
-                color: willAutoConfirm ? p.success : p.warn,
-                fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
-                letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4,
+            {/* ───────────────────────── Left rail — gift card hero ─────── */}
+            <aside className="lg:col-span-5 xl:col-span-4 space-y-5">
+              {/* Hero card. Mirrors the certificate's visual language. */}
+              <div className="p-6" style={{
+                backgroundColor: p.bgPanel,
+                border: `1px solid ${p.accent}55`,
+                borderTop: `4px solid ${p.accent}`,
               }}>
-                {willAutoConfirm ? "Will auto-confirm" : "Will land on-request"}
-              </div>
-              <div style={{ color: p.textPrimary, fontSize: "0.82rem", lineHeight: 1.5 }}>
-                {willAutoConfirm
-                  ? "These dates are clear and the suite has inventory. The booking is logged as confirmed straight away — the hotel just needs to send you payment instructions for the top-up."
-                  : "These dates are clear of stop-sale and event windows, but the suite is fully booked. Your request goes to reservations who'll confirm an alternative or wait-list you."}
-              </div>
-            </div>
-          )}
+                <div style={{ color: p.accent, fontSize: "0.58rem", letterSpacing: "0.3em", textTransform: "uppercase", fontWeight: 700 }}>
+                  LS Privilege gift card
+                </div>
+                <div style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic", fontSize: "2rem", color: p.textPrimary, marginTop: 4, lineHeight: 1.05 }}>
+                  {roomLabel(sourceRoom, t)}
+                </div>
+                <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 2 }}>
+                  Issued to <strong style={{ color: p.textPrimary }}>{card.recipientName || member.name}</strong>
+                </div>
 
-          {/* Blockers — stop-sale OR event window */}
-          {blockers && (
-            <div className="mt-3 p-3" style={{ backgroundColor: `${p.danger}10`, border: `1px solid ${p.danger}55`, borderInlineStart: `4px solid ${p.danger}` }}>
-              <div style={{ color: p.danger, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>
-                Cannot book these dates
-              </div>
-              <div style={{ color: p.textPrimary, fontSize: "0.84rem", lineHeight: 1.5 }}>
-                {blockers.summary}
-              </div>
-              <p style={{ color: p.textMuted, fontSize: "0.72rem", marginTop: 6 }}>
-                Pick different dates, or contact reservations directly to negotiate availability.
-              </p>
-            </div>
-          )}
+                {/* Big remaining-nights chip. */}
+                <div className="mt-5 flex items-end justify-between gap-3 pb-4" style={{ borderBottom: `1px solid ${p.border}` }}>
+                  <div>
+                    <div style={{ color: p.textMuted, fontSize: "0.58rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                      Nights remaining
+                    </div>
+                    <div style={{ fontFamily: "'Cormorant Garamond', serif", color: p.accent, fontWeight: 600, fontSize: "3rem", lineHeight: 1 }}>
+                      {remaining}
+                    </div>
+                    <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>
+                      of {card.totalNights || 0} on this card
+                    </div>
+                  </div>
+                  <code style={{
+                    fontFamily: "ui-monospace, Menlo, monospace",
+                    fontSize: "0.78rem", color: p.textPrimary, letterSpacing: "0.05em",
+                    padding: "4px 8px",
+                    backgroundColor: `${p.accent}10`, border: `1px solid ${p.accent}55`,
+                  }}>{card.code}</code>
+                </div>
 
-          {/* Party-fit soft warning */}
-          {!partyFits && targetRoom && (
-            <div className="mt-3 p-3" style={{ backgroundColor: `${p.warn}10`, border: `1px solid ${p.warn}55` }}>
-              <span style={{ color: p.warn, fontSize: "0.82rem" }}>
-                {roomFitsParty(targetRoom, Number(guests) || 0, 0).reason}. Reduce the party or pick a larger suite.
+                <div className="mt-4 space-y-2" style={{ fontSize: "0.8rem" }}>
+                  <div className="flex justify-between">
+                    <span style={{ color: p.textMuted }}>Rack rate / night</span>
+                    <span style={{ color: p.textPrimary, fontWeight: 600 }}>{formatCurrency(sourceCardPrice)}</span>
+                  </div>
+                  {cardFaceValue > 0 && (
+                    <div className="flex justify-between">
+                      <span style={{ color: p.textMuted }}>Card face value</span>
+                      <span style={{ color: p.textPrimary, fontWeight: 600 }}>{formatCurrency(cardFaceValue)}</span>
+                    </div>
+                  )}
+                  {card.validUntil && (
+                    <div className="flex justify-between">
+                      <span style={{ color: p.textMuted }}>Valid until</span>
+                      <span style={{ color: p.textPrimary, fontWeight: 600 }}>{card.validUntil}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Upgrade comparison — only shown when the member's
+                  picked a different suite. Visualises source → target. */}
+              {isUpgrade && targetRoom && (
+                <div className="p-5" style={{
+                  backgroundColor: p.bgPanel,
+                  border: `1px solid ${p.border}`,
+                  borderInlineStart: `4px solid ${p.accent}`,
+                }}>
+                  <div style={sectionTitle}>Upgrade</div>
+                  <div className="mt-3 flex items-center gap-3 flex-wrap">
+                    <div className="min-w-0">
+                      <div style={{ color: p.textMuted, fontSize: "0.7rem" }}>From card</div>
+                      <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.1rem", color: p.textPrimary }}>
+                        {roomLabel(sourceRoom, t)}
+                      </div>
+                      <div style={{ color: p.textMuted, fontSize: "0.7rem" }}>BHD {sourceFee} / night fee</div>
+                    </div>
+                    <ArrowRight size={14} style={{ color: p.accent, flexShrink: 0 }} />
+                    <div className="min-w-0">
+                      <div style={{ color: p.accent, fontSize: "0.7rem", fontWeight: 700 }}>Booking</div>
+                      <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.1rem", color: p.textPrimary }}>
+                        {roomLabel(targetRoom, t)}
+                      </div>
+                      <div style={{ color: p.textMuted, fontSize: "0.7rem" }}>BHD {targetFee} / night fee</div>
+                    </div>
+                  </div>
+                  <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5" style={{
+                    backgroundColor: `${p.accent}10`,
+                    border: `1px solid ${p.accent}55`,
+                    color: p.accent,
+                    fontSize: "0.74rem", fontWeight: 600,
+                  }}>
+                    <Plus size={11} /> BHD {perNightDiff} / night top-up
+                  </div>
+                </div>
+              )}
+
+              {/* How redemption works — explainer card so the member
+                  isn't left guessing what happens next. */}
+              <div className="p-5" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
+                <div style={sectionTitle}>How redemption works</div>
+                <ol className="mt-3 space-y-2" style={{ color: p.textSecondary, fontSize: "0.8rem", lineHeight: 1.55 }}>
+                  <li className="flex items-start gap-2">
+                    <span style={{ color: p.accent, fontFamily: "'Cormorant Garamond', serif", fontWeight: 700 }}>1.</span>
+                    <span>Pick suite + dates. Same suite redeems at no cost; a higher category bills the per-night supplement.</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span style={{ color: p.accent, fontFamily: "'Cormorant Garamond', serif", fontWeight: 700 }}>2.</span>
+                    <span>Clear calendar + inventory available → auto-confirmed. Otherwise the request goes to reservations.</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span style={{ color: p.accent, fontFamily: "'Cormorant Garamond', serif", fontWeight: 700 }}>3.</span>
+                    <span>Hotel emails you payment instructions for any top-up due. Card nights are debited on approval.</span>
+                  </li>
+                </ol>
+              </div>
+            </aside>
+
+            {/* ───────────────────────── Right canvas — form ────────────── */}
+            <section className="lg:col-span-7 xl:col-span-8 space-y-5">
+
+              {/* Step 1 · Suite + guests */}
+              <div className="p-6" style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}` }}>
+                <div className="flex items-baseline justify-between gap-3 flex-wrap mb-5">
+                  <div>
+                    <div style={sectionTitle}>Step 1 · Stay</div>
+                    <div style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic", fontSize: "1.4rem", color: p.textPrimary, lineHeight: 1.1, marginTop: 4 }}>
+                      Suite & party.
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="sm:col-span-2">
+                    <label style={labelStyle}>Suite</label>
+                    <select
+                      value={roomId}
+                      onChange={(e) => setRoomId(e.target.value)}
+                      style={fieldStyle}
+                    >
+                      {sortRoomsByPrice((rooms || []).filter((r) => r && (r.isActive !== false)))
+                        .map((r) => {
+                          const diff = Math.max(0, Number(r.giftCardUpgradeFeePerNight || 0) - sourceFee);
+                          const tag = r.id === card.roomId
+                            ? "card's suite · no top-up"
+                            : diff > 0 ? `+ BHD ${diff} / night` : "no top-up";
+                          return <option key={r.id} value={r.id}>{roomLabel(r, t)} — {tag}</option>;
+                        })}
+                    </select>
+                    {targetRoom && (
+                      <div className="mt-2 flex items-center gap-3 flex-wrap" style={{ color: p.textMuted, fontSize: "0.74rem" }}>
+                        {targetRoom.sqm > 0 && <span>{targetRoom.sqm} m²</span>}
+                        {targetRoom.occupancy > 0 && <span>· sleeps {targetRoom.occupancy}</span>}
+                        {targetRoom.price > 0 && <span>· rack BHD {targetRoom.price}/n</span>}
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Guests</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={guests}
+                      onChange={(e) => setGuests(e.target.value)}
+                      style={fieldStyle}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Step 2 · Dates */}
+              <div className="p-6" style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}` }}>
+                <div className="flex items-baseline justify-between gap-3 flex-wrap mb-5">
+                  <div>
+                    <div style={sectionTitle}>Step 2 · Dates</div>
+                    <div style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic", fontSize: "1.4rem", color: p.textPrimary, lineHeight: 1.1, marginTop: 4 }}>
+                      When you'd like to stay.
+                    </div>
+                  </div>
+                  {datesValid && (
+                    <span style={{
+                      fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+                      letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                      color: p.accent, padding: "3px 9px", border: `1px solid ${p.accent}`,
+                    }}>
+                      {nights} night{nights === 1 ? "" : "s"}
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label style={labelStyle}>Check-in</label>
+                    <input
+                      type="date"
+                      value={checkIn}
+                      min={today}
+                      onChange={(e) => setCheckIn(e.target.value)}
+                      style={fieldStyle}
+                    />
+                    <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 6 }}>
+                      Earliest available: today.
+                    </div>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Check-out</label>
+                    <input
+                      type="date"
+                      value={checkOut}
+                      min={checkIn ? addDays(checkIn, 1) : today}
+                      onChange={(e) => { setCheckoutTouched(true); setCheckOut(e.target.value); }}
+                      style={fieldStyle}
+                    />
+                    <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 6 }}>
+                      {checkoutTouched
+                        ? "Manually set — clear the date to re-derive from check-in + remaining nights."
+                        : `Auto-set to check-in + ${remaining} night${remaining === 1 ? "" : "s"} (your card's balance).`}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Upcoming-blocks pills — full row, visually distinct */}
+                {upcomingBlocks.length > 0 && (
+                  <div className="mt-5 p-4" style={{ backgroundColor: `${p.warn}10`, border: `1px solid ${p.warn}55`, borderInlineStart: `4px solid ${p.warn}` }}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <AlertCircle size={12} style={{ color: p.warn }} />
+                      <span style={{ color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                        Avoid these windows
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {upcomingBlocks.map((b, i) => (
+                        <span key={i} title={b.label} style={{
+                          fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem",
+                          padding: "3px 9px",
+                          color: p.warn,
+                          border: `1px solid ${p.warn}88`,
+                          backgroundColor: p.bgPanel,
+                          display: "inline-flex", alignItems: "center", gap: 5,
+                        }}>
+                          <Calendar size={10} />
+                          {b.from === b.to ? b.from : `${b.from} → ${b.to}`} · {b.label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Hard blocker — chosen dates collide with stop-sale / event */}
+                {blockers && (
+                  <div className="mt-4 p-4" style={{ backgroundColor: `${p.danger}10`, border: `1px solid ${p.danger}55`, borderInlineStart: `4px solid ${p.danger}` }}>
+                    <div style={{ color: p.danger, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>
+                      Cannot book these dates
+                    </div>
+                    <div style={{ color: p.textPrimary, fontSize: "0.86rem", lineHeight: 1.5 }}>
+                      {blockers.summary}
+                    </div>
+                    <p style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 6 }}>
+                      Pick different dates, or contact reservations directly to negotiate availability.
+                    </p>
+                  </div>
+                )}
+
+                {/* Party-fit soft warning */}
+                {!partyFits && targetRoom && (
+                  <div className="mt-4 p-3" style={{ backgroundColor: `${p.warn}10`, border: `1px solid ${p.warn}55` }}>
+                    <span style={{ color: p.warn, fontSize: "0.84rem" }}>
+                      {roomFitsParty(targetRoom, Number(guests) || 0, 0).reason}. Reduce the party or pick a larger suite.
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Step 3 · Notes */}
+              <div className="p-6" style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}` }}>
+                <div style={sectionTitle}>Step 3 · Notes (optional)</div>
+                <div style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic", fontSize: "1.4rem", color: p.textPrimary, lineHeight: 1.1, marginTop: 4, marginBottom: 14 }}>
+                  Anything we should know?
+                </div>
+                <textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  rows={3}
+                  placeholder="Arrival time, special requests, accessibility needs, etc."
+                  style={{ ...fieldStyle, resize: "vertical" }}
+                />
+              </div>
+
+              {/* Cost summary — only when dates entered */}
+              {datesValid && targetRoom && (
+                <div className="p-6" style={{ backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}` }}>
+                  <div className="flex items-baseline justify-between flex-wrap gap-2 mb-3">
+                    <div>
+                      <div style={sectionTitle}>Cost summary</div>
+                      <div style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic", fontSize: "1.4rem", color: p.textPrimary, lineHeight: 1.1, marginTop: 4 }}>
+                        {nights} night{nights === 1 ? "" : "s"} · {roomLabel(targetRoom, t)}
+                      </div>
+                    </div>
+                    <div className="text-end">
+                      <div style={{ color: p.textMuted, fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+                        Top-up to pay
+                      </div>
+                      <div style={{ color: p.accent, fontFamily: "'Cormorant Garamond', serif", fontWeight: 600, fontSize: "2rem", lineHeight: 1 }}>
+                        {formatCurrency(totalDue)}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="space-y-2" style={{ fontSize: "0.86rem" }}>
+                    <div className="flex justify-between py-1.5" style={{ borderTop: `1px solid ${p.border}` }}>
+                      <span style={{ color: p.textSecondary }}>Covered by card</span>
+                      <span style={{ color: p.success, fontWeight: 600 }}>{nightsCoveredByCard} night{nightsCoveredByCard === 1 ? "" : "s"} · BHD 0.000</span>
+                    </div>
+                    {isUpgrade && perNightDiff > 0 && (
+                      <div className="flex justify-between py-1.5" style={{ borderTop: `1px solid ${p.border}` }}>
+                        <span style={{ color: p.textSecondary }}>Upgrade top-up · {nightsCoveredByCard} × BHD {perNightDiff}</span>
+                        <span style={{ color: p.textPrimary, fontWeight: 600 }}>{formatCurrency(upgradeCost)}</span>
+                      </div>
+                    )}
+                    {overflowNights > 0 && (
+                      <div className="flex justify-between py-1.5" style={{ borderTop: `1px solid ${p.border}` }}>
+                        <span style={{ color: p.warn }}>Overflow · {overflowNights} × BHD {Number(targetRoom?.price || 0)} rack</span>
+                        <span style={{ color: p.warn, fontWeight: 600 }}>{formatCurrency(overflowCost)}</span>
+                      </div>
+                    )}
+                  </div>
+                  <p style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 14, lineHeight: 1.55 }}>
+                    The top-up is collected separately — the hotel will email payment instructions when they approve the booking. Card nights are debited only on approval.
+                  </p>
+                </div>
+              )}
+
+              {/* Outcome preview — bright panel telling the member what
+                  will happen on submit. */}
+              {datesValid && !blockers && (
+                <div className="p-5" style={{
+                  backgroundColor: willAutoConfirm ? `${p.success}10` : `${p.warn}10`,
+                  border: `1px solid ${willAutoConfirm ? p.success : p.warn}55`,
+                  borderInlineStart: `4px solid ${willAutoConfirm ? p.success : p.warn}`,
+                }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    {willAutoConfirm
+                      ? <CheckCircle2 size={14} style={{ color: p.success }} />
+                      : <AlertCircle size={14} style={{ color: p.warn }} />
+                    }
+                    <span style={{
+                      color: willAutoConfirm ? p.success : p.warn,
+                      fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+                      letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+                    }}>
+                      {willAutoConfirm ? "Will auto-confirm" : "Will land on-request"}
+                    </span>
+                  </div>
+                  <div style={{ color: p.textPrimary, fontSize: "0.86rem", lineHeight: 1.55 }}>
+                    {willAutoConfirm
+                      ? "These dates are clear and the suite has inventory. The booking is logged as confirmed straight away — the hotel just needs to send you payment instructions for the top-up."
+                      : "These dates are clear of stop-sale and event windows, but the suite is fully booked. Your request goes to reservations who'll confirm an alternative or wait-list you."}
+                  </div>
+                </div>
+              )}
+            </section>
+          </div>
+        </div>
+      </main>
+
+      {/* Sticky footer — action bar always visible. */}
+      <footer className="px-6 md:px-10 py-4 flex items-center justify-between gap-3 flex-wrap flex-shrink-0" style={{ borderTop: `1px solid ${p.border}`, backgroundColor: p.bgPanel }}>
+        <div className="min-w-0" style={{ fontSize: "0.78rem" }}>
+          {datesValid && targetRoom ? (
+            <>
+              <span style={{ color: p.textMuted }}>
+                {checkIn} → {checkOut} · {roomLabel(targetRoom, t)} · {Number(guests) || 1} guest{Number(guests) === 1 ? "" : "s"}
               </span>
-            </div>
+              <span style={{ color: p.accent, fontWeight: 700, marginInlineStart: 12, fontVariantNumeric: "tabular-nums" }}>
+                {formatCurrency(totalDue)} top-up
+              </span>
+            </>
+          ) : (
+            <span style={{ color: p.textMuted }}>Pick suite + dates to see the cost summary.</span>
           )}
         </div>
-        <div className="px-5 py-3 flex items-center justify-end gap-2" style={{ borderTop: `1px solid ${p.border}` }}>
+        <div className="flex items-center gap-3 flex-shrink-0">
           <button
             onClick={onClose}
             style={{
               backgroundColor: "transparent",
               color: p.textMuted,
               border: `1px solid ${p.border}`,
-              padding: "0.5rem 1rem",
+              padding: "0.65rem 1.2rem",
               fontFamily: "'Manrope', sans-serif",
-              fontSize: "0.66rem", fontWeight: 600,
-              letterSpacing: "0.2em", textTransform: "uppercase",
+              fontSize: "0.68rem", fontWeight: 600,
+              letterSpacing: "0.22em", textTransform: "uppercase",
               cursor: "pointer",
             }}
           >
@@ -3083,23 +3284,23 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
               backgroundColor: canSubmit ? p.accent : "transparent",
               color: canSubmit ? (p.theme === "light" ? "#FFFFFF" : "#15161A") : p.textDim,
               border: `1px solid ${canSubmit ? p.accent : p.border}`,
-              padding: "0.5rem 1rem",
+              padding: "0.7rem 1.4rem",
               fontFamily: "'Manrope', sans-serif",
-              fontSize: "0.66rem", fontWeight: 700,
-              letterSpacing: "0.2em", textTransform: "uppercase",
+              fontSize: "0.68rem", fontWeight: 700,
+              letterSpacing: "0.22em", textTransform: "uppercase",
               cursor: canSubmit ? "pointer" : "not-allowed",
-              display: "inline-flex", alignItems: "center", gap: 6,
+              display: "inline-flex", alignItems: "center", gap: 8,
             }}
           >
             {submitting
               ? "Submitting…"
               : willAutoConfirm
-                ? <><Check size={12} /> Confirm booking</>
-                : <><Send size={12} /> Submit request</>
+                ? <><Check size={13} /> Confirm booking</>
+                : <><Send size={13} /> Submit request</>
             }
           </button>
         </div>
-      </div>
+      </footer>
     </div>
   );
 }
