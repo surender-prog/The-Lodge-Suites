@@ -14,7 +14,7 @@ import {
   Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast,
   SelectField, Stat, TableShell, Td, Th, TextField,
 } from "../ui.jsx";
-import { uploadRoomImage, roomLabel } from "../../../../lib/rooms.js";
+import { uploadRoomImage, roomLabel, roomShort } from "../../../../lib/rooms.js";
 
 // ---------------------------------------------------------------------------
 // Rooms & Rates
@@ -814,7 +814,7 @@ function RoomUnitsManager() {
           // (DB column) and finally a humanised id, so a freshly-added
           // type still renders cleanly even before any translation lands.
           const typeName = roomLabel(r, t);
-          const typeShort = t(`rooms.${r.id}.short`);
+          const typeShort = roomShort(r, t);
           const isActive = filterType === r.id;
           // Pricing block — show weekday / weekend if they differ so the
           // operator sees the spread at a glance.

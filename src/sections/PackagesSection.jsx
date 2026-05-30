@@ -6,10 +6,11 @@ import { Icon } from "../components/Icon.jsx";
 import { SectionLabel, SectionTitle } from "../components/primitives.jsx";
 import { useT } from "../i18n/LanguageContext.jsx";
 import { useData, describePackageConditions, packagePriceSuffix, getPackageMinPrice, formatCurrency } from "../data/store.jsx";
+import { roomLabel } from "../lib/rooms.js";
 
 export const PackagesSection = ({ onBookPackage }) => {
   const t = useT();
-  const { activePackages: PACKAGES } = useData();
+  const { activePackages: PACKAGES, rooms } = useData();
   return (
     <section id="packages" className="py-24 px-6 relative" style={{ backgroundColor: C.paper }}>
       <Crosshatch opacity={0.04} color={C.bgDeep} />
@@ -69,7 +70,7 @@ export const PackagesSection = ({ onBookPackage }) => {
                     ))}
                   </ul>
                   {(() => {
-                    const cond = describePackageConditions(p, (id) => t(`rooms.${id}.name`) || id);
+                    const cond = describePackageConditions(p, (id) => roomLabel((rooms || []).find((r) => r.id === id) || id, t));
                     return cond ? (
                       <div className="mt-4 px-2.5 py-1.5"
                         style={{

@@ -5,11 +5,14 @@ import { Crosshatch } from "../components/Crosshatch.jsx";
 import { GoldBtn, SectionLabel, SectionTitle } from "../components/primitives.jsx";
 import { useT } from "../i18n/LanguageContext.jsx";
 import { useData, formatCurrency } from "../data/store.jsx";
-import { roomLabel } from "../lib/rooms.js";
+import { roomLabel, roomShort, sortRoomsByPrice } from "../lib/rooms.js";
 
 export const RoomsSection = ({ onBookRoom }) => {
   const t = useT();
-  const { rooms: ROOMS } = useData();
+  const { rooms: rawRooms } = useData();
+  // Public catalogue listed cheapest-first so guests scan from the
+  // entry rate up — matches the rest of the booking surfaces.
+  const ROOMS = React.useMemo(() => sortRoomsByPrice(rawRooms || []), [rawRooms]);
   const [active, setActive] = useState(ROOMS[1]?.id || ROOMS[0]?.id);
   const room = ROOMS.find((r) => r.id === active) || ROOMS[0];
   if (!room) return null;
@@ -17,7 +20,7 @@ export const RoomsSection = ({ onBookRoom }) => {
     const r = ROOMS.find((x) => x.id === id) || id;
     return {
       name:        roomLabel(r, t),
-      short:       t(`rooms.${id}.short`),
+      short:       roomShort(r, t),
       description: t(`rooms.${id}.description`),
       features:    t(`rooms.${id}.features`),
     };

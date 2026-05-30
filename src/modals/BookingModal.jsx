@@ -9,6 +9,7 @@ import { findCountryByCode, parsePhone, DEFAULT_COUNTRY_CODE } from "../data/cou
 import { useT, useLang } from "../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween, todayISO } from "../utils/date.js";
 import { priceExtra, priceLabelFor, useData, evalPackageEligibility, describePackageConditions, roomFitsParty, computePackageCharge, computePackageSaving, packagePriceSuffix, getPackageRoomPrice, getPackageMinPrice, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, applyTaxes, nightlyBreakdown, formatCurrency, findRedeemableGiftCard, evaluateGiftCardForBooking, normaliseGiftCardCode, MEAL_PLANS, mealPlanSupplement, mealPlanLabel, enabledMealPlansFor, roomTypeAvailable } from "../data/store.jsx";
+import { roomLabel, roomShort, sortRoomsByPrice } from "../lib/rooms.js";
 
 export const BookingModal = ({ open, onClose, initial }) => {
   const t = useT();
@@ -342,7 +343,7 @@ export const BookingModal = ({ open, onClose, initial }) => {
     today,
   }) : null;
   const pkgTitle = pkg ? (t(`packages.${pkg.id}.title`) || pkg.title || "Offer") : null;
-  const pkgConditions = pkg ? describePackageConditions(pkg, (id) => t(`rooms.${id}.name`) || id) : "";
+  const pkgConditions = pkg ? describePackageConditions(pkg, (id) => roomLabel((ROOMS || []).find((r) => r.id === id) || id, t)) : "";
   const pkgMode = pkg ? (pkg.pricingMode || "per-night") : null;
   // Pick the room to price the offer against. We always price against the
   // FIRST selected suite — guests typically pick one suite per booking
@@ -932,7 +933,7 @@ export const BookingModal = ({ open, onClose, initial }) => {
                     const fitsChildren = ROOMS.filter((r) => (r.maxChildren ?? r.occupancy) >= declaredC);
                     const fitsTotal    = ROOMS.filter((r) => (r.occupancy   ?? 0)             >= partySize);
                     const list = (rs) => rs
-                      .map((r) => t(`rooms.${r.id}.name`) || r.id)
+                      .map((r) => roomLabel(r, t))
                       .reduce((acc, name, i, arr) => {
                         if (i === 0) return name;
                         if (i === arr.length - 1) return `${acc} or ${name}`;
@@ -973,7 +974,7 @@ export const BookingModal = ({ open, onClose, initial }) => {
                     );
                   })()}
 
-                  {ROOMS.map((r) => {
+                  {sortRoomsByPrice(ROOMS).map((r) => {
                     const qty            = qtyForRoom(r.id);
                     const extraBeds      = extraBedsForRoom(r.id);
                     const ebCap          = (r.maxExtraBeds || 0) * qty;
@@ -1038,7 +1039,7 @@ export const BookingModal = ({ open, onClose, initial }) => {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between flex-wrap gap-2">
                             <h4 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", color: C.bgDeep, fontWeight: 500 }}>
-                              {t(`rooms.${r.id}.name`)}
+                              {roomLabel(r, t)}
                             </h4>
                             <div style={{ textAlign: "end" }}>
                               {offerEntry ? (
@@ -1062,7 +1063,7 @@ export const BookingModal = ({ open, onClose, initial }) => {
                               )}
                             </div>
                           </div>
-                          <p style={{ fontFamily: "'Manrope', sans-serif", color: C.textDim, fontSize: "0.82rem", marginTop: 4 }}>{t(`rooms.${r.id}.short`)}</p>
+                          <p style={{ fontFamily: "'Manrope', sans-serif", color: C.textDim, fontSize: "0.82rem", marginTop: 4 }}>{roomShort(r, t)}</p>
                           <div className="flex items-center justify-between gap-3 flex-wrap mt-2">
                             <div style={{ fontFamily: "'Manrope', sans-serif", color: C.textDim, fontSize: "0.72rem" }}>
                               {r.sqm} m² · sleeps up to <strong style={{ color: C.bgDeep }}>{r.occupancy}</strong>
@@ -1642,7 +1643,7 @@ export const BookingModal = ({ open, onClose, initial }) => {
                   </div>
                 ) : roomLines.length === 1 ? (
                   <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", fontWeight: 500 }}>
-                    {t(`rooms.${roomLines[0].room.id}.name`)}
+                    {roomLabel(roomLines[0].room, t)}
                     {roomLines[0].qty > 1 && (
                       <span style={{ color: C.gold, fontSize: "1rem", marginInlineStart: 8 }}>× {roomLines[0].qty}</span>
                     )}
@@ -1653,7 +1654,7 @@ export const BookingModal = ({ open, onClose, initial }) => {
                       {totalRooms} suites
                     </div>
                     <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", color: C.textMuted, marginTop: 2 }}>
-                      {roomLines.map((l) => `${l.qty} × ${t(`rooms.${l.room.id}.name`) || l.room.id}`).join(" · ")}
+                      {roomLines.map((l) => `${l.qty} × ${roomLabel(l.room, t)}`).join(" · ")}
                     </div>
                   </div>
                 )}
@@ -1720,7 +1721,7 @@ export const BookingModal = ({ open, onClose, initial }) => {
                     )}
                     {roomLines.length > 0 && (
                       <div style={{ color: C.textMuted, fontSize: "0.74rem", marginTop: 2 }}>
-                        Booked against {roomLines.map((l) => `${t(`rooms.${l.room.id}.name`) || l.room.id}${l.qty > 1 ? ` × ${l.qty}` : ""}`).join(" · ")}
+                        Booked against {roomLines.map((l) => `${roomLabel(l.room, t)}${l.qty > 1 ? ` × ${l.qty}` : ""}`).join(" · ")}
                       </div>
                     )}
                   </>
@@ -1741,7 +1742,7 @@ export const BookingModal = ({ open, onClose, initial }) => {
                       <React.Fragment key={l.room.id}>
                         <div className="flex justify-between">
                           <span style={{ color: C.textMuted }}>
-                            {t(`rooms.${l.room.id}.name`) || l.room.id}{l.qty > 1 ? ` × ${l.qty}` : ""} · {nights}n
+                            {roomLabel(l.room, t)}{l.qty > 1 ? ` × ${l.qty}` : ""} · {nights}n
                           </span>
                           <span>{formatCurrency(l.roomRev)}</span>
                         </div>

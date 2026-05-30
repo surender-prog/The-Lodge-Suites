@@ -14,7 +14,7 @@ import {
 } from "../utils/membershipPass.js";
 import { useT } from "../i18n/LanguageContext.jsx";
 import { useData, applyTaxes, priceExtra, priceLabelFor, legalLine, roomFitsParty, buildCardOnFile, nightlyBreakdown, formatCurrency, resolveCurrency, MEAL_PLANS, mealPlanSupplement, mealPlanLabel, enabledMealPlansFor } from "../data/store.jsx";
-import { roomLabel, giftCardBookingBlockers } from "../lib/rooms.js";
+import { roomLabel, roomShort, sortRoomsByPrice, giftCardBookingBlockers } from "../lib/rooms.js";
 import { ensurePlanList, resolveDefaultPlan } from "./portal/ContractEditor.jsx";
 import { Icon as ExtraIcon } from "../components/Icon.jsx";
 import { PortalThemeProvider, ThemeToggle, usePalette } from "./portal/theme.jsx";
@@ -2797,8 +2797,7 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
                   border: `1px solid ${p.border}`, outline: "none",
                 }}
               >
-                {(rooms || [])
-                  .filter((r) => r && (r.isActive !== false))
+                {sortRoomsByPrice((rooms || []).filter((r) => r && (r.isActive !== false)))
                   .map((r) => {
                     const diff = Math.max(0, Number(r.giftCardUpgradeFeePerNight || 0) - sourceFee);
                     const tag = r.id === card.roomId
@@ -4848,7 +4847,7 @@ function SuiteStep({ rooms, stays, addRoomType, decRoomType, updateStay, removeS
   const fitsChildren = rooms.filter((r) => (r.maxChildren ?? r.occupancy) >= (Number(totalChildren) || 0));
   const fitsTotal    = rooms.filter((r) => (r.occupancy   ?? 0)            >= partySize);
   const namedList = (rs) => rs
-    .map((r) => t(`rooms.${r.id}.name`) || r.id)
+    .map((r) => roomLabel(r, t))
     .reduce((acc, name, i, arr) => {
       if (i === 0) return name;
       if (i === arr.length - 1) return `${acc} or ${name}`;
@@ -4903,7 +4902,7 @@ function SuiteStep({ rooms, stays, addRoomType, decRoomType, updateStay, removeS
           Tap <strong style={{ color: p.accent }}>+</strong> to add a suite to your stay. You can mix multiple suite types in one booking.
         </div>
         <div className="space-y-3">
-          {rooms.map((r) => {
+          {sortRoomsByPrice(rooms).map((r) => {
             const qty       = qtyForRoom(r.id);
             const rate      = rateFor(r.id);
             const stayLine  = stays.find((s) => s.roomId === r.id);
@@ -4953,7 +4952,7 @@ function SuiteStep({ rooms, stays, addRoomType, decRoomType, updateStay, removeS
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline justify-between flex-wrap gap-2">
                     <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.3rem", color: p.textPrimary, fontWeight: 500 }}>
-                      {t(`rooms.${r.id}.name`) || r.id}
+                      {roomLabel(r, t)}
                     </div>
                     <div>
                       <span style={{ color: p.accent, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", fontWeight: 600 }}>
@@ -4963,7 +4962,7 @@ function SuiteStep({ rooms, stays, addRoomType, decRoomType, updateStay, removeS
                     </div>
                   </div>
                   <div style={{ color: p.textMuted, fontSize: "0.82rem", marginTop: 4, lineHeight: 1.5 }}>
-                    {t(`rooms.${r.id}.short`) || `${r.sqm} m² · sleeps ${r.occupancy}`}
+                    {roomShort(r, t)}
                   </div>
                   <div className="flex items-center justify-between gap-3 mt-3 flex-wrap">
                     <div style={{ color: p.textMuted, fontSize: "0.72rem" }}>
@@ -5101,7 +5100,7 @@ function SuiteStep({ rooms, stays, addRoomType, decRoomType, updateStay, removeS
                   <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
                     <div>
                       <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.1rem", color: p.textPrimary, fontWeight: 500 }}>
-                        {t(`rooms.${s.roomId}.name`) || s.roomId}
+                        {roomLabel(room || s.roomId, t)}
                       </span>
                       <span style={{ color: p.accent, marginInlineStart: 8, fontWeight: 700, fontSize: "0.82rem" }}>× {s.quantity}</span>
                     </div>
@@ -5374,7 +5373,7 @@ function ConfirmStep({
             <div key={s.id} className="p-3 flex items-center justify-between flex-wrap gap-2" style={{ border: `1px solid ${p.border}`, backgroundColor: p.bgPanel }}>
               <div className="min-w-0">
                 <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.1rem", color: p.textPrimary, fontWeight: 500 }}>
-                  {t(`rooms.${s.roomId}.name`) || s.roomId} <span style={{ color: p.accent, fontWeight: 700, fontSize: "0.84rem" }}>× {s.quantity}</span>
+                  {roomLabel(rooms.find((r) => r.id === s.roomId) || s.roomId, t)} <span style={{ color: p.accent, fontWeight: 700, fontSize: "0.84rem" }}>× {s.quantity}</span>
                 </div>
                 <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 2 }}>
                   {s.adults} adult{s.adults === 1 ? "" : "s"}{s.children > 0 ? ` · ${s.children} child${s.children === 1 ? "" : "ren"}` : ""}
@@ -5751,7 +5750,7 @@ function ReservationRail({ p, checkIn, checkOut, nights, stayTotals, partySize, 
             return (
               <React.Fragment key={s.id}>
                 <div className="flex items-center justify-between">
-                  <span style={{ color: p.textSecondary }}>{t(`rooms.${s.roomId}.name`) || s.roomId} × {s.quantity}</span>
+                  <span style={{ color: p.textSecondary }}>{roomLabel(rooms.find((r) => r.id === s.roomId) || s.roomId, t)} × {s.quantity}</span>
                   <span style={{ color: p.textPrimary, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtBhd(s.roomRevenue)}</span>
                 </div>
                 {/* Weekday/weekend split — shown when the stay spans both

@@ -96,6 +96,56 @@ export function roomLabel(room, t) {
   return humaniseRoomId(id);
 }
 
+// One-line tagline for a room (the "Smart-functional living for the
+// solo traveller or couple." subtext under each suite tile). Same
+// resolution order as roomLabel:
+//   i18n string → row.publicShort/short → synthesised "X m² · sleeps Y"
+// so custom suites without an i18n entry still render a useful
+// description instead of "rooms.superioronebedroom.short".
+export function roomShort(room, t) {
+  if (!room && !arguments.length) return "";
+  const id = typeof room === "string" ? room : room?.id;
+  if (!id) return "";
+  const key = `rooms.${id}.short`;
+  const fromI18n = typeof t === "function" ? t(key) : null;
+  if (fromI18n && fromI18n !== key) return fromI18n;
+  if (typeof room === "object") {
+    const fromRow = room?.publicShort || room?.short;
+    if (fromRow && String(fromRow).trim()) return String(fromRow).trim();
+    // Synthesised fallback. Carries the same shape as the bundled
+    // i18n strings so the layout doesn't reflow visually.
+    const parts = [];
+    if (room.sqm) parts.push(`${room.sqm} m²`);
+    if (room.occupancy) parts.push(`sleeps up to ${room.occupancy}`);
+    if (parts.length) return parts.join(" · ");
+  }
+  return "";
+}
+
+/**
+ * Sort an array of rooms by price ascending. Pure; returns a new array
+ * (does not mutate the input). Falls back to display_order then id when
+ * prices tie or are missing so the order is deterministic even on a
+ * fresh DB where every suite shares the seed rate. Use this anywhere
+ * rooms are listed for selection (booking flow, gift-card upgrade
+ * picker, public Rooms section, etc.) so customers always read the
+ * catalogue cheapest-first.
+ */
+export function sortRoomsByPrice(rooms) {
+  if (!Array.isArray(rooms)) return [];
+  return [...rooms].sort((a, b) => {
+    const pa = Number(a?.price);
+    const pb = Number(b?.price);
+    const va = Number.isFinite(pa) ? pa : Infinity;
+    const vb = Number.isFinite(pb) ? pb : Infinity;
+    if (va !== vb) return va - vb;
+    const da = Number(a?.displayOrder) || 0;
+    const db = Number(b?.displayOrder) || 0;
+    if (da !== db) return da - db;
+    return String(a?.id || "").localeCompare(String(b?.id || ""));
+  });
+}
+
 // ─── Rooms slice ↔ Supabase ──────────────────────────────────────────────
 //
 // The DB stores room rows in snake_case (Postgres convention); the app's
