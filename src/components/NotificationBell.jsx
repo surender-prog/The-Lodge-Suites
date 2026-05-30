@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertTriangle, ArrowRight, Bell, BookOpen, CalendarCheck, Check,
-  CheckCheck, ChevronRight, Coins, Inbox, LogIn, LogOut, Receipt, X,
+  CheckCheck, ChevronRight, Coins, Inbox, LogIn, LogOut, MessageCircle, Receipt, X,
 } from "lucide-react";
 import { useData } from "../data/store.jsx";
 import { fmtRelative, NOTIFICATION_KINDS, filterForStaff, filterForGuest } from "../utils/notifications.js";
@@ -410,5 +410,68 @@ export const NotificationBell = ({ audience = "staff", session = null, palette =
         document.body
       )}
     </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// MessagesQuickButton — header chrome icon that sits next to the bell and
+// jumps straight to the Messages section, with an unread counter for quick
+// triage. Reads the same `messages` slice the Messages section uses so the
+// count is always in lock-step. `onOpen` deep-links (e.g. navigate to the
+// admin Messages section).
+//   audience  — "staff" counts inbound (non-staff) unread; otherwise counts
+//               unread staff replies for the signed-in customer.
+//   session   — required for the guest audience to scope to "mine".
+// ---------------------------------------------------------------------------
+export const MessagesQuickButton = ({ audience = "staff", session = null, palette = null, onOpen = null }) => {
+  const { messages } = useData();
+
+  const unread = useMemo(() => {
+    const list = messages || [];
+    if (audience === "staff") {
+      // Anything a customer sent that staff haven't read yet.
+      return list.filter((m) => !m.read && m.fromType !== "staff").length;
+    }
+    // Customer side — unread staff replies. (Scoping to a single
+    // customer's threads needs per-identity reads, which anon members
+    // don't have; this is a best-effort inbound count.)
+    return list.filter((m) => !m.read && m.fromType === "staff").length;
+  }, [messages, audience, session]);
+
+  const border = palette?.border    || "rgba(201,169,97,0.18)";
+  const bgPanel = palette?.bgPanel   || "#15161A";
+  const accent  = palette?.accent    || "#C9A961";
+  const muted   = palette?.textMuted || "#9B9588";
+
+  return (
+    <button
+      onClick={() => onOpen?.()}
+      title={`Messages${unread > 0 ? ` · ${unread} unread` : ""}`}
+      aria-label={`Messages${unread > 0 ? ` · ${unread} unread` : ""}`}
+      style={{
+        width: 36, height: 36, display: "inline-flex", alignItems: "center", justifyContent: "center",
+        backgroundColor: "transparent",
+        border: `1px solid ${border}`,
+        color: unread > 0 ? accent : muted,
+        cursor: "pointer", position: "relative",
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.color = accent; e.currentTarget.style.borderColor = accent; }}
+      onMouseLeave={(e) => { e.currentTarget.style.color = unread > 0 ? accent : muted; e.currentTarget.style.borderColor = border; }}
+    >
+      <MessageCircle size={16} />
+      {unread > 0 && (
+        <span style={{
+          position: "absolute", top: -6, right: -6,
+          minWidth: 18, height: 18,
+          padding: "0 5px",
+          backgroundColor: "#DC2626", color: "#FFFFFF",
+          borderRadius: 999, border: `1.5px solid ${bgPanel}`,
+          fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+          fontWeight: 700, letterSpacing: "0.02em",
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          lineHeight: 1,
+        }}>{unread > 99 ? "99+" : unread}</span>
+      )}
+    </button>
   );
 };

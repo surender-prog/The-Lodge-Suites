@@ -18,7 +18,7 @@ import { Bookings } from "./portal/admin/sections/Bookings.jsx";
 import { Loyalty }  from "./portal/admin/sections/Loyalty.jsx";
 import { ToastHost, pushToast } from "./portal/admin/ui.jsx";
 import { PortalThemeProvider, ThemeToggle, usePalette } from "./portal/theme.jsx";
-import { NotificationBell } from "../components/NotificationBell.jsx";
+import { NotificationBell, MessagesQuickButton } from "../components/NotificationBell.jsx";
 
 export const PartnerPortal = ({ open, onClose }) => {
   if (!open) return null;
@@ -166,6 +166,11 @@ function PartnerPortalInner({ onClose }) {
               </div>
             </div>
           </div>
+          <MessagesQuickButton
+            audience="staff"
+            palette={p}
+            onOpen={() => navigate("admin", "messages")}
+          />
           <NotificationBell
             audience="staff"
             palette={p}
