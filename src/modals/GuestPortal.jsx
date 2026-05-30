@@ -3152,6 +3152,36 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
                     </span>
                   </div>
                 )}
+
+                {/* Outcome preview — sits directly under the date fields so
+                    the member sees whether their dates auto-confirm the
+                    moment they pick them, before scrolling to the summary. */}
+                {datesValid && !blockers && (
+                  <div className="mt-4 p-5" style={{
+                    backgroundColor: willAutoConfirm ? `${p.success}10` : `${p.warn}10`,
+                    border: `1px solid ${willAutoConfirm ? p.success : p.warn}55`,
+                    borderInlineStart: `4px solid ${willAutoConfirm ? p.success : p.warn}`,
+                  }}>
+                    <div className="flex items-center gap-2 mb-2">
+                      {willAutoConfirm
+                        ? <CheckCircle2 size={14} style={{ color: p.success }} />
+                        : <AlertCircle size={14} style={{ color: p.warn }} />
+                      }
+                      <span style={{
+                        color: willAutoConfirm ? p.success : p.warn,
+                        fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+                        letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+                      }}>
+                        {willAutoConfirm ? "Will auto-confirm" : "Will land on-request"}
+                      </span>
+                    </div>
+                    <div style={{ color: p.textPrimary, fontSize: "0.86rem", lineHeight: 1.55 }}>
+                      {willAutoConfirm
+                        ? "These dates are clear and the suite has inventory. The booking is logged as confirmed straight away — the hotel just needs to send you payment instructions for the top-up."
+                        : "These dates are clear of stop-sale and event windows, but the suite is fully booked. Your request goes to reservations who'll confirm an alternative or wait-list you."}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Step 3 · Notes */}
@@ -3209,35 +3239,6 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
                   <p style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 14, lineHeight: 1.55 }}>
                     The top-up is collected separately — the hotel will email payment instructions when they approve the booking. Card nights are debited only on approval.
                   </p>
-                </div>
-              )}
-
-              {/* Outcome preview — bright panel telling the member what
-                  will happen on submit. */}
-              {datesValid && !blockers && (
-                <div className="p-5" style={{
-                  backgroundColor: willAutoConfirm ? `${p.success}10` : `${p.warn}10`,
-                  border: `1px solid ${willAutoConfirm ? p.success : p.warn}55`,
-                  borderInlineStart: `4px solid ${willAutoConfirm ? p.success : p.warn}`,
-                }}>
-                  <div className="flex items-center gap-2 mb-2">
-                    {willAutoConfirm
-                      ? <CheckCircle2 size={14} style={{ color: p.success }} />
-                      : <AlertCircle size={14} style={{ color: p.warn }} />
-                    }
-                    <span style={{
-                      color: willAutoConfirm ? p.success : p.warn,
-                      fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
-                      letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
-                    }}>
-                      {willAutoConfirm ? "Will auto-confirm" : "Will land on-request"}
-                    </span>
-                  </div>
-                  <div style={{ color: p.textPrimary, fontSize: "0.86rem", lineHeight: 1.55 }}>
-                    {willAutoConfirm
-                      ? "These dates are clear and the suite has inventory. The booking is logged as confirmed straight away — the hotel just needs to send you payment instructions for the top-up."
-                      : "These dates are clear of stop-sale and event windows, but the suite is fully booked. Your request goes to reservations who'll confirm an alternative or wait-list you."}
-                  </div>
                 </div>
               )}
             </section>
