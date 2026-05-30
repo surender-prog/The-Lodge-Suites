@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Ban, Briefcase, Building2, Calculator, CalendarCheck, Check, CheckCircle2, ChevronDown, Coins, Copy, CreditCard, Edit2, Eye, FileText, Globe, Hotel as HotelIcon, Lock, LogIn, LogOut, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Printer, Receipt, RotateCcw, Save, Search, ShieldCheck, Sparkles, Trash2, User as UserIcon, Users as UsersIcon } from "lucide-react";
+import { Ban, Briefcase, Building2, Calculator, CalendarCheck, Check, CheckCircle2, ChevronDown, Coins, Copy, CreditCard, Edit2, Eye, FileText, Gift, Globe, Hotel as HotelIcon, Lock, LogIn, LogOut, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Printer, Receipt, RotateCcw, Save, Search, ShieldCheck, Sparkles, Trash2, User as UserIcon, Users as UsersIcon } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween } from "../../../../utils/date.js";
@@ -1504,7 +1504,7 @@ function BookingEditor({ booking, onClose }) {
   const t = useT();
   const p = usePalette();
   const data = useData();
-  const { rooms, agreements, agencies, members, invoices, payments, packages, tax, taxPatterns, activePatternId, extras, hotelInfo, staffSession, updateBooking, removeBooking, addInvoice, addPayment, appendAuditLog, releaseGiftCardForBooking } = data;
+  const { rooms, agreements, agencies, members, invoices, payments, packages, tax, taxPatterns, activePatternId, extras, hotelInfo, staffSession, updateBooking, removeBooking, addInvoice, addPayment, appendAuditLog, giftCards, redeemGiftCard, releaseGiftCardForBooking } = data;
   const [draft, setDraft] = useState(booking);
   const [docPreview, setDocPreview] = useState(null); // "confirmation" | "invoice" | "receipt" | null
   const [recordingPayment, setRecordingPayment] = useState(false);
@@ -2331,6 +2331,8 @@ function BookingEditor({ booking, onClose }) {
               updateBooking={updateBooking}
               appendAuditLog={appendAuditLog}
               staffSession={staffSession}
+              giftCards={giftCards}
+              redeemGiftCard={redeemGiftCard}
               onPreviewReceipt={() => setDocPreview("receipt")}
               onEmailReceipt={() => emailBookingDoc(previewBooking, "receipt", hotelInfo)}
               expanded={recordingPayment}
@@ -3326,11 +3328,13 @@ const PAYMENT_METHODS = [
   { value: "benefit-pay", label: "Benefit Pay",  icon: Phone,      feePct: 0.5 },
   { value: "transfer",    label: "Bank transfer",icon: Coins,      feePct: 0   },
   { value: "cash",        label: "Cash",         icon: Coins,      feePct: 0   },
+  { value: "gift-card",   label: "Gift card",    icon: Gift,       feePct: 0   },
 ];
 
 function RecordPaymentPanel({
   p, booking, draft, update, balance, transactions = [],
   addPayment, updateBooking, appendAuditLog, staffSession,
+  giftCards = [], redeemGiftCard,
   onPreviewReceipt, onEmailReceipt, expanded, setExpanded, t,
 }) {
   const [method, setMethod] = React.useState("card");
@@ -3338,6 +3342,11 @@ function RecordPaymentPanel({
   const [ref, setRef] = React.useState("");
   const [status, setStatus] = React.useState("captured");
   const [lastReceipt, setLastReceipt] = React.useState(null);
+  // Gift-card tender — looked up by code, applied by nights. The card is
+  // night-priced (ratePerNight), so applying it = redeeming N nights worth
+  // N × ratePerNight in BHD.
+  const [gcCode, setGcCode] = React.useState("");
+  const [gcNights, setGcNights] = React.useState(1);
 
   // Sync default amount with balance whenever the panel is reopened so a
   // partial payment leaves the next default at the new balance.
@@ -3347,10 +3356,98 @@ function RecordPaymentPanel({
       setMethod("card");
       setRef("");
       setStatus("captured");
+      setGcCode("");
+      setGcNights(1);
     }
   }, [expanded, balance]);
 
+  // Resolve the typed code against the card book (case-insensitive).
+  const gcMatch = React.useMemo(() => {
+    const code = gcCode.trim().toLowerCase();
+    if (!code) return null;
+    return (giftCards || []).find((c) => (c.code || "").toLowerCase() === code) || null;
+  }, [gcCode, giftCards]);
+
+  // Derived redeemability + remaining balance for the matched card.
+  const gcInfo = React.useMemo(() => {
+    if (!gcMatch) return null;
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const remainingNights = Math.max(0, (gcMatch.totalNights || 0) - (gcMatch.nightsUsed || 0));
+    const rate = Number(gcMatch.ratePerNight) || 0;
+    const remainingValue = +(remainingNights * rate).toFixed(3);
+    const expired = gcMatch.validUntil ? gcMatch.validUntil < todayISO : false;
+    const alreadyOnBooking = (gcMatch.redemptionHistory || []).some((e) => e.bookingId === booking.id);
+    let reason = null;
+    if (alreadyOnBooking)             reason = "Already applied to this booking";
+    else if (gcMatch.status === "cancelled") reason = "Card is cancelled";
+    else if (expired)                 reason = "Card has expired";
+    else if (remainingNights <= 0)    reason = "No nights remaining on this card";
+    else if (rate <= 0)               reason = "Card has no nightly value set";
+    const redeemable = !reason;
+    return { remainingNights, rate, remainingValue, expired, alreadyOnBooking, redeemable, reason };
+  }, [gcMatch, booking.id]);
+
+  // When a usable card is matched, default the nights to whatever covers the
+  // outstanding balance (capped at the card's remaining nights).
+  React.useEffect(() => {
+    if (method !== "gift-card" || !gcInfo?.redeemable) return;
+    const need = balance > 0 ? Math.max(1, Math.ceil(balance / gcInfo.rate)) : gcInfo.remainingNights;
+    setGcNights(Math.min(gcInfo.remainingNights, need));
+  }, [method, gcMatch, balance]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // BHD value of the gift-card application currently configured.
+  const gcAmount = gcInfo?.redeemable ? +(Math.min(gcInfo.remainingNights, Math.max(1, Number(gcNights) || 0)) * gcInfo.rate).toFixed(3) : 0;
+  const isGiftCard = method === "gift-card";
+  const recordAmount = isGiftCard ? gcAmount : Number(amount || 0);
+  const canSubmit = isGiftCard ? (gcInfo?.redeemable && gcAmount > 0) : recordAmount > 0;
+
   const submit = () => {
+    // ── Gift-card tender ──────────────────────────────────────────────
+    // Redeem whole nights off the matched card and post the BHD value to
+    // the folio. Keyed by booking.id so the redemption shows the booking in
+    // the card ledger and is auto-credited back if the booking is cancelled.
+    if (isGiftCard) {
+      if (!gcMatch) { pushToast({ message: "Enter a valid gift card code", kind: "warn" }); return; }
+      if (!gcInfo?.redeemable) { pushToast({ message: gcInfo?.reason || "This gift card can't be applied", kind: "warn" }); return; }
+      const nights = Math.min(gcInfo.remainingNights, Math.max(1, Number(gcNights) || 0));
+      const amt = +(nights * gcInfo.rate).toFixed(3);
+      const id = `PAY-${Math.floor(1000 + Math.random() * 9000)}`;
+      const ts = new Date().toISOString();
+      const record = {
+        id, bookingId: booking.id,
+        method: "gift-card", amount: amt, fee: 0, net: amt,
+        ts, status: "captured",
+        reference: gcMatch.code,
+        giftCardId: gcMatch.id, giftCardCode: gcMatch.code,
+        note: `${nights} night${nights === 1 ? "" : "s"} redeemed from gift card ${gcMatch.code}`,
+        capturedBy: staffSession?.id || "system",
+        capturedByName: staffSession?.name || "System",
+      };
+      try { redeemGiftCard?.({ id: gcMatch.id, nights, bookingId: booking.id, savings: amt }); } catch (_) {}
+      try { addPayment?.(record); } catch (_) {}
+      const nextPaid = +((Number(booking.paid) || 0) + amt).toFixed(3);
+      const nextPaymentStatus = nextPaid >= (Number(booking.total) || 0) ? "paid"
+                              : nextPaid > 0                              ? "deposit"
+                              : booking.paymentStatus;
+      try {
+        updateBooking?.(booking.id, { paid: nextPaid, paymentStatus: nextPaymentStatus });
+        update?.({ paid: nextPaid, paymentStatus: nextPaymentStatus });
+      } catch (_) {}
+      try {
+        appendAuditLog?.({
+          ts, actor: staffSession?.id || "anon",
+          actorName: staffSession?.name || "Staff",
+          action: "payment.giftcard",
+          target: { kind: "booking", id: booking.id },
+          note: `Applied gift card ${gcMatch.code} (${nights} night${nights === 1 ? "" : "s"} · ${formatCurrency(amt)}) to folio (${id})`,
+        });
+      } catch (_) {}
+      pushToast({ message: `Gift card applied · ${formatCurrency(amt)} · ${id}` });
+      setLastReceipt(record);
+      setExpanded(false);
+      return;
+    }
+
     const amt = Math.max(0, Number(amount) || 0);
     if (amt <= 0) {
       pushToast({ message: "Enter an amount greater than zero", kind: "warn" });
@@ -3500,6 +3597,72 @@ function RecordPaymentPanel({
               </div>
             </div>
 
+            {isGiftCard ? (
+              <div className="space-y-3">
+                {/* Gift card lookup */}
+                <div>
+                  <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Gift card code</div>
+                  <input
+                    value={gcCode}
+                    onChange={(e) => setGcCode(e.target.value)}
+                    placeholder="e.g. LS-GC-DEMO-AAAA"
+                    className="w-full outline-none"
+                    style={{
+                      backgroundColor: p.inputBg, color: p.textPrimary,
+                      border: `1px solid ${gcCode && !gcMatch ? p.danger : p.border}`,
+                      padding: "0.55rem 0.7rem",
+                      fontFamily: "ui-monospace, Menlo, monospace", fontSize: "0.84rem", letterSpacing: "0.04em",
+                    }}
+                  />
+                  {gcCode && !gcMatch && (
+                    <div style={{ color: p.danger, fontSize: "0.7rem", marginTop: 5 }}>No gift card matches that code.</div>
+                  )}
+                </div>
+
+                {/* Matched card summary */}
+                {gcMatch && (
+                  <div className="p-2.5" style={{ border: `1px solid ${gcInfo?.redeemable ? `${p.accent}55` : `${p.danger}55`}`, backgroundColor: p.bgPanelAlt }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div style={{ color: p.accent, fontFamily: "ui-monospace, Menlo, monospace", fontWeight: 700, fontSize: "0.78rem" }}>{gcMatch.code}</div>
+                      <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.16em", textTransform: "uppercase", fontWeight: 700 }}>{gcMatch.status}</div>
+                    </div>
+                    <div style={{ color: p.textMuted, fontSize: "0.72rem", marginTop: 3, lineHeight: 1.5 }}>
+                      {gcInfo?.remainingNights} night{gcInfo?.remainingNights === 1 ? "" : "s"} left · {formatCurrency(gcInfo?.remainingValue || 0)} value · {formatCurrency(gcInfo?.rate || 0)}/night
+                      {gcMatch.validUntil ? ` · valid to ${fmtDate(gcMatch.validUntil)}` : ""}
+                    </div>
+                    {!gcInfo?.redeemable && (
+                      <div style={{ color: p.danger, fontSize: "0.72rem", marginTop: 6, fontWeight: 600 }}>
+                        <Ban size={11} style={{ display: "inline", marginInlineEnd: 4, verticalAlign: -1 }} />{gcInfo?.reason}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Nights to apply */}
+                {gcMatch && gcInfo?.redeemable && (
+                  <div>
+                    <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Nights to apply</div>
+                    <div className="flex items-center gap-2">
+                      <button type="button" aria-label="Fewer nights"
+                        onClick={() => setGcNights((n) => Math.max(1, (Number(n) || 1) - 1))}
+                        style={{ width: 34, height: 34, border: `1px solid ${p.border}`, backgroundColor: p.bgPanelAlt, color: p.textPrimary, cursor: "pointer", fontWeight: 700, fontSize: "1rem" }}>−</button>
+                      <div style={{ minWidth: 44, textAlign: "center", color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "1rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                        {Math.min(gcInfo.remainingNights, Math.max(1, Number(gcNights) || 1))}
+                      </div>
+                      <button type="button" aria-label="More nights"
+                        onClick={() => setGcNights((n) => Math.min(gcInfo.remainingNights, (Number(n) || 1) + 1))}
+                        style={{ width: 34, height: 34, border: `1px solid ${p.border}`, backgroundColor: p.bgPanelAlt, color: p.textPrimary, cursor: "pointer", fontWeight: 700, fontSize: "1rem" }}>+</button>
+                      <div style={{ color: p.textMuted, fontSize: "0.72rem", marginInlineStart: 4 }}>of {gcInfo.remainingNights} available</div>
+                    </div>
+                    <div style={{ color: p.success, fontSize: "0.78rem", marginTop: 8, fontWeight: 600 }}>
+                      = {formatCurrency(gcAmount)} applied to folio
+                      {balance > 0 ? ` · ${formatCurrency(Math.max(0, +(balance - gcAmount).toFixed(3)))} balance after` : ""}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+            <>
             {/* Amount */}
             <div>
               <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Amount (BHD)</div>
@@ -3577,22 +3740,28 @@ function RecordPaymentPanel({
                 </div>
               </div>
             </div>
+            </>
+            )}
 
             {/* Actions */}
             <div className="flex gap-2 pt-1">
               <button
                 onClick={submit}
+                disabled={!canSubmit}
                 style={{
                   flex: 1,
                   backgroundColor: p.accent, color: "#FFF",
                   border: `1px solid ${p.accent}`,
                   fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem",
                   letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
-                  padding: "0.55rem 0.85rem", cursor: "pointer",
+                  padding: "0.55rem 0.85rem", cursor: canSubmit ? "pointer" : "not-allowed",
+                  opacity: canSubmit ? 1 : 0.5,
                   display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
                 }}
               >
-                <CheckCircle2 size={12} /> Record · {formatCurrency(Number(amount || 0))}
+                {isGiftCard
+                  ? <><Gift size={12} /> Apply · {formatCurrency(recordAmount)}</>
+                  : <><CheckCircle2 size={12} /> Record · {formatCurrency(recordAmount)}</>}
               </button>
               <button
                 onClick={() => setExpanded(false)}
