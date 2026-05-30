@@ -4397,6 +4397,14 @@ export function DataProvider({ children }) {
     const ts = msg.ts || new Date().toISOString();
     const record = { read: false, ...msg, id, ts };
     setMessages((ms) => [...ms, record]);
+    // Per-row insert so the message persists for EVERY sender, not just
+    // authenticated staff. Members / corporate bookers / agents have no
+    // Supabase session, so the slice-level bulkReplace (which skips anon)
+    // never wrote their messages — staff never saw them. messages is now
+    // anon-insertable (migration 020); this is the canonical write path,
+    // mirroring addBooking / addMember. Fire-and-forget; the optimistic
+    // local append above already updated this client's UI.
+    upsertRow("messages", record);
     return record;
   }, []);
   // Mark every message in a thread as read for a given viewer-type. We

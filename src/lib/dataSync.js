@@ -4,9 +4,11 @@ import { supabase, SUPABASE_CONFIGURED, hasSupabaseSession } from "./supabase.js
 // Tables that accept anon writes from public surfaces of the site.
 //   bookings — homepage walk-up reservations
 //   members  — LS Privilege self-join
+//   messages — member / corporate / agent portal chat (no Supabase auth
+//              session; insert-only via messages_anyone_insert RLS)
 // Everything else is staff-only; we skip the network call when not signed
 // in to avoid noisy RLS rejection warnings.
-const ANON_WRITABLE_TABLES = new Set(["bookings", "members"]);
+const ANON_WRITABLE_TABLES = new Set(["bookings", "members", "messages"]);
 
 // Single-fire warnings so the console doesn't fill up during anon
 // browsing. Once a table reports "no session, skipping" we don't
