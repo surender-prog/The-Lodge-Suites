@@ -54,77 +54,143 @@ export const EmailSmtp = () => {
     pushToast({ message: `${preset.label} preset applied — enter credentials to finish` });
   };
 
-  // ── Connection test (mocked) ──────────────────────────────────────
-  // Real integrations would hit a backend `/smtp/test` endpoint. The
-  // mock surfaces the same UX (loading state, success/failure feedback,
-  // last-tested timestamp) so the visual works against a real backend
-  // when one's wired in.
-  const testConnection = () => {
+  // ── Connection test ───────────────────────────────────────────────
+  // Calls the /api/smtp-test Vercel serverless function which opens a
+  // REAL SMTP connection, runs STARTTLS / SSL, AUTH LOGINs, and reports
+  // back. No more mocked setTimeout — the result reflects whether the
+  // operator's credentials actually work against the configured server.
+  const testConnection = async () => {
     if (testing) return;
     if (!draft.host || !draft.port) {
       pushToast({ message: "Enter host and port before testing", kind: "warn" });
       return;
     }
-    setTesting(true);
-    setTimeout(() => {
-      // Build a missing-fields list so the failure message points the
-      // operator at the exact field to fix, instead of the generic
-      // "missing credentials or sender". Treat whitespace-only values
-      // as empty.
-      const username  = String(draft.username  || "").trim();
-      const password  = String(draft.password  || "").trim();
-      const fromEmail = String(draft.fromEmail || "").trim();
-      // SMTP best practice: most providers send AS the authenticated
-      // user. When the operator left "From email" blank but the
-      // username IS an email address (as Netsol / Gmail / O365 require),
-      // adopt it as the from address rather than blocking the test —
-      // mirrors how most desktop mail clients behave.
-      const usernameLooksLikeEmail = /.+@.+\..+/.test(username);
-      const effectiveFromEmail = fromEmail || (usernameLooksLikeEmail ? username : "");
-
-      const missing = [];
-      if (!username) missing.push("Username");
-      if (!password) missing.push("Password");
-      if (!effectiveFromEmail) missing.push("From email");
-
-      const ok = missing.length === 0;
+    // Pre-flight: same field validation we ran before, so the operator
+    // gets the friendly "X is empty" toast without burning a network
+    // round-trip when the form is obviously incomplete.
+    const username  = String(draft.username  || "").trim();
+    const password  = String(draft.password  || "").trim();
+    const fromEmail = String(draft.fromEmail || "").trim();
+    const usernameLooksLikeEmail = /.+@.+\..+/.test(username);
+    const effectiveFromEmail = fromEmail || (usernameLooksLikeEmail ? username : "");
+    const missing = [];
+    if (!username) missing.push("Username");
+    if (!password) missing.push("Password");
+    if (!effectiveFromEmail) missing.push("From email");
+    if (missing.length) {
       const ts = new Date().toISOString();
       const next = {
         ...draft,
-        // Persist the auto-derived From email so it shows up in the UI
-        // (and on the next test) once the operator hits Save.
         fromEmail: effectiveFromEmail,
         lastTestedAt: ts,
-        lastTestStatus: ok ? "success" : "failed",
-        lastTestMessage: ok
-          ? `Connected to ${draft.host}:${draft.port} as ${username}` +
-            (fromEmail ? "" : " · From email defaulted to username")
-          : `Fill in ${missing.join(", ")} before testing.`,
+        lastTestStatus: "failed",
+        lastTestMessage: `Fill in ${missing.join(", ")} before testing.`,
       };
       setDraft(next);
       updateSmtpConfig(next);
-      setTesting(false);
       pushToast({
-        message: ok
-          ? "SMTP test passed"
-          : `SMTP test failed — ${missing.length === 1 ? missing[0] + " is empty" : missing.join(", ") + " are empty"}`,
-        kind: ok ? undefined : "warn",
+        message: `SMTP test failed — ${missing.length === 1 ? missing[0] + " is empty" : missing.join(", ") + " are empty"}`,
+        kind: "warn",
       });
-    }, 1100);
+      return;
+    }
+
+    setTesting(true);
+    let result;
+    try {
+      const r = await fetch("/api/smtp-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "verify",
+          host: draft.host,
+          port: draft.port,
+          encryption: draft.encryption,
+          username,
+          password,
+          fromEmail: effectiveFromEmail,
+          fromName:  draft.fromName,
+        }),
+      });
+      result = await r.json();
+    } catch (err) {
+      result = { ok: false, error: `Network error: ${err.message}` };
+    }
+    const ok = !!result?.ok;
+    const ts = new Date().toISOString();
+    const next = {
+      ...draft,
+      fromEmail: effectiveFromEmail,
+      lastTestedAt: ts,
+      lastTestStatus: ok ? "success" : "failed",
+      lastTestMessage: ok
+        ? result.message || `Connected to ${draft.host}:${draft.port} as ${username}`
+        : (result?.error || "Unknown error from /api/smtp-test"),
+    };
+    setDraft(next);
+    updateSmtpConfig(next);
+    setTesting(false);
+    pushToast({
+      message: ok ? "SMTP test passed — credentials accepted by the server" : `SMTP test failed — ${result?.error || "see Last test message"}`,
+      kind: ok ? undefined : "warn",
+    });
   };
 
-  // ── Test email send (mocked) ──────────────────────────────────────
-  const sendTestEmail = () => {
+  // ── Test email send ───────────────────────────────────────────────
+  // Posts to the same endpoint with action="send" so the function does
+  // a verify() + sendMail() against the operator's credentials. Mirrors
+  // the connection-test flow so the operator gets the same kind of
+  // structured feedback (last status, message, toast).
+  const sendTestEmail = async () => {
+    if (testing) return;
     const to = (draft.testEmailRecipient || "").trim();
     if (!/.+@.+\..+/.test(to)) {
       pushToast({ message: "Enter a valid recipient email", kind: "warn" });
       return;
     }
-    if (draft.lastTestStatus !== "success") {
-      pushToast({ message: "Test the SMTP connection first", kind: "warn" });
-      return;
+    const username  = String(draft.username  || "").trim();
+    const password  = String(draft.password  || "").trim();
+    const fromEmail = String(draft.fromEmail || "").trim() || username;
+    setTesting(true);
+    let result;
+    try {
+      const r = await fetch("/api/smtp-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "send",
+          host: draft.host,
+          port: draft.port,
+          encryption: draft.encryption,
+          username,
+          password,
+          fromEmail,
+          fromName: draft.fromName,
+          to,
+        }),
+      });
+      result = await r.json();
+    } catch (err) {
+      result = { ok: false, error: `Network error: ${err.message}` };
     }
-    pushToast({ message: `Test email queued to ${to}` });
+    const ok = !!result?.ok;
+    const ts = new Date().toISOString();
+    const next = {
+      ...draft,
+      fromEmail,
+      lastTestedAt: ts,
+      lastTestStatus: ok ? "success" : "failed",
+      lastTestMessage: ok
+        ? (result.message || `Sent test email to ${to}`)
+        : (result?.error || "Unknown error from /api/smtp-test"),
+    };
+    setDraft(next);
+    updateSmtpConfig(next);
+    setTesting(false);
+    pushToast({
+      message: ok ? `Test email sent to ${to}` : `Send failed — ${result?.error || "see Last test message"}`,
+      kind: ok ? undefined : "warn",
+    });
   };
 
   const banner = bannerState(draft);
