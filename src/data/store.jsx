@@ -6,6 +6,7 @@ import {
   notifyInvoiceIssued, notifyInvoiceStatusChange,
   notifyPaymentReceived,
 } from "../utils/notifications.js";
+import { sendTransactionalEmail } from "../utils/email.js";
 import { PACKAGES as INITIAL_PACKAGES } from "./packages.js";
 import { supabase, SUPABASE_CONFIGURED, hasSupabaseSession } from "../lib/supabase.js";
 import {
@@ -5057,10 +5058,22 @@ export function DataProvider({ children }) {
     ? { ...u, status: u.status === "active" ? "suspended" : "active" }
     : u
   )), []);
-  const setAdminUserPassword = useCallback((id, password) => setAdminUsers(us => us.map(u => u.id === id
-    ? { ...u, password, passwordUpdatedAt: new Date().toISOString() }
-    : u
-  )), []);
+  const setAdminUserPassword = useCallback((id, password) => {
+    let target = null;
+    setAdminUsers(us => us.map(u => {
+      if (u.id !== id) return u;
+      target = u;
+      return { ...u, password, passwordUpdatedAt: new Date().toISOString() };
+    }));
+    // Security notice (fire-and-forget) — confirms the change without ever
+    // echoing the new password.
+    if (target?.email) {
+      sendTransactionalEmail({
+        kind: "password-changed", to: target.email,
+        name: target.name || target.email, portal: "staff",
+      });
+    }
+  }, []);
 
   // Audit-log append. Auto-stamps id + timestamp; caller fills the rest.
   const appendAuditLog = useCallback((entry) => setAuditLogs(ls => {
@@ -5382,17 +5395,31 @@ export function DataProvider({ children }) {
     } : s)), []);
 
   // Maintenance vendor CRUD.
-  const addMaintenanceVendor = useCallback((vendor) => setMaintenanceVendors(vs => {
-    const nextNum = vs.reduce((m, v) => {
-      const n = parseInt((v.id || "").replace(/^VND-/, ""), 10);
-      return Number.isFinite(n) ? Math.max(m, n) : m;
-    }, 0) + 1;
-    const id = vendor.id || `VND-${String(nextNum).padStart(3, "0")}`;
-    return [{
-      categories: [], active: true, rating: 0, totalJobs: 0, avgResponseHours: 0,
-      ...vendor, id,
-    }, ...vs];
-  }), []);
+  const addMaintenanceVendor = useCallback((vendor) => {
+    let saved = null;
+    setMaintenanceVendors(vs => {
+      const nextNum = vs.reduce((m, v) => {
+        const n = parseInt((v.id || "").replace(/^VND-/, ""), 10);
+        return Number.isFinite(n) ? Math.max(m, n) : m;
+      }, 0) + 1;
+      const id = vendor.id || `VND-${String(nextNum).padStart(3, "0")}`;
+      saved = {
+        categories: [], active: true, rating: 0, totalJobs: 0, avgResponseHours: 0,
+        ...vendor, id,
+      };
+      return [saved, ...vs];
+    });
+    // Onboarding confirmation email to the vendor (fire-and-forget). Greets
+    // the named contact when present, falls back to the company name.
+    if (saved?.email) {
+      sendTransactionalEmail({
+        kind: "vendor-registered", to: saved.email,
+        name: saved.contactName || saved.name,
+        vendorId: saved.id, categories: saved.categories,
+      });
+    }
+    return saved;
+  }, []);
   const updateMaintenanceVendor = useCallback((id, patch) =>
     setMaintenanceVendors(vs => vs.map(v => v.id === id ? { ...v, ...patch } : v)), []);
   const removeMaintenanceVendor = useCallback((id) =>
@@ -5513,7 +5540,22 @@ export function DataProvider({ children }) {
     upsertRow("members", saved);
     return saved;
   }, []);
-  const updateMember = useCallback((id, patch) => setMembers(ms => ms.map(m => m.id === id ? { ...m, ...patch } : m)), []);
+  const updateMember = useCallback((id, patch) => {
+    let updated = null;
+    setMembers(ms => ms.map(m => {
+      if (m.id !== id) return m;
+      updated = { ...m, ...patch };
+      return updated;
+    }));
+    // A password change on a member record (self-service profile update or
+    // an admin reset) triggers a security-notice email to the member.
+    if (patch && patch.password && updated?.email) {
+      sendTransactionalEmail({
+        kind: "password-changed", to: updated.email,
+        name: updated.name || updated.email, portal: "LS Privilege",
+      });
+    }
+  }, []);
   const removeMember = useCallback((id) => setMembers(ms => ms.filter(m => m.id !== id)), []);
 
   // ── Gift cards — actions ─────────────────────────────────────────────
@@ -5725,8 +5767,29 @@ export function DataProvider({ children }) {
     setTimeout(() => {
       appendNotifications(notifyBookingCreated(saved, { agreements, agencies, members }));
     }, 0);
+    // Fire the real guest confirmation email (fire-and-forget). Sends only
+    // when the booking carries a guest email; the body adapts to the status
+    // (confirmed → "confirmed", on-request → "received, pending"). The suite
+    // label is resolved here where we have the rooms list; the server fills
+    // in the rest. A slow/unconfigured mailer never blocks the booking.
+    if (saved.email) {
+      const room = rooms.find((r) => r.id === saved.roomId);
+      sendTransactionalEmail({
+        kind: "booking-new",
+        to: saved.email,
+        name: saved.guest,
+        bookingId: saved.id,
+        suite: room ? resolveRoomLabel(room) : (saved.roomId || undefined),
+        checkIn: saved.checkIn,
+        checkOut: saved.checkOut,
+        nights: saved.nights,
+        total: saved.total,
+        status: saved.status || "confirmed",
+        hotelConfirmationNo: saved.hotelConfirmationNo || undefined,
+      });
+    }
     return saved;
-  }, [agreements, agencies, members, appendNotifications]);
+  }, [agreements, agencies, members, appendNotifications, rooms]);
 
   // Booking update — diff status before/after to emit a status-change
   // notification when the booking transitions (confirmed → in-house, etc.).
@@ -5742,8 +5805,26 @@ export function DataProvider({ children }) {
       setTimeout(() => {
         appendNotifications(notifyBookingStatusChange(prev, next, { agreements, agencies, members }));
       }, 0);
+      // Real guest email on the status transition (fire-and-forget). Sends
+      // only when the booking has a guest email; the body's closing line is
+      // tailored per status (confirmed / cancelled / rejected / in-house /
+      // checkout) server-side.
+      if (next.email) {
+        const room = rooms.find((r) => r.id === next.roomId);
+        sendTransactionalEmail({
+          kind: "booking-status",
+          to: next.email,
+          name: next.guest,
+          bookingId: next.id,
+          suite: room ? resolveRoomLabel(room) : (next.roomId || undefined),
+          checkIn: next.checkIn,
+          checkOut: next.checkOut,
+          toStatus: next.status,
+          hotelConfirmationNo: next.hotelConfirmationNo || undefined,
+        });
+      }
     }
-  }, [agreements, agencies, members, appendNotifications]);
+  }, [agreements, agencies, members, appendNotifications, rooms]);
   const removeBooking = useCallback((id) => setBookings(bs => bs.filter(b => b.id !== id)), []);
 
   // Invoice CRUD. ID format keeps the YYYY-#### convention used by sample data.

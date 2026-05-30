@@ -22,6 +22,7 @@ import { ToastHost, pushToast } from "./portal/admin/ui.jsx";
 import { GiftCardDocPreviewModal } from "./portal/admin/GiftCardDocs.jsx";
 import { NotificationBell, MessagesQuickButton } from "../components/NotificationBell.jsx";
 import { MessageThread } from "../components/MessageThread.jsx";
+import { sendTransactionalEmail } from "../utils/email.js";
 
 // ---------------------------------------------------------------------------
 // GuestPortal — self-service portal for the three customer cohorts:
@@ -2258,6 +2259,7 @@ function CorporateProfileTab({ session, agreement, upsertAgreement, setSession }
             ...agreement,
             users: agreement.users.map((u) => u.id === me.id ? { ...u, password: newPw, passwordUpdatedAt: new Date().toISOString() } : u),
           });
+          if (me.email) sendTransactionalEmail({ kind: "password-changed", to: me.email, name: me.name || me.email, portal: "Corporate" });
           pushToast({ message: "Password updated" });
         }}
       />
@@ -2330,6 +2332,7 @@ function AgentProfileTab({ session, agency, upsertAgency, setSession }) {
             ...agency,
             users: agency.users.map((u) => u.id === me.id ? { ...u, password: newPw, passwordUpdatedAt: new Date().toISOString() } : u),
           });
+          if (me.email) sendTransactionalEmail({ kind: "password-changed", to: me.email, name: me.name || me.email, portal: "Travel Agent" });
           pushToast({ message: "Password updated" });
         }}
       />

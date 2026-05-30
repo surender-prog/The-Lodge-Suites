@@ -6,9 +6,14 @@
 // password entirely server-side — public surfaces (the LS Privilege join
 // form, the booking flow) can trigger a send without ever holding creds.
 //
-// Body: { kind, to, name?, memberId?, subject?, text? }
-//   kind="welcome" → builds the LS Privilege welcome email.
-//   kind="custom"  → uses the supplied subject + text verbatim.
+// Body: { kind, to, name?, memberId?, subject?, text?, ...data }
+//   kind="welcome"          → LS Privilege welcome email.
+//   kind="booking-new"      → guest booking receipt (adapts to status).
+//   kind="booking-status"   → guest notice when a booking's status changes.
+//   kind="password-changed" → security notice (never echoes the password).
+//   kind="vendor-registered"→ maintenance-vendor onboarding confirmation.
+//   kind="custom"           → uses the supplied subject + text verbatim
+//                             (used by the OTA stop-sale composer).
 //
 // Fail-soft: every "can't send" path returns 200 { ok:false, reason } so
 // the caller (e.g. registration) never breaks just because email is
@@ -20,14 +25,48 @@ import {
   loadSmtpConfig, loadHotelName,
 } from "./_smtp.js";
 
-function buildEmail(kind, { name, memberId, subject, text }, hotelName) {
+// Human-readable label for a reservation status code.
+function statusLabel(s) {
+  const map = {
+    confirmed:   "Confirmed",
+    "on-request":"On request",
+    onrequest:   "On request",
+    "in-house":  "In house",
+    inhouse:     "In house",
+    checkout:    "Checked out",
+    "checked-out":"Checked out",
+    cancelled:   "Cancelled",
+    canceled:    "Cancelled",
+    rejected:    "Rejected",
+    "sold-out":  "Sold out",
+    soldout:     "Sold out",
+  };
+  return map[String(s || "").toLowerCase()] || (s ? String(s) : "—");
+}
+
+// Render a "Suite / Dates / Nights / Total" block shared by booking emails.
+// Only includes lines we actually have data for.
+function stayLines({ bookingId, suite, checkIn, checkOut, nights, total, hotelConfirmationNo }) {
+  const lines = [];
+  if (bookingId)            lines.push(`Booking reference: ${bookingId}`);
+  if (hotelConfirmationNo)  lines.push(`Hotel confirmation no.: ${hotelConfirmationNo}`);
+  if (suite)                lines.push(`Suite: ${suite}`);
+  if (checkIn || checkOut)  lines.push(`Stay: ${checkIn || "?"} → ${checkOut || "?"}${nights ? `  (${nights} night${nights == 1 ? "" : "s"})` : ""}`);
+  else if (nights)          lines.push(`Nights: ${nights}`);
+  if (total != null && total !== "") lines.push(`Total: BHD ${Number(total).toFixed(3)}`);
+  return lines;
+}
+
+function buildEmail(kind, payload, hotelName) {
+  const { name, memberId, subject, text } = payload;
+  const who = name || "Guest";
+
   if (kind === "welcome") {
-    const who = name || "there";
     const idLine = memberId ? `\nYour membership number: ${memberId}` : "";
     return {
       subject: `Welcome to LS Privilege · ${hotelName}`,
       text: [
-        `Dear ${who},`,
+        `Dear ${name || "there"},`,
         "",
         `Welcome to LS Privilege — thank you for joining the loyalty programme at ${hotelName}.`,
         `Your account is now active.${idLine}`,
@@ -43,6 +82,103 @@ function buildEmail(kind, { name, memberId, subject, text }, hotelName) {
       ].join("\n"),
     };
   }
+
+  if (kind === "booking-new") {
+    const status = String(payload.status || "confirmed").toLowerCase();
+    const onRequest = status === "on-request" || status === "onrequest";
+    const stay = stayLines(payload);
+    const intro = onRequest
+      ? `We've received your reservation request and it is now pending confirmation. Our reservations team will confirm availability shortly.`
+      : `Your reservation is confirmed — we're delighted to welcome you to ${hotelName}.`;
+    return {
+      subject: onRequest
+        ? `Reservation request received · ${payload.bookingId || hotelName}`
+        : `Booking confirmed · ${payload.bookingId || hotelName}`,
+      text: [
+        `Dear ${who},`,
+        "",
+        intro,
+        ...(stay.length ? ["", ...stay] : []),
+        "",
+        `Status: ${statusLabel(status)}`,
+        "",
+        "Check-in is from 14:00 and check-out is by 12:00. If you have any special requests, simply reply to this email.",
+        "",
+        "We look forward to welcoming you.",
+        "",
+        "Warm regards,",
+        `${hotelName} · Reservations`,
+      ].join("\n"),
+    };
+  }
+
+  if (kind === "booking-status") {
+    const to_ = statusLabel(payload.toStatus || payload.status);
+    const stay = stayLines(payload);
+    // Tailor the closing line to the new status.
+    const code = String(payload.toStatus || payload.status || "").toLowerCase();
+    let note = "If you have any questions, simply reply to this email.";
+    if (code === "confirmed")          note = "Your reservation is now confirmed. Check-in is from 14:00.";
+    else if (code === "cancelled" || code === "canceled") note = "Your reservation has been cancelled. If this is unexpected, please contact us.";
+    else if (code === "rejected")      note = "Unfortunately we're unable to confirm this reservation. Please contact us to explore alternatives.";
+    else if (code === "in-house" || code === "inhouse") note = "You're now checked in — enjoy your stay with us.";
+    else if (code === "checkout" || code === "checked-out") note = "Thank you for staying with us. We hope to welcome you again soon.";
+    return {
+      subject: `Reservation update · ${payload.bookingId || hotelName} — ${to_}`,
+      text: [
+        `Dear ${who},`,
+        "",
+        `There's an update to your reservation. The status is now: ${to_}.`,
+        ...(stay.length ? ["", ...stay] : []),
+        "",
+        note,
+        "",
+        "Warm regards,",
+        `${hotelName} · Reservations`,
+      ].join("\n"),
+    };
+  }
+
+  if (kind === "password-changed") {
+    // Security notice only — NEVER include the new password in the body.
+    const portal = payload.portal ? ` ${payload.portal}` : "";
+    return {
+      subject: `Your${portal} password was changed · ${hotelName}`,
+      text: [
+        `Dear ${who},`,
+        "",
+        `This is a confirmation that the password for your${portal} account at ${hotelName} was just changed.`,
+        "",
+        "If you made this change, no further action is needed.",
+        "If you did NOT request this, please contact us immediately so we can secure your account.",
+        "",
+        "For your security, this message does not contain your password.",
+        "",
+        "Warm regards,",
+        `${hotelName}`,
+      ].join("\n"),
+    };
+  }
+
+  if (kind === "vendor-registered") {
+    const cats = Array.isArray(payload.categories) ? payload.categories.filter(Boolean) : [];
+    const catLine = cats.length ? `\nRegistered service categories: ${cats.join(", ")}.` : "";
+    const idLine  = payload.vendorId ? `\nYour vendor ID: ${payload.vendorId}` : "";
+    return {
+      subject: `You're registered as a service partner · ${hotelName}`,
+      text: [
+        `Dear ${name || "Partner"},`,
+        "",
+        `Thank you for partnering with ${hotelName}. Your company has been registered as an approved maintenance & services vendor.${idLine}${catLine}`,
+        "",
+        "Our facilities team will reach out when work orders matching your services are raised. Please keep your contact and trade-licence details up to date with us.",
+        "",
+        "Warm regards,",
+        `${hotelName} · Facilities & Procurement`,
+      ].join("\n"),
+    };
+  }
+
   // Generic / custom message.
   return {
     subject: subject || `A message from ${hotelName}`,
@@ -70,7 +206,7 @@ export default async function handler(req, res) {
   if (typeof body === "string") { try { body = JSON.parse(body); } catch (_) { body = {}; } }
   body = body || {};
 
-  const { kind = "welcome", to, name, memberId, subject, text } = body;
+  const { kind = "welcome", to } = body;
   if (!to || !/.+@.+\..+/.test(String(to))) {
     return res.status(400).json({ ok: false, error: "A valid recipient (to) is required." });
   }
@@ -91,7 +227,7 @@ export default async function handler(req, res) {
   }
 
   const hotelName = await loadHotelName();
-  const built = buildEmail(kind, { name, memberId, subject, text }, hotelName);
+  const built = buildEmail(kind, body, hotelName);
   if (!built.subject || !built.text) {
     return res.status(400).json({ ok: false, error: "Nothing to send (empty subject/body)." });
   }

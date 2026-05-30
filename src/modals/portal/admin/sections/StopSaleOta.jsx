@@ -6,6 +6,7 @@ import { fmtDate } from "../../../../utils/date.js";
 import { useData } from "../../../../data/store.jsx";
 import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, TableShell, Td, Th, TextField } from "../ui.jsx";
 import { roomLabel } from "../../../../lib/rooms.js";
+import { sendTransactionalEmail } from "../../../../utils/email.js";
 
 // Recipient type metadata used for tabs, chips, and the send-summary line.
 // OTAs are intentionally absent — channel-side updates run via the live
@@ -289,16 +290,43 @@ export const StopSaleOta = () => {
     setSelected((prev) => { const next = new Set(prev); next.delete(id); return next; });
   };
 
-  const sendEmail = () => {
+  const sendEmail = async () => {
     if (selectedList.length === 0) {
       pushToast({ message: "Select at least one recipient", kind: "warn" });
       return;
     }
+    // Only recipients with a real address can be mailed.
+    const mailable = selectedList.filter((r) => r.email && String(r.email).includes("@"));
+    if (mailable.length === 0) {
+      pushToast({ message: "None of the selected recipients have an email address on file", kind: "warn" });
+      return;
+    }
+    // Send the body with placeholders already resolved — partners must
+    // never receive a raw {{TOKEN}}.
+    const finalSubject = substitutePlaceholders(subject, placeholderValues);
+    const finalBody    = substitutePlaceholders(body,    placeholderValues);
+
     setSent(true);
-    const breakdown = RECIPIENT_TYPES
-      .filter((rt) => counts.selected[rt.id] > 0)
-      .map((rt) => `${counts.selected[rt.id]} ${rt.label.toLowerCase()}`).join(" · ");
-    pushToast({ message: `Sent to ${selectedList.length} recipient${selectedList.length === 1 ? "" : "s"} · ${breakdown}` });
+    pushToast({ message: `Sending to ${mailable.length} recipient${mailable.length === 1 ? "" : "s"}…` });
+
+    // Fire all sends through the real server-side mailer (kind:"custom").
+    const results = await Promise.all(mailable.map((r) =>
+      sendTransactionalEmail({ kind: "custom", to: r.email, subject: finalSubject, text: finalBody })
+    ));
+    const okCount  = results.filter((x) => x && x.ok).length;
+    const skipped  = results.find((x) => x && x.skipped);
+
+    if (okCount === 0 && skipped) {
+      // SMTP not configured / disabled — tell the operator where to fix it.
+      pushToast({ message: `Email not sent — ${skipped.reason || "configure SMTP in Settings → Email"}`, kind: "warn" });
+    } else if (okCount === mailable.length) {
+      const breakdown = RECIPIENT_TYPES
+        .filter((rt) => counts.selected[rt.id] > 0)
+        .map((rt) => `${counts.selected[rt.id]} ${rt.label.toLowerCase()}`).join(" · ");
+      pushToast({ message: `Sent to ${okCount} recipient${okCount === 1 ? "" : "s"}${breakdown ? ` · ${breakdown}` : ""}` });
+    } else {
+      pushToast({ message: `Sent ${okCount}/${mailable.length} · ${mailable.length - okCount} failed or rejected`, kind: okCount ? "info" : "warn" });
+    }
     setTimeout(() => setSent(false), 3500);
   };
 
@@ -448,7 +476,6 @@ export const StopSaleOta = () => {
                       style={{
                         padding: "0.45rem 0.55rem",
                         backgroundColor: "transparent",
-                        borderInlineStart: `1px solid ${active ? p.accent : p.border}`,
                         border: "none",
                         borderInlineStart: `1px solid ${active ? p.accent : p.border}`,
                         color: p.textMuted, cursor: "pointer",
