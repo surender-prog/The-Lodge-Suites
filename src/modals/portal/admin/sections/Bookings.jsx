@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Ban, Briefcase, Building2, Calculator, CalendarCheck, Check, CheckCircle2, ChevronDown, Coins, Copy, CreditCard, Edit2, Eye, EyeOff, FileText, Globe, Hotel as HotelIcon, Lock, LogIn, LogOut, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Printer, Receipt, RotateCcw, Save, Search, ShieldCheck, Sparkles, Trash2, User as UserIcon, Users as UsersIcon } from "lucide-react";
+import { Ban, Briefcase, Building2, Calculator, CalendarCheck, Check, CheckCircle2, ChevronDown, Coins, Copy, CreditCard, Edit2, Eye, FileText, Globe, Hotel as HotelIcon, Lock, LogIn, LogOut, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Printer, Receipt, RotateCcw, Save, Search, ShieldCheck, Sparkles, Trash2, User as UserIcon, Users as UsersIcon } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween } from "../../../../utils/date.js";
@@ -2894,18 +2894,17 @@ function SnapRow({ p, label, value, children, accent, success, warn }) {
 // CardVaultPanel — secured display of a guest's stored card. The card data
 // is captured by the BookingModal during checkout (or by the Booking
 // admin tools) and held for CARD_VAULT_RETENTION_DAYS days, after which
-// it auto-purges on render. Only operators holding the `card_vault_view`
-// permission (managed in Staff & Access) can reveal the unmasked PAN; every
-// reveal writes an audit-log entry for traceability. CARD_VAULT_ROLES still
-// acts as a backwards-compat default when the session's permissions array
-// is empty.
+// it auto-purges on render. SECURITY: only the last 4 digits + brand are
+// ever stored (see buildCardOnFile) — there is no full PAN to reveal. The
+// `card_vault_view` permission (managed in Staff & Access) still gates the
+// manager-only actions (mark-as-charged, remove). CARD_VAULT_ROLES acts as
+// a backwards-compat default when the session's permissions array is empty.
 // ---------------------------------------------------------------------------
 function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLog, updateBooking, addPayment }) {
   const card = draft.cardOnFile;
   const role = (staffSession?.role || "").toLowerCase();
   const allowed = canViewCardOnFile(staffSession);
   const expired = card ? cardOnFileExpired(card) : false;
-  const [revealed, setRevealed] = React.useState(false);
   // Charge-recording state machine. "idle" → primary "Mark as charged"
   // button. "form" → inline transaction-id form. After confirm we flip
   // back to "idle" and the panel renders the charged-summary row.
@@ -2933,28 +2932,6 @@ function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLo
     }
   }, [card, expired]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Hide the reveal automatically after 20s — the screen-share /
-  // shoulder-surf risk window is small but we want it bounded.
-  React.useEffect(() => {
-    if (!revealed) return;
-    const timer = setTimeout(() => setRevealed(false), 20000);
-    return () => clearTimeout(timer);
-  }, [revealed]);
-
-  const reveal = () => {
-    if (!allowed) return;
-    setRevealed(true);
-    try {
-      appendAuditLog?.({
-        ts: new Date().toISOString(),
-        actor: staffSession?.id || "anon",
-        actorName: staffSession?.name || "Staff",
-        action: "card-vault.reveal",
-        target: { kind: "booking", id: booking.id },
-        note: `Revealed full card-on-file for booking ${booking.id}`,
-      });
-    } catch (_) {}
-  };
   const removeCard = () => {
     if (!allowed) return;
     if (!confirm("Remove the card on file? This cannot be undone.")) return;
@@ -2970,13 +2947,12 @@ function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLo
         note: `Card-on-file manually removed for booking ${booking.id}`,
       });
     } catch (_) {}
-    setRevealed(false);
     pushToast({ message: "Card-on-file removed" });
   };
   const copyMasked = () => {
     if (!card) return;
     try {
-      navigator.clipboard?.writeText(maskCardNumber(card.number));
+      navigator.clipboard?.writeText(maskCardNumber(card));
       pushToast({ message: "Masked number copied" });
     } catch (_) {
       pushToast({ message: "Copy failed", kind: "warn" });
@@ -3076,11 +3052,13 @@ function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLo
           </div>
         ) : (
           <>
-            {/* Headline — always masked unless reveal is active and the
-                viewer is authorised. */}
+            {/* Headline — masked last-4 only. The full PAN is never
+                stored (see buildCardOnFile), so there is nothing to
+                reveal — the hotel charges via the gateway/terminal and
+                uses last-4 only to recognise the card. */}
             <div className="flex items-center justify-between gap-2">
               <div style={{ color: p.textPrimary, fontWeight: 700, fontFamily: "'Manrope', sans-serif", fontSize: "0.92rem", letterSpacing: "0.04em", fontVariantNumeric: "tabular-nums" }}>
-                {revealed && allowed ? formatFullCard(card.number) : maskCardNumber(card.number)}
+                {maskCardNumber(card)}
               </div>
               <span style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, padding: "1px 6px", border: `1px solid ${p.border}` }}>
                 {card.brand || "Card"}
@@ -3112,14 +3090,6 @@ function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLo
                 <div style={{ color: p.textMuted, fontSize: "0.68rem", marginTop: 2 }}>
                   {fmtDate(draft.paymentChargedAt) || "—"} · by {draft.paymentChargedBy || "—"}
                 </div>
-              </div>
-            )}
-
-            {/* Reveal warning when active */}
-            {revealed && allowed && (
-              <div className="mt-2 p-2 flex items-start gap-2" style={{ backgroundColor: `${p.warn}10`, border: `1px solid ${p.warn}40`, color: p.warn, fontSize: "0.7rem", lineHeight: 1.5 }}>
-                <Eye size={11} style={{ marginTop: 2, flexShrink: 0 }} />
-                <span>Full card visible for 20 seconds — this view has been logged to the audit trail.</span>
               </div>
             )}
 
@@ -3207,11 +3177,6 @@ function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLo
             <div className="flex flex-wrap gap-2 pt-1">
               {allowed ? (
                 <>
-                  {revealed ? (
-                    <SidebarBtn p={p} icon={<EyeOff size={12} />} label="Hide card" onClick={() => setRevealed(false)} />
-                  ) : (
-                    <SidebarBtn p={p} icon={<Eye size={12} />} label="Reveal full card" onClick={reveal} />
-                  )}
                   <SidebarBtn p={p} icon={<Copy size={12} />} label="Copy masked" onClick={copyMasked} />
                   {canMarkCharged && chargeMode !== "form" && (
                     <button
@@ -3248,17 +3213,11 @@ function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLo
           </>
         )}
         <div style={{ color: p.textMuted, fontSize: "0.66rem", lineHeight: 1.5, marginTop: 6 }}>
-          Stored cards auto-purge {CARD_VAULT_RETENTION_DAYS} days after capture. Every reveal is recorded in the activity log.
+          Only the last 4 digits are stored — never the full card number. Records auto-purge {CARD_VAULT_RETENTION_DAYS} days after capture.
         </div>
       </div>
     </div>
   );
-}
-
-// Format a card number into 4-digit groups for the reveal view.
-function formatFullCard(num) {
-  const digits = String(num || "").replace(/\D/g, "");
-  return digits.replace(/(.{4})/g, "$1 ").trim();
 }
 
 // ---------------------------------------------------------------------------

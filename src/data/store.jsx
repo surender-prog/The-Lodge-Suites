@@ -554,21 +554,21 @@ const _expiresInDaysFrom = (capturedDaysAgo) =>
 const SAMPLE_BOOKINGS = [
   { id: "LS-A8K2N4", guest: "Sarah Holloway",       email: "s.holloway@example.com",    source: "direct",   roomId: "one-bed",   checkIn: "2026-04-28", checkOut: "2026-05-05", nights: 7,  guests: 2, rate: 44, total: 339, paid: 339, status: "in-house",  paymentStatus: "paid",
     paymentTiming: "now",
-    cardOnFile: { name: "Sarah Holloway", number: "4242 4242 4242 4242", exp: "08/27", brand: "Visa",
+    cardOnFile: { name: "Sarah Holloway", last4: "4242", masked: "•••• 4242", exp: "08/27", brand: "Visa",
                   capturedAt: _capturedDaysAgo(2), expiresAt: _expiresInDaysFrom(2) } },
   { id: "LS-B3M1Q7", guest: "Mohammed Al-Ansari",    email: "m.ansari@example.com",      source: "corporate",accountId: "AGR-2026-001", roomId: "two-bed",   checkIn: "2026-04-28", checkOut: "2026-04-30", nights: 2,  guests: 4, rate: 65, total: 142, paid: 0,   status: "in-house",  paymentStatus: "invoiced",
     paymentTiming: "later" },
   { id: "LS-C9P5R2", guest: "Lorenzo Caretti",       email: "l.caretti@example.com",     source: "agent",    agencyId: "AGT-0124", roomId: "studio",    checkIn: "2026-05-04", checkOut: "2026-05-08", nights: 4,  guests: 2, rate: 38, total: 167, paid: 167, status: "confirmed", paymentStatus: "paid",
     paymentTiming: "now",
-    cardOnFile: { name: "Lorenzo Caretti", number: "5555 5555 5555 4444", exp: "11/26", brand: "Mastercard",
+    cardOnFile: { name: "Lorenzo Caretti", last4: "4444", masked: "•••• 4444", exp: "11/26", brand: "Mastercard",
                   capturedAt: _capturedDaysAgo(28), expiresAt: _expiresInDaysFrom(28) } },
   { id: "LS-D2T7W8", guest: "Kenji Tanaka",          email: "k.tanaka@example.com",      source: "agent",    agencyId: "AGT-0211", roomId: "two-bed",   checkIn: "2026-05-12", checkOut: "2026-05-15", nights: 3,  guests: 3, rate: 78, total: 257, paid: 50,  status: "confirmed", paymentStatus: "deposit",
     paymentTiming: "later",
-    cardOnFile: { name: "Kenji Tanaka", number: "3782 822463 10005", exp: "03/28", brand: "Amex",
+    cardOnFile: { name: "Kenji Tanaka", last4: "0005", masked: "•••• 0005", exp: "03/28", brand: "Amex",
                   capturedAt: _capturedDaysAgo(10), expiresAt: _expiresInDaysFrom(10) } },
   { id: "LS-E5V9X1", guest: "Layla Al-Khalifa",      email: "l.alkhalifa@example.com",   source: "direct",   roomId: "three-bed", checkIn: "2026-05-18", checkOut: "2026-05-25", nights: 7,  guests: 4, rate: 96, total: 740, paid: 0,   status: "confirmed", paymentStatus: "pending",
     paymentTiming: "later",
-    cardOnFile: { name: "Layla Al-Khalifa", number: "4111 1111 1111 1111", exp: "06/29", brand: "Visa",
+    cardOnFile: { name: "Layla Al-Khalifa", last4: "1111", masked: "•••• 1111", exp: "06/29", brand: "Visa",
                   capturedAt: _capturedDaysAgo(5), expiresAt: _expiresInDaysFrom(5) } },
   { id: "LS-F6Y2Z4", guest: "James Holloway",        email: "j.holloway@example.com",    source: "ota",      roomId: "studio",    checkIn: "2026-04-15", checkOut: "2026-04-19", nights: 4,  guests: 1, rate: 38, total: 167, paid: 167, status: "checked-out", paymentStatus: "paid",
     paymentTiming: "now" },
@@ -576,7 +576,7 @@ const SAMPLE_BOOKINGS = [
     paymentTiming: "now" },
   { id: "LS-H8A4B6", guest: "Robert Thompson",       email: "r.thompson@example.com",    source: "ota",      roomId: "one-bed",   checkIn: "2026-05-22", checkOut: "2026-05-29", nights: 7,  guests: 2, rate: 44, total: 339, paid: 100, status: "confirmed", paymentStatus: "deposit",
     paymentTiming: "later",
-    cardOnFile: { name: "Robert Thompson", number: "6011 1111 1111 1117", exp: "12/27", brand: "Discover",
+    cardOnFile: { name: "Robert Thompson", last4: "1117", masked: "•••• 1117", exp: "12/27", brand: "Discover",
                   capturedAt: _capturedDaysAgo(20), expiresAt: _expiresInDaysFrom(20) } },
 ];
 
@@ -3635,11 +3635,19 @@ export function canViewCardOnFile(sessionOrRole) {
   return CARD_VAULT_ROLES.has(String(sessionOrRole || "").toLowerCase());
 }
 
-// Returns last-4 of a card number with leading dots, e.g. "•••• 4242".
-// Strips spaces and non-digits before slicing so it tolerates formatted
-// inputs ("4242 4242 …") and live-typed ones ("4242").
-export function maskCardNumber(num) {
-  const digits = String(num || "").replace(/\D/g, "");
+// Returns last-4 of a card with leading dots, e.g. "•••• 4242".
+// Tolerant of every shape a card reference can take:
+//   • a card-on-file object  → reads .masked / .last4 / (legacy) .number
+//   • a last4 / digits string → slices last 4
+//   • a formatted PAN string  → strips non-digits, slices last 4
+// This means callers can pass the whole card object and never have to
+// know whether it's a new (last4-only) or legacy (full-number) record.
+export function maskCardNumber(input) {
+  if (input && typeof input === "object") {
+    if (input.masked) return input.masked;
+    input = input.last4 || input.number || "";
+  }
+  const digits = String(input || "").replace(/\D/g, "");
   if (digits.length === 0) return "—";
   const last4 = digits.slice(-4).padStart(4, "•");
   return `•••• ${last4}`;
@@ -3669,13 +3677,23 @@ export function cardOnFileExpired(card) {
 // Standard policy window. Centralised here so a future change to "10
 // days" is a one-line edit rather than a global search.
 export const CARD_VAULT_RETENTION_DAYS = 30;
+// Build the card-on-file record persisted onto a booking. SECURITY: the
+// full PAN is NEVER stored. We keep only the last 4 digits + the inferred
+// brand for identification, plus the cardholder name + expiry. A real
+// integration would store the gateway's tokenised reference here instead;
+// until then the hotel charges via the gateway/terminal directly and uses
+// last4 only to recognise the card. Anything that needs to "charge the
+// card on file" must go through the gateway token, not a stored PAN.
 export function buildCardOnFile({ name, number, exp }) {
   const now = new Date();
   const expires = new Date(now.getTime() + CARD_VAULT_RETENTION_DAYS * 86400000);
+  const digits = String(number || "").replace(/\D/g, "");
+  const last4 = digits.slice(-4);
   return {
-    name:       String(name   || "").trim(),
-    number:     String(number || "").replace(/\s+/g, " ").trim(),
-    exp:        String(exp    || "").trim(),
+    name:       String(name || "").trim(),
+    last4,
+    masked:     last4 ? `•••• ${last4}` : "",
+    exp:        String(exp || "").trim(),
     brand:      detectCardBrand(number),
     capturedAt: now.toISOString(),
     expiresAt:  expires.toISOString(),
