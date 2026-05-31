@@ -68,9 +68,10 @@ export const Header = ({ onBook, onPortal, onJoin, onSignIn, onNav }) => {
               className="flex items-center gap-2"
               style={{
                 fontFamily: "'Manrope', sans-serif",
-                fontSize: "0.7rem",
-                letterSpacing: "0.22em",
+                fontSize: "0.62rem",
+                letterSpacing: "0.16em",
                 textTransform: "uppercase",
+                whiteSpace: "nowrap",
                 color: C.textMuted,
                 padding: "0.55rem 0.8rem",
                 border: `1px solid ${C.border}`,
@@ -86,9 +87,10 @@ export const Header = ({ onBook, onPortal, onJoin, onSignIn, onNav }) => {
             className="flex items-center gap-2"
             style={{
               fontFamily: "'Manrope', sans-serif",
-              fontSize: "0.7rem",
-              letterSpacing: "0.22em",
+              fontSize: "0.62rem",
+              letterSpacing: "0.16em",
               textTransform: "uppercase",
+              whiteSpace: "nowrap",
               color: C.textMuted,
               padding: "0.55rem 0.8rem",
               border: `1px solid ${C.border}`,
