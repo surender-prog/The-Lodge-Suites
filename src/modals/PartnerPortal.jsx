@@ -324,7 +324,7 @@ function PartnerPortalInner({ onClose }) {
 function StaffLogin({ onClose }) {
   const p = usePalette();
   const t = useT();
-  const { adminUsers, signInStaff } = useData();
+  const { signInStaff } = useData();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -350,22 +350,6 @@ function StaffLogin({ onClose }) {
       }
       setBusy(false);
     }, 350);
-  };
-
-  const fill = (em, pw) => { setEmail(em); setPassword(pw); setError(null); };
-
-  // Quick-pick chips — drawn from the live adminUsers store so any new
-  // operator added in Staff & Access shows up here immediately.
-  const demoCreds = (adminUsers || [])
-    .filter((u) => u.status === "active" && u.password)
-    .slice(0, 8);
-
-  // Group by role for the sidebar
-  const ROLE_COLORS = {
-    owner: "#7C3AED", gm: "#0F766E", fom: "#2563EB",
-    reservations: "#0891B2", housekeeping: "#0D9488",
-    sales: "#D97706", accounts: "#BE123C",
-    marketing: "#C9A961", readonly: "#64748B",
   };
 
   return (
@@ -404,9 +388,9 @@ function StaffLogin({ onClose }) {
       </header>
 
       <div className="max-w-6xl mx-auto px-6 md:px-10 py-12">
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
+        <div className="max-w-md mx-auto">
           {/* Login form */}
-          <div className="lg:col-span-2">
+          <div>
             <div className="mb-7">
               <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.28em", textTransform: "uppercase", color: p.accent, fontWeight: 700 }}>
                 Sign in
@@ -502,57 +486,6 @@ function StaffLogin({ onClose }) {
               <div style={{ color: p.textSecondary, fontSize: "0.78rem", lineHeight: 1.5 }}>
                 Owners and finance roles are required to enable two-factor authentication. Configure MFA from <strong>Hotel Admin → Operations → Staff & Access</strong>.
               </div>
-            </div>
-          </div>
-
-          {/* Demo credentials */}
-          <div className="lg:col-span-3">
-            <div style={{ color: p.accent, fontSize: "0.66rem", letterSpacing: "0.28em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700, marginBottom: 8 }}>
-              Demo accounts
-            </div>
-            <p style={{ color: p.textMuted, fontSize: "0.86rem", marginBottom: 14, maxWidth: 580 }}>
-              Click any tile to auto-fill the form. Each role has scoped permissions — owners get everything, housekeeping sees only maintenance + room status, accounts handle folios + payments, and so on.
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {demoCreds.map((u) => {
-                const color = ROLE_COLORS[u.role] || p.accent;
-                return (
-                  <button
-                    key={u.id}
-                    onClick={() => fill(u.email, u.password)}
-                    className="text-start p-4 transition-colors"
-                    style={{
-                      backgroundColor: `${color}0E`,
-                      border: `1px solid ${color}40`,
-                      borderInlineStart: `3px solid ${color}`,
-                      cursor: "pointer",
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = `${color}1F`; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = `${color}0E`; }}
-                  >
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <span style={{ color, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700 }}>
-                        {u.role}
-                      </span>
-                      {u.mfa && (
-                        <span title="MFA enabled" style={{ color: p.success, fontSize: "0.6rem", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 4 }}>
-                          <ShieldCheck size={11} /> MFA
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ color: p.textPrimary, fontFamily: "'Cormorant Garamond', serif", fontSize: "1.15rem", fontWeight: 500, lineHeight: 1.2 }}>
-                      {u.name}
-                    </div>
-                    <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 2 }}>{u.title}</div>
-                    <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 6, fontFamily: "'Manrope', sans-serif" }}>
-                      Email · <code style={{ color: p.textPrimary }}>{u.email}</code>
-                    </div>
-                    <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 2, fontFamily: "'Manrope', sans-serif" }}>
-                      Password · <code style={{ color }}>{u.password}</code>
-                    </div>
-                  </button>
-                );
-              })}
             </div>
           </div>
         </div>
