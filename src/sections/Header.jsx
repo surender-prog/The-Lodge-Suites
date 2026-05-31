@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { Lock, LogIn, X } from "lucide-react";
+import { Crown, LogIn, X } from "lucide-react";
 import { C } from "../data/tokens.js";
 import { Logo } from "../components/Logo.jsx";
 import { GoldBtn } from "../components/primitives.jsx";
 import { LanguageToggle } from "../components/LanguageToggle.jsx";
 import { useT } from "../i18n/LanguageContext.jsx";
 
-export const Header = ({ onBook, onPortal, onSignIn, onNav }) => {
+export const Header = ({ onBook, onPortal, onJoin, onSignIn, onNav }) => {
   const t = useT();
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -82,7 +82,7 @@ export const Header = ({ onBook, onPortal, onSignIn, onNav }) => {
             </button>
           )}
           <button
-            onClick={onPortal}
+            onClick={onJoin}
             className="flex items-center gap-2"
             style={{
               fontFamily: "'Manrope', sans-serif",
@@ -96,7 +96,7 @@ export const Header = ({ onBook, onPortal, onSignIn, onNav }) => {
             onMouseEnter={(e) => { e.currentTarget.style.color = C.gold; e.currentTarget.style.borderColor = C.gold; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = C.textMuted; e.currentTarget.style.borderColor = C.border; }}
           >
-            <Lock size={11} /> {t("header.partners")}
+            <Crown size={11} /> {t("header.joinPrivilege")}
           </button>
           <GoldBtn onClick={onBook} small>{t("common.bookStay")}</GoldBtn>
         </div>
@@ -128,9 +128,9 @@ export const Header = ({ onBook, onPortal, onSignIn, onNav }) => {
                   <LogIn size={12} /> {t("header.signIn")}
                 </button>
               )}
-              <button onClick={() => { onPortal(); setMobileOpen(false); }} className="w-full py-2 flex items-center justify-center gap-2"
+              <button onClick={() => { onJoin(); setMobileOpen(false); }} className="w-full py-2 flex items-center justify-center gap-2"
                 style={{ color: C.textMuted, border: `1px solid ${C.border}`, fontSize: "0.7rem", letterSpacing: "0.2em", textTransform: "uppercase" }}>
-                <Lock size={12} /> {t("header.partners")}
+                <Crown size={12} /> {t("header.joinPrivilege")}
               </button>
               <GoldBtn onClick={() => { onBook(); setMobileOpen(false); }} full>{t("common.bookStay")}</GoldBtn>
             </div>
