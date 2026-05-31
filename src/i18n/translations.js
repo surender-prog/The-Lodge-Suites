@@ -41,6 +41,7 @@ const en = {
       contact:   "Contact",
     },
     partners: "Partners",
+    joinPrivilege: "Join LS Privilege",
     signIn:   "Sign In",
   },
 
@@ -522,6 +523,7 @@ const ar = {
       contact:   "تواصل معنا",
     },
     partners: "شركاؤنا",
+    joinPrivilege: "انضم إلى LS Privilege",
     signIn:   "تسجيل الدخول",
   },
 

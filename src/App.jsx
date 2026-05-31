@@ -65,6 +65,7 @@ export default function App() {
       <Header
         onBook={() => openBooking()}
         onPortal={() => setPortalOpen(true)}
+        onJoin={() => setJoinOpen(true)}
         onSignIn={() => setSignInOpen(true)}
         onNav={onNav}
       />
