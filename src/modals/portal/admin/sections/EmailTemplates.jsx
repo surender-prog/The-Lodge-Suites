@@ -10,6 +10,7 @@ import {
   Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast,
   SelectField, Stat, TableShell, Td, Th, TextField,
 } from "../ui.jsx";
+import { sendTransactionalEmail } from "../../../../utils/email.js";
 
 // ---------------------------------------------------------------------------
 // Categories — drive the colour, icon, and grouping of every template.
@@ -504,13 +505,31 @@ function formatDelay(mins) {
   return `${sign}${abs}m`;
 }
 
-function sendTestEmail(tpl) {
+// Send a real test of this template through the server-side mailer
+// (/api/send-email, kind:"custom") rather than opening the operator's
+// desktop mail client. The body is rendered with the sample variables so
+// the recipient sees the template exactly as a guest would. Prompts for a
+// recipient (defaulting to the template's reply-to / from address).
+async function sendTestEmail(tpl) {
   const subject = renderTemplate(tpl.subject);
   const body    = renderTemplate(tpl.body);
-  const to      = tpl.replyTo || tpl.fromEmail || "";
-  const href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent("[TEST] " + subject)}&body=${encodeURIComponent(body)}`;
-  window.location.href = href;
-  pushToast({ message: "Mail composer opened with rendered template" });
+  const fallback = tpl.replyTo || tpl.fromEmail || "";
+  const to = window.prompt("Send a test of this template to which email address?", fallback);
+  if (to == null) return; // cancelled
+  const addr = String(to).trim();
+  if (!/.+@.+\..+/.test(addr)) {
+    pushToast({ message: "Enter a valid email address", kind: "warn" });
+    return;
+  }
+  pushToast({ message: `Sending test to ${addr}…` });
+  const res = await sendTransactionalEmail({ kind: "custom", to: addr, subject: `[TEST] ${subject}`, text: body });
+  if (res?.ok) {
+    pushToast({ message: `Test email sent to ${addr}` });
+  } else if (res?.skipped) {
+    pushToast({ message: `Not sent — ${res.reason || "configure SMTP in Settings → Email SMTP"}`, kind: "warn" });
+  } else {
+    pushToast({ message: `Send failed — ${res?.error || "check Settings → Email SMTP"}`, kind: "warn" });
+  }
 }
 
 // ---------------------------------------------------------------------------
