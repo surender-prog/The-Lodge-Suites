@@ -5756,14 +5756,22 @@ export function DataProvider({ children }) {
   // internal mailboxes BCC'd on a template — front office / GM — actually
   // get copied on the real auto-send. Returns {} when no active template
   // matches or it carries no cc/bcc, so callers can spread it unconditionally.
-  const templateCopyFor = useCallback((event) => {
-    const tpl = (emailTemplates || []).find(
-      (t) => t && t.active !== false && t.trigger && t.trigger.event === event
-    );
-    if (!tpl) return {};
+  const templateCopyFor = useCallback((event, fallbackEvents = []) => {
+    // Try the requested event first, then any fallback events, so a status
+    // that has no dedicated template (e.g. on-request bookings, which have
+    // no "booking.created" template) still inherits the right copy-list
+    // instead of silently dropping the BCC.
+    const tryEvents = [event, ...fallbackEvents].filter(Boolean);
+    let tpl = null;
+    for (const ev of tryEvents) {
+      tpl = (emailTemplates || []).find(
+        (t) => t && t.active !== false && t.trigger && t.trigger.event === ev
+      );
+      if (tpl) break;
+    }
     const out = {};
-    if (tpl.cc && String(tpl.cc).trim())   out.cc  = tpl.cc;
-    if (tpl.bcc && String(tpl.bcc).trim()) out.bcc = tpl.bcc;
+    if (tpl?.cc && String(tpl.cc).trim())   out.cc  = tpl.cc;
+    if (tpl?.bcc && String(tpl.bcc).trim()) out.bcc = tpl.bcc;
     return out;
   }, [emailTemplates]);
 
@@ -5795,10 +5803,14 @@ export function DataProvider({ children }) {
     if (saved.email) {
       const room = rooms.find((r) => r.id === saved.roomId);
       const status = saved.status || "confirmed";
-      // An on-request booking maps to the "booking.created" template; a
-      // confirmed one to "booking.confirmed". Carry that template's internal
-      // copy-list (cc/bcc — e.g. front office) onto the real send.
-      const event = (status === "on-request" || status === "onrequest") ? "booking.created" : "booking.confirmed";
+      // Both confirmed AND on-request new bookings resolve their internal
+      // copy-list from the "booking.confirmed" template — there is no
+      // dedicated "booking.created" template, so an on-request booking would
+      // otherwise drop the BCC entirely and the front desk would never be
+      // copied. BOOKING_BCC is a hard floor so the front desk is always
+      // copied even if the template were edited to clear its BCC.
+      const copy = templateCopyFor("booking.confirmed");
+      if (!copy.bcc) copy.bcc = BOOKING_BCC;
       sendTransactionalEmail({
         kind: "booking-new",
         to: saved.email,
@@ -5811,7 +5823,7 @@ export function DataProvider({ children }) {
         total: saved.total,
         status,
         hotelConfirmationNo: saved.hotelConfirmationNo || undefined,
-        ...templateCopyFor(event),
+        ...copy,
       });
     }
     return saved;
@@ -5837,16 +5849,24 @@ export function DataProvider({ children }) {
       // checkout) server-side.
       if (next.email) {
         const room = rooms.find((r) => r.id === next.roomId);
-        // Map the new status → the matching template event, so the internal
-        // copy-list (cc/bcc) configured for that lifecycle email is carried
-        // onto the real send.
+        // Map the new status → its lifecycle template event so the internal
+        // copy-list (cc/bcc) is carried onto the send. Event names must match
+        // the actual templates (booking.checkinday / booking.checkedout —
+        // NOT booking.checkin/checkout). Statuses without a dedicated
+        // template (on-request, rejected, sold-out) fall back to the
+        // booking.confirmed copy-list, and BOOKING_BCC is a hard floor so the
+        // front desk is copied on EVERY booking status change regardless.
         const EVENT_BY_STATUS = {
           confirmed: "booking.confirmed",
-          "in-house": "booking.checkin", inhouse: "booking.checkin",
+          "in-house": "booking.checkinday", inhouse: "booking.checkinday",
           "checked-out": "booking.checkedout", checkout: "booking.checkedout",
           cancelled: "booking.cancelled", canceled: "booking.cancelled",
+          rejected: "booking.cancelled", "sold-out": "booking.cancelled", soldout: "booking.cancelled",
+          "on-request": "booking.confirmed", onrequest: "booking.confirmed",
         };
-        const event = EVENT_BY_STATUS[String(next.status || "").toLowerCase()];
+        const event = EVENT_BY_STATUS[String(next.status || "").toLowerCase()] || "booking.confirmed";
+        const copy = templateCopyFor(event, ["booking.confirmed"]);
+        if (!copy.bcc) copy.bcc = BOOKING_BCC;
         sendTransactionalEmail({
           kind: "booking-status",
           to: next.email,
@@ -5857,7 +5877,7 @@ export function DataProvider({ children }) {
           checkOut: next.checkOut,
           toStatus: next.status,
           hotelConfirmationNo: next.hotelConfirmationNo || undefined,
-          ...(event ? templateCopyFor(event) : {}),
+          ...copy,
         });
       }
     }
