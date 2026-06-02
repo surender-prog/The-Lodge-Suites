@@ -900,6 +900,10 @@ const INITIAL_CALENDAR_OVERRIDES = {
 const FROM_NAME  = "The Lodge Suites";
 const FROM_EMAIL = "frontoffice@thelodgesuites.com";
 const FOM_EMAIL  = "fom@thelodgesuites.com";
+// Standard internal copy-list BCC'd on every booking-lifecycle email so the
+// front desk + GM always have a record of guest correspondence. Comma-
+// separated; the server normalises + validates this before sending.
+const BOOKING_BCC = "gm@thelodgesuites.com, frontoffice@thelodgesuites.com, fom@thelodgesuites.com";
 
 const SAMPLE_EMAIL_TEMPLATES = [
   // ---------- Booking ---------------------------------------------------------
@@ -932,7 +936,7 @@ Front Office Team
 {{hotelName}}
 {{hotelAddress}}
 {{hotelPhone}} · {{hotelEmail}}`,
-    fromName: FROM_NAME, fromEmail: FROM_EMAIL, replyTo: FROM_EMAIL, cc: "", bcc: FOM_EMAIL,
+    fromName: FROM_NAME, fromEmail: FROM_EMAIL, replyTo: FROM_EMAIL, cc: "", bcc: BOOKING_BCC,
     active: true, builtIn: true,
   },
   {
@@ -957,7 +961,7 @@ If you'd like to share an arrival flight number, we'll watch for delays and hold
 Kind regards,
 Front Office Team
 {{hotelName}}`,
-    fromName: FROM_NAME, fromEmail: FROM_EMAIL, replyTo: FROM_EMAIL, cc: "", bcc: "",
+    fromName: FROM_NAME, fromEmail: FROM_EMAIL, replyTo: FROM_EMAIL, cc: "", bcc: BOOKING_BCC,
     active: true, builtIn: true,
   },
   {
@@ -982,7 +986,7 @@ We look forward to seeing you shortly.
 Kind regards,
 Front Office Team
 {{hotelName}}`,
-    fromName: FROM_NAME, fromEmail: FROM_EMAIL, replyTo: FROM_EMAIL, cc: "", bcc: "",
+    fromName: FROM_NAME, fromEmail: FROM_EMAIL, replyTo: FROM_EMAIL, cc: "", bcc: BOOKING_BCC,
     active: true, builtIn: true,
   },
   {
@@ -1009,7 +1013,7 @@ If you didn't request this change, please contact us immediately at {{hotelPhone
 Kind regards,
 Front Office Team
 {{hotelName}}`,
-    fromName: FROM_NAME, fromEmail: FROM_EMAIL, replyTo: FROM_EMAIL, cc: "", bcc: FOM_EMAIL,
+    fromName: FROM_NAME, fromEmail: FROM_EMAIL, replyTo: FROM_EMAIL, cc: "", bcc: BOOKING_BCC,
     active: true, builtIn: true,
   },
   {
@@ -1037,7 +1041,7 @@ We hope to host you another time.
 Kind regards,
 Front Office Team
 {{hotelName}}`,
-    fromName: FROM_NAME, fromEmail: FROM_EMAIL, replyTo: FROM_EMAIL, cc: "", bcc: FOM_EMAIL,
+    fromName: FROM_NAME, fromEmail: FROM_EMAIL, replyTo: FROM_EMAIL, cc: "", bcc: BOOKING_BCC,
     active: true, builtIn: true,
   },
   {
@@ -1059,7 +1063,7 @@ We hope to welcome you back soon.
 Kind regards,
 Front Office Team
 {{hotelName}}`,
-    fromName: FROM_NAME, fromEmail: FROM_EMAIL, replyTo: FROM_EMAIL, cc: "", bcc: "",
+    fromName: FROM_NAME, fromEmail: FROM_EMAIL, replyTo: FROM_EMAIL, cc: "", bcc: BOOKING_BCC,
     active: true, builtIn: true,
   },
   {
@@ -1077,7 +1081,7 @@ If you've been delayed and still wish to arrive, please contact us immediately a
 Kind regards,
 Front Office Team
 {{hotelName}}`,
-    fromName: FROM_NAME, fromEmail: FROM_EMAIL, replyTo: FROM_EMAIL, cc: "", bcc: FOM_EMAIL,
+    fromName: FROM_NAME, fromEmail: FROM_EMAIL, replyTo: FROM_EMAIL, cc: "", bcc: BOOKING_BCC,
     active: true, builtIn: true,
   },
 
