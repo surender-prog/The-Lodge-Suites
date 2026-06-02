@@ -5747,6 +5747,22 @@ export function DataProvider({ children }) {
   // since they're seeded from a constant — that's the safety net.
   const removeTaxPattern = useCallback((id) => setTaxPatterns(ps => ps.filter(p => p.id !== id)), []);
 
+  // Resolve the cc/bcc copy-list configured on the active email template
+  // for a given trigger event (e.g. "booking.confirmed"). This is how the
+  // internal mailboxes BCC'd on a template — front office / GM — actually
+  // get copied on the real auto-send. Returns {} when no active template
+  // matches or it carries no cc/bcc, so callers can spread it unconditionally.
+  const templateCopyFor = useCallback((event) => {
+    const tpl = (emailTemplates || []).find(
+      (t) => t && t.active !== false && t.trigger && t.trigger.event === event
+    );
+    if (!tpl) return {};
+    const out = {};
+    if (tpl.cc && String(tpl.cc).trim())   out.cc  = tpl.cc;
+    if (tpl.bcc && String(tpl.bcc).trim()) out.bcc = tpl.bcc;
+    return out;
+  }, [emailTemplates]);
+
   // Add a booking record (used by "Book on behalf" flows + the public
   // walk-up booking modal).
   const addBooking = useCallback((booking) => {
@@ -5774,6 +5790,11 @@ export function DataProvider({ children }) {
     // in the rest. A slow/unconfigured mailer never blocks the booking.
     if (saved.email) {
       const room = rooms.find((r) => r.id === saved.roomId);
+      const status = saved.status || "confirmed";
+      // An on-request booking maps to the "booking.created" template; a
+      // confirmed one to "booking.confirmed". Carry that template's internal
+      // copy-list (cc/bcc — e.g. front office) onto the real send.
+      const event = (status === "on-request" || status === "onrequest") ? "booking.created" : "booking.confirmed";
       sendTransactionalEmail({
         kind: "booking-new",
         to: saved.email,
@@ -5784,12 +5805,13 @@ export function DataProvider({ children }) {
         checkOut: saved.checkOut,
         nights: saved.nights,
         total: saved.total,
-        status: saved.status || "confirmed",
+        status,
         hotelConfirmationNo: saved.hotelConfirmationNo || undefined,
+        ...templateCopyFor(event),
       });
     }
     return saved;
-  }, [agreements, agencies, members, appendNotifications, rooms]);
+  }, [agreements, agencies, members, appendNotifications, rooms, templateCopyFor]);
 
   // Booking update — diff status before/after to emit a status-change
   // notification when the booking transitions (confirmed → in-house, etc.).
@@ -5811,6 +5833,16 @@ export function DataProvider({ children }) {
       // checkout) server-side.
       if (next.email) {
         const room = rooms.find((r) => r.id === next.roomId);
+        // Map the new status → the matching template event, so the internal
+        // copy-list (cc/bcc) configured for that lifecycle email is carried
+        // onto the real send.
+        const EVENT_BY_STATUS = {
+          confirmed: "booking.confirmed",
+          "in-house": "booking.checkin", inhouse: "booking.checkin",
+          "checked-out": "booking.checkedout", checkout: "booking.checkedout",
+          cancelled: "booking.cancelled", canceled: "booking.cancelled",
+        };
+        const event = EVENT_BY_STATUS[String(next.status || "").toLowerCase()];
         sendTransactionalEmail({
           kind: "booking-status",
           to: next.email,
@@ -5821,10 +5853,11 @@ export function DataProvider({ children }) {
           checkOut: next.checkOut,
           toStatus: next.status,
           hotelConfirmationNo: next.hotelConfirmationNo || undefined,
+          ...(event ? templateCopyFor(event) : {}),
         });
       }
     }
-  }, [agreements, agencies, members, appendNotifications, rooms]);
+  }, [agreements, agencies, members, appendNotifications, rooms, templateCopyFor]);
   const removeBooking = useCallback((id) => setBookings(bs => bs.filter(b => b.id !== id)), []);
 
   // Invoice CRUD. ID format keeps the YYYY-#### convention used by sample data.
@@ -5994,7 +6027,7 @@ export function DataProvider({ children }) {
     setAgreements, upsertAgreement, removeAgreement,
     setAgencies, upsertAgency, removeAgency,
     expiringContracts,
-    setEmailTemplates, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate,
+    setEmailTemplates, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, templateCopyFor,
     setRfps, addRfp, upsertRfp, removeRfp, advanceRfp,
     setChannels, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent,
     setAdminUsers, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword,
@@ -6027,7 +6060,7 @@ export function DataProvider({ children }) {
     setCalendar, setCalendarCell,
     setLoyalty,
     addBooking, updateBooking, removeBooking,
-  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, addRoom, removeRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, releaseGiftCardForBooking, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, eventSupplements, upsertEventSupplement, removeEventSupplement, resetEventSupplements, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
+  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, addRoom, removeRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, releaseGiftCardForBooking, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, templateCopyFor, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, eventSupplements, upsertEventSupplement, removeEventSupplement, resetEventSupplements, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
 
   return <DataStoreContext.Provider value={value}>{children}</DataStoreContext.Provider>;
 }

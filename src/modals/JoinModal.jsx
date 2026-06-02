@@ -9,7 +9,7 @@ import { notifyMemberJoined } from "../utils/notifications.js";
 
 export const JoinModal = ({ open, onClose }) => {
   const t = useT();
-  const { addMember, appendNotifications } = useData();
+  const { addMember, appendNotifications, templateCopyFor } = useData();
   const [data, setData] = useState({ name: "", email: "", phone: "", country: "Bahrain" });
   const [done, setDone] = useState(false);
   const [memberId, setMemberId] = useState(null);
@@ -42,6 +42,9 @@ export const JoinModal = ({ open, onClose }) => {
     // or unconfigured mail server must never block the success panel.
     const recipientEmail = (saved?.email || data.email || "").trim();
     if (recipientEmail) {
+      // Carry the enrolment template's internal copy-list (cc/bcc) so staff
+      // mailboxes configured on it are copied on the welcome email too.
+      const copy = templateCopyFor ? templateCopyFor("loyalty.enrolled") : {};
       try {
         fetch("/api/send-email", {
           method: "POST",
@@ -51,6 +54,7 @@ export const JoinModal = ({ open, onClose }) => {
             to: recipientEmail,
             name: saved?.name || data.name,
             memberId: saved?.id || null,
+            ...copy,
           }),
         }).catch(() => {});
       } catch (_) {}

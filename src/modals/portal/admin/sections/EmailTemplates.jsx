@@ -522,7 +522,7 @@ async function sendTestEmail(tpl) {
     return;
   }
   pushToast({ message: `Sending test to ${addr}…` });
-  const res = await sendTransactionalEmail({ kind: "custom", to: addr, subject: `[TEST] ${subject}`, text: body });
+  const res = await sendTransactionalEmail({ kind: "custom", to: addr, subject: `[TEST] ${subject}`, text: body, cc: tpl.cc || undefined, bcc: tpl.bcc || undefined });
   if (res?.ok) {
     pushToast({ message: `Test email sent to ${addr}` });
   } else if (res?.skipped) {
@@ -697,8 +697,8 @@ function TemplateEditor({ draft: initial, onClose, onSave, onRemove }) {
               <FormGroup label="From name"><TextField value={draft.fromName} onChange={(v) => set({ fromName: v })} /></FormGroup>
               <FormGroup label="From email"><TextField type="email" value={draft.fromEmail} onChange={(v) => set({ fromEmail: v })} /></FormGroup>
               <FormGroup label="Reply-to"><TextField type="email" value={draft.replyTo} onChange={(v) => set({ replyTo: v })} /></FormGroup>
-              <FormGroup label="CC"><TextField type="email" value={draft.cc} onChange={(v) => set({ cc: v })} placeholder="comma,separated" /></FormGroup>
-              <FormGroup label="BCC" className="sm:col-span-2"><TextField type="email" value={draft.bcc} onChange={(v) => set({ bcc: v })} placeholder="comma,separated" /></FormGroup>
+              <FormGroup label="CC"><TextField value={draft.cc} onChange={(v) => set({ cc: v })} placeholder="comma,separated" /></FormGroup>
+              <FormGroup label="BCC" className="sm:col-span-2"><TextField value={draft.bcc} onChange={(v) => set({ bcc: v })} placeholder="comma,separated" /></FormGroup>
             </div>
           </Card>
 

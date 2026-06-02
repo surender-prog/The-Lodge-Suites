@@ -232,6 +232,18 @@ export default async function handler(req, res) {
     return res.status(400).json({ ok: false, error: "Nothing to send (empty subject/body)." });
   }
 
+  // Normalise a cc/bcc field — accepts a string ("a@x.com, b@y.com"), an
+  // array, comma- OR semicolon-separated — into an array of valid addresses.
+  // Internal copy recipients (e.g. the front-office / GM mailbox BCC'd on
+  // every booking confirmation) flow through here.
+  const toAddrList = (v) => {
+    if (!v) return [];
+    const parts = Array.isArray(v) ? v : String(v).split(/[,;]+/);
+    return parts.map((s) => String(s).trim()).filter((s) => /.+@.+\..+/.test(s));
+  };
+  const ccList  = toAddrList(body.cc);
+  const bccList = toAddrList(body.bcc);
+
   let transporter;
   try {
     transporter = nodemailer.createTransport(transportOptionsFor({
@@ -245,6 +257,8 @@ export default async function handler(req, res) {
     const info = await transporter.sendMail({
       from:    buildFromHeader({ fromName: config.fromName, fromEmail, username }),
       to:      String(to),
+      cc:      ccList.length  ? ccList  : undefined,
+      bcc:     bccList.length ? bccList : undefined,
       replyTo: config.replyTo ? String(config.replyTo) : undefined,
       subject: built.subject,
       text:    built.text,
