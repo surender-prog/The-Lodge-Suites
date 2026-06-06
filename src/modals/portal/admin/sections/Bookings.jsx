@@ -913,39 +913,51 @@ function RowActions({ booking, onEdit }) {
         </div>,
         document.body
       )}
-      {docPreview && (
-        <BookingDocPreviewModal
-          booking={booking}
-          kind={docPreview}
-          tax={tax}
-          rooms={rooms}
-          extras={extras}
-          onClose={() => setDocPreview(null)}
-        />
-      )}
-      {confirmDelete && (
-        <DeleteBookingConfirmModal
-          booking={booking}
-          onCancel={() => setConfirmDelete(false)}
-          onConfirm={deletePermanently}
-        />
-      )}
-      {whatsAppPreview && (
-        <WhatsAppMessagePreview
-          booking={booking}
-          message={buildWhatsAppMessage()}
-          phone={customerPhone}
-          waDigits={waDigits}
-          onClose={() => setWhatsAppPreview(false)}
-        />
-      )}
-      {statusChange && (
-        <StatusChangeDialog
-          booking={booking}
-          nextStatus={statusChange}
-          onCancel={() => setStatusChange(null)}
-          onConfirm={(remark) => applyStatusChange(statusChange, remark)}
-        />
+      {/* Modals are portalled to <body>. RowActions lives inside a table row
+          that uses opacity:0.6 for void (cancelled/rejected/sold-out)
+          bookings, and a CSS opacity<1 ancestor makes its position:fixed
+          descendants inherit that opacity + get trapped in its stacking
+          context — which rendered these dialogs washed-out with rows bleeding
+          through. Portalling to body escapes that so every dialog paints
+          fully opaque above the page. */}
+      {createPortal(
+        <>
+          {docPreview && (
+            <BookingDocPreviewModal
+              booking={booking}
+              kind={docPreview}
+              tax={tax}
+              rooms={rooms}
+              extras={extras}
+              onClose={() => setDocPreview(null)}
+            />
+          )}
+          {confirmDelete && (
+            <DeleteBookingConfirmModal
+              booking={booking}
+              onCancel={() => setConfirmDelete(false)}
+              onConfirm={deletePermanently}
+            />
+          )}
+          {whatsAppPreview && (
+            <WhatsAppMessagePreview
+              booking={booking}
+              message={buildWhatsAppMessage()}
+              phone={customerPhone}
+              waDigits={waDigits}
+              onClose={() => setWhatsAppPreview(false)}
+            />
+          )}
+          {statusChange && (
+            <StatusChangeDialog
+              booking={booking}
+              nextStatus={statusChange}
+              onCancel={() => setStatusChange(null)}
+              onConfirm={(remark) => applyStatusChange(statusChange, remark)}
+            />
+          )}
+        </>,
+        document.body
       )}
     </div>
   );
