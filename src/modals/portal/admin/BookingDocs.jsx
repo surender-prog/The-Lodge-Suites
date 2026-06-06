@@ -599,6 +599,115 @@ export function printBookingDoc(booking, kind, opts = {}) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Credit-card pre-authorisation / booking-guarantee form. Hotels manually
+// charge a card to guarantee a reservation, so the booker fills in their card
+// details + authorised amount and signs to consent. We deliberately DO NOT
+// pre-fill any card number here (the app never stores the full PAN) — this is
+// a blank, printable consent form the guest completes by hand and the front
+// desk scans back in. House A4 styling matches the other booking documents.
+// ---------------------------------------------------------------------------
+export function buildPreAuthFormHtml(booking, { hotel, rooms } = {}) {
+  const HOTEL = hotel || FALLBACK_HOTEL;
+  const roomRow = (rooms || []).find((r) => r.id === booking.roomId);
+  const roomLabel = roomRow ? resolveRoomLabel(roomRow) : (booking.roomId || "Suite");
+  const line = (label, value) => `<tr><td class="lbl">${escapeHtml(label)}</td><td class="val">${value == null || value === "" ? "&nbsp;" : escapeHtml(String(value))}</td></tr>`;
+  const blank = (label) => `<tr><td class="lbl">${escapeHtml(label)}</td><td class="val fill">&nbsp;</td></tr>`;
+
+  return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8" />
+<title>Credit Card Pre-Authorisation · ${escapeHtml(booking.id || "")}</title>
+<style>
+  @page { size: A4; margin: 16mm; }
+  * { box-sizing: border-box; }
+  body { font-family: 'Manrope', system-ui, -apple-system, sans-serif; color: #15161A; background: #F5F1E8; margin: 0; padding: 26px; line-height: 1.5; font-size: 12.5px; }
+  .doc { background: #FBF8F1; padding: 40px 50px; max-width: 860px; margin: 0 auto; box-shadow: 0 4px 22px rgba(0,0,0,0.08); }
+  h1 { font-family: 'Cormorant Garamond', Georgia, serif; font-style: italic; font-weight: 600; font-size: 2.1rem; margin: 0; line-height: 1.05; }
+  h2 { font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 600; font-size: 1.55rem; margin: 0; }
+  .eyebrow { font-size: 0.64rem; letter-spacing: 0.28em; text-transform: uppercase; color: #8A7A4F; font-weight: 700; }
+  .muted { color: #555; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 16px; border-bottom: 2px solid #15161A; }
+  h3 { font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 600; font-size: 1.25rem; margin: 24px 0 8px; }
+  table.kv { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  table.kv td { padding: 7px 10px; border-bottom: 1px solid #d8d2c4; vertical-align: bottom; }
+  td.lbl { width: 38%; color: #6B7280; font-size: 0.62rem; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; }
+  td.val { color: #15161A; font-weight: 600; }
+  td.val.fill { border-bottom: 1px solid #15161A; min-height: 18px; }
+  .consent { margin-top: 22px; padding: 16px 18px; background: rgba(201,169,97,0.07); border: 1px solid rgba(201,169,97,0.4); border-inline-start: 4px solid #C9A961; font-size: 0.8rem; line-height: 1.6; color: #333; }
+  .sig { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 40px; }
+  .sigline { border-top: 1.5px solid #15161A; padding-top: 6px; font-size: 0.66rem; letter-spacing: 0.16em; text-transform: uppercase; color: #6B7280; font-weight: 700; }
+  .footer { margin-top: 28px; padding-top: 14px; border-top: 1px solid #C9A961; font-size: 0.68rem; color: #666; text-align: center; letter-spacing: 0.04em; }
+  .note { font-size: 0.66rem; color: #8A7A4F; margin-top: 6px; }
+  @media print { body { background: #FBF8F1; padding: 0; } .doc { box-shadow: none; padding: 0; } }
+</style>
+</head><body>
+<div class="doc">
+  <div class="header">
+    <div>
+      <h1>${escapeHtml(HOTEL.name)}</h1>
+      <div class="eyebrow" style="margin-top:4px;">${escapeHtml(HOTEL.address)} · ${escapeHtml(HOTEL.area)}</div>
+      <div class="muted" style="font-size:0.72rem; margin-top:4px;">${escapeHtml([HOTEL.country, legalLine(HOTEL)].filter(Boolean).join(" · "))}</div>
+    </div>
+    <div style="text-align:right;">
+      <h2>Credit Card<br/>Pre-Authorisation</h2>
+      <div class="muted" style="margin-top:4px; font-size:0.72rem;">Booking ${escapeHtml(booking.id || "—")} · ${escapeHtml(todayLong())}</div>
+    </div>
+  </div>
+
+  <h3>Reservation</h3>
+  <table class="kv">
+    ${line("Guest name", booking.guest)}
+    ${line("Booking reference", booking.id)}
+    ${line("Suite", roomLabel)}
+    ${line("Check-in", fmtDate(booking.checkIn))}
+    ${line("Check-out", fmtDate(booking.checkOut))}
+    ${line("Nights", booking.nights || "")}
+    ${line("Authorised amount", booking.total != null ? fmtBhd(booking.total) : "")}
+  </table>
+
+  <h3>Cardholder &amp; card details <span class="muted" style="font-size:0.7rem; font-weight:400;">(to be completed by the booker)</span></h3>
+  <table class="kv">
+    ${blank("Cardholder name (as on card)")}
+    ${blank("Card type (Visa / Mastercard / Amex)")}
+    ${blank("Card number")}
+    ${blank("Expiry date (MM/YY)")}
+    ${blank("CVV")}
+    ${blank("Billing address")}
+    ${blank("Contact number")}
+  </table>
+
+  <div class="consent">
+    <strong>Authorisation.</strong> I, the cardholder named above, authorise <strong>${escapeHtml(HOTEL.legal || HOTEL.name)}</strong>
+    to charge my credit card for the reservation referenced above, including room charges, applicable taxes and service
+    charges, and any incidental charges, no-show, or late-cancellation fees in accordance with the property&rsquo;s booking
+    policy. I confirm the card details provided are correct and that I am the authorised holder of this card.
+    <div class="note">Please attach a copy of the card (front, with the middle digits masked) and a copy of the cardholder&rsquo;s passport / photo ID.</div>
+  </div>
+
+  <div class="sig">
+    <div class="sigline">Cardholder signature</div>
+    <div class="sigline">Date</div>
+  </div>
+
+  <div class="footer">
+    ${escapeHtml([HOTEL.legal, [HOTEL.address, HOTEL.area].filter(Boolean).join(", "), HOTEL.country, HOTEL.phone, HOTEL.email].filter(Boolean).join(" · "))}
+  </div>
+</div>
+</body></html>`;
+}
+
+export function printPreAuthForm(booking, opts = {}) {
+  const html = buildPreAuthFormHtml(booking, opts);
+  const win = window.open("", "_blank", "width=900,height=900");
+  if (!win) return false;
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  setTimeout(() => { try { win.focus(); win.print(); } catch (_) {} }, 350);
+  return true;
+}
+
 export function emailBookingDoc(booking, kind, hotel) {
   const HOTEL = hotel || FALLBACK_HOTEL;
   const isConfirm = kind === "confirmation";

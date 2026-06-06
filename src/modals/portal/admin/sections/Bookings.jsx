@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Ban, Briefcase, Building2, Calculator, CalendarCheck, Check, CheckCircle2, ChevronDown, Coins, Copy, CreditCard, Edit2, Eye, FileText, Gift, Globe, Hotel as HotelIcon, Lock, LogIn, LogOut, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Printer, Receipt, RotateCcw, Save, Search, ShieldCheck, Sparkles, Trash2, User as UserIcon, Users as UsersIcon } from "lucide-react";
+import { Ban, Briefcase, Building2, Calculator, CalendarCheck, Check, CheckCircle2, ChevronDown, Coins, Copy, CreditCard, Download, Edit2, Eye, FileText, FileCheck, Gift, Globe, Hotel as HotelIcon, Lock, LogIn, LogOut, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Printer, Receipt, RotateCcw, Save, Search, ShieldCheck, Sparkles, Trash2, Upload, User as UserIcon, Users as UsersIcon, X } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween } from "../../../../utils/date.js";
 import { useData, applyTaxes, roomFitsParty, canViewCardOnFile, maskCardNumber, cardOnFileExpired, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, describePackageConditions, packagePriceSuffix, getPackageRoomPrice, formatCurrency, MEAL_PLANS, mealPlanLabel, roomTypeAvailable } from "../../../../data/store.jsx";
-import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
-import { BookingDocPreviewModal, emailBookingDoc, printBookingDoc } from "../BookingDocs.jsx";
+import { Card, Drawer, FileUpload, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
+import { BookingDocPreviewModal, emailBookingDoc, printBookingDoc, printPreAuthForm } from "../BookingDocs.jsx";
 import { roomLabel } from "../../../../lib/rooms.js";
 
 const STATUS_LABEL = {
@@ -2354,6 +2354,20 @@ function BookingEditor({ booking, onClose }) {
               addPayment={addPayment}
             />
 
+            {/* Guarantee documents — passport copy, card copy, signed
+                pre-authorisation. Manager-gated like the card vault. */}
+            <GuaranteeDocsPanel
+              p={p}
+              booking={booking}
+              draft={draft}
+              update={update}
+              staffSession={staffSession}
+              appendAuditLog={appendAuditLog}
+              updateBooking={updateBooking}
+              rooms={rooms}
+              hotelInfo={hotelInfo}
+            />
+
             {/* Quick contact */}
             <SidebarCard title="Reach the guest" p={p}>
               {draft.email && (
@@ -3248,6 +3262,213 @@ function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLo
           Only the last 4 digits are stored — never the full card number. Records auto-purge {CARD_VAULT_RETENTION_DAYS} days after capture.
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// GuaranteeDocsPanel — booking-guarantee paperwork the front desk collects to
+// manually charge a card and secure the reservation. Three mandatory items:
+//   1. Passport / photo-ID copy of the booker
+//   2. Credit-card copy (front, middle digits masked)
+//   3. Signed credit-card pre-authorisation form
+// Manager-gated identically to the card vault (canViewCardOnFile). Each slot
+// supports upload-from-desktop (or scan) with a thumbnail, a Received/Verified
+// status with who+when, and view / replace / remove — all audit-logged. The
+// pre-auth form can be generated as a printable A4 for the booker to sign.
+// Files are stored on the booking under `guaranteeDocs` (base64 data URL, in
+// keeping with the in-memory store; a production media pipeline can swap the
+// data URL for a CDN URL with no shape change).
+// ---------------------------------------------------------------------------
+const GUARANTEE_DOC_SLOTS = [
+  { key: "passport", label: "Passport / ID copy", hint: "Booker's passport or photo ID.", icon: UserIcon },
+  { key: "cardCopy", label: "Credit-card copy",   hint: "Front of card · mask the middle digits.", icon: CreditCard },
+  { key: "preAuth",  label: "Signed pre-authorisation", hint: "Pre-auth form filled & signed by the booker.", icon: FileCheck },
+];
+
+function GuaranteeDocsPanel({ p, booking, draft, update, staffSession, appendAuditLog, updateBooking, rooms, hotelInfo }) {
+  const role = (staffSession?.role || "").toLowerCase();
+  const allowed = canViewCardOnFile(staffSession);
+  const docs = draft.guaranteeDocs || {};
+  const completeCount = GUARANTEE_DOC_SLOTS.filter((s) => docs[s.key]?.file).length;
+  const verifiedCount = GUARANTEE_DOC_SLOTS.filter((s) => docs[s.key]?.verified).length;
+
+  const writeDocs = (nextDocs, auditNote) => {
+    update({ guaranteeDocs: nextDocs });
+    try { updateBooking(booking.id, { guaranteeDocs: nextDocs }); } catch (_) {}
+    if (auditNote) {
+      try {
+        appendAuditLog?.({
+          ts: new Date().toISOString(),
+          actor: staffSession?.id || "anon",
+          actorName: staffSession?.name || "Staff",
+          action: "guarantee-docs.update",
+          target: { kind: "booking", id: booking.id },
+          note: auditNote,
+        });
+      } catch (_) {}
+    }
+  };
+
+  const onUpload = (slot, file) => {
+    if (!allowed || !file?.url) return;
+    const next = {
+      ...docs,
+      [slot.key]: {
+        file: file.url,
+        name: file.name || "upload",
+        type: file.type || "",
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: staffSession?.name || "Staff",
+        verified: false,
+      },
+    };
+    writeDocs(next, `Uploaded ${slot.label} for booking ${booking.id}`);
+    pushToast({ message: `${slot.label} uploaded` });
+  };
+
+  const toggleVerified = (slot) => {
+    if (!allowed) return;
+    const cur = docs[slot.key];
+    if (!cur?.file) return;
+    const nowVerified = !cur.verified;
+    const next = {
+      ...docs,
+      [slot.key]: {
+        ...cur,
+        verified: nowVerified,
+        verifiedAt: nowVerified ? new Date().toISOString() : null,
+        verifiedBy: nowVerified ? (staffSession?.name || "Staff") : null,
+      },
+    };
+    writeDocs(next, `${nowVerified ? "Verified" : "Un-verified"} ${slot.label} for booking ${booking.id}`);
+  };
+
+  const removeDoc = (slot) => {
+    if (!allowed) return;
+    if (!confirm(`Remove the ${slot.label.toLowerCase()}? This cannot be undone.`)) return;
+    const next = { ...docs };
+    delete next[slot.key];
+    writeDocs(next, `Removed ${slot.label} for booking ${booking.id}`);
+    pushToast({ message: `${slot.label} removed` });
+  };
+
+  const viewDoc = (slot) => {
+    const f = docs[slot.key]?.file;
+    if (!f) return;
+    const w = window.open("", "_blank");
+    if (w) {
+      w.document.write(`<title>${slot.label} · ${booking.id}</title><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh;"><img src="${f}" style="max-width:100%;max-height:100vh;object-fit:contain;"/></body>`);
+      w.document.close();
+    }
+  };
+
+  const downloadPreAuth = () => {
+    try { printPreAuthForm(booking, { rooms, hotel: hotelInfo }); }
+    catch (_) { pushToast({ message: "Couldn't open the pre-auth form", kind: "warn" }); }
+  };
+
+  return (
+    <div style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}` }}>
+      <div className="px-4 py-3 flex items-center justify-between gap-2" style={{ borderBottom: `1px solid ${p.border}` }}>
+        <div className="flex items-center gap-2">
+          <ShieldCheck size={12} style={{ color: p.accent }} />
+          <span style={{ color: p.accent, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.28em", textTransform: "uppercase", fontWeight: 700 }}>
+            Guarantee documents
+          </span>
+        </div>
+        <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.55rem", letterSpacing: "0.2em", textTransform: "uppercase", fontWeight: 700, padding: "1px 6px", border: `1px solid ${p.border}` }}>
+          <Lock size={9} style={{ display: "inline", marginInlineEnd: 3, verticalAlign: -1 }} />
+          Manager only
+        </span>
+      </div>
+
+      {!allowed ? (
+        <div className="px-4 py-3">
+          <div className="p-2.5 flex items-start gap-2" style={{ backgroundColor: p.bgPanelAlt, border: `1px dashed ${p.border}`, color: p.textMuted, fontSize: "0.74rem", lineHeight: 1.5 }}>
+            <ShieldCheck size={12} style={{ marginTop: 2, flexShrink: 0, color: p.accent }} />
+            <span>
+              Your role (<strong style={{ color: p.textPrimary }}>{role || "—"}</strong>) doesn't include the
+              {" "}<strong style={{ color: p.textPrimary }}>View card on file</strong> permission required to manage guarantee documents.
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div className="px-4 py-3 space-y-3" style={{ fontFamily: "'Manrope', sans-serif" }}>
+          {/* Progress + pre-auth form download */}
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <span style={{ color: completeCount === GUARANTEE_DOC_SLOTS.length ? p.success : p.textMuted, fontSize: "0.74rem", fontWeight: 600 }}>
+              {completeCount}/{GUARANTEE_DOC_SLOTS.length} collected · {verifiedCount} verified
+            </span>
+            <SidebarBtn p={p} icon={<Download size={12} />} label="Pre-auth form (print)" onClick={downloadPreAuth} />
+          </div>
+
+          {GUARANTEE_DOC_SLOTS.map((slot) => {
+            const d = docs[slot.key];
+            const Icon = slot.icon;
+            return (
+              <div key={slot.key} style={{ border: `1px solid ${d?.verified ? `${p.success}55` : p.border}`, backgroundColor: p.bgPanelAlt, padding: "0.7rem 0.8rem" }}>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Icon size={13} style={{ color: p.accent, flexShrink: 0 }} />
+                    <span style={{ color: p.textPrimary, fontSize: "0.78rem", fontWeight: 700 }}>{slot.label}</span>
+                  </div>
+                  {d?.file ? (
+                    <span style={{ color: d.verified ? p.success : p.warn, fontSize: "0.55rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, padding: "1px 6px", border: `1px solid ${d.verified ? p.success : p.warn}` }}>
+                      {d.verified ? "Verified" : "Received"}
+                    </span>
+                  ) : (
+                    <span style={{ color: p.textMuted, fontSize: "0.55rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, padding: "1px 6px", border: `1px solid ${p.border}` }}>
+                      Missing
+                    </span>
+                  )}
+                </div>
+
+                {!d?.file ? (
+                  <>
+                    <FileUpload
+                      variant="cover"
+                      accept="image/*,application/pdf"
+                      value={null}
+                      onChange={(file) => onUpload(slot, file)}
+                      hint={slot.hint}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-3">
+                      {/* Thumbnail (image) or doc chip (pdf) */}
+                      {(d.type || "").startsWith("image/") || (typeof d.file === "string" && d.file.startsWith("data:image")) ? (
+                        <button onClick={() => viewDoc(slot)} title="View full size" style={{ padding: 0, border: `1px solid ${p.border}`, cursor: "pointer", background: "none", flexShrink: 0 }}>
+                          <img src={d.file} alt={slot.label} style={{ width: 56, height: 56, objectFit: "cover", display: "block" }} />
+                        </button>
+                      ) : (
+                        <button onClick={() => viewDoc(slot)} title="Open document" style={{ width: 56, height: 56, border: `1px solid ${p.border}`, background: p.bgPanel, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                          <FileText size={18} style={{ color: p.accent }} />
+                        </button>
+                      )}
+                      <div className="min-w-0" style={{ fontSize: "0.68rem", color: p.textMuted, lineHeight: 1.5 }}>
+                        <div style={{ color: p.textPrimary, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 150 }}>{d.name}</div>
+                        <div>{fmtDate(d.uploadedAt)} · {d.uploadedBy}</div>
+                        {d.verified && <div style={{ color: p.success }}>Verified {fmtDate(d.verifiedAt)} · {d.verifiedBy}</div>}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      <SidebarBtn p={p} icon={<Eye size={12} />} label="View" onClick={() => viewDoc(slot)} />
+                      <SidebarBtn p={p} icon={<Check size={12} />} label={d.verified ? "Un-verify" : "Mark verified"} onClick={() => toggleVerified(slot)} />
+                      <SidebarBtn p={p} icon={<Trash2 size={12} />} label="Remove" onClick={() => removeDoc(slot)} danger />
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })}
+
+          <div style={{ color: p.textMuted, fontSize: "0.66rem", lineHeight: 1.5 }}>
+            Sensitive documents — keep handling to authorised staff. Mask the middle card digits on any card copy. Retain only as long as your booking-guarantee policy requires.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
