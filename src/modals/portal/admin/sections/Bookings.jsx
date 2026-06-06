@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Ban, Briefcase, Building2, Calculator, CalendarCheck, Check, CheckCircle2, ChevronDown, Coins, Copy, CreditCard, Download, Edit2, Eye, FileText, FileCheck, Gift, Globe, Hotel as HotelIcon, Lock, LogIn, LogOut, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Printer, Receipt, RotateCcw, Save, Search, ShieldCheck, Sparkles, Trash2, Upload, User as UserIcon, Users as UsersIcon, X } from "lucide-react";
+import { Ban, Briefcase, Building2, Calculator, CalendarCheck, Check, CheckCircle2, ChevronDown, Coins, Copy, CreditCard, Download, Edit2, Eye, EyeOff, FileText, FileCheck, Gift, Globe, Hotel as HotelIcon, Lock, LogIn, LogOut, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Printer, Receipt, RotateCcw, Save, Search, ShieldCheck, Sparkles, Trash2, Upload, User as UserIcon, Users as UsersIcon, X } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween } from "../../../../utils/date.js";
-import { useData, applyTaxes, roomFitsParty, canViewCardOnFile, maskCardNumber, cardOnFileExpired, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, describePackageConditions, packagePriceSuffix, getPackageRoomPrice, formatCurrency, MEAL_PLANS, mealPlanLabel, roomTypeAvailable } from "../../../../data/store.jsx";
+import { useData, applyTaxes, roomFitsParty, canViewCardOnFile, maskCardNumber, revealCardNumber, hasFullPan, cardOnFileExpired, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, describePackageConditions, packagePriceSuffix, getPackageRoomPrice, formatCurrency, MEAL_PLANS, mealPlanLabel, roomTypeAvailable } from "../../../../data/store.jsx";
 import { Card, Drawer, FileUpload, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 import { BookingDocPreviewModal, emailBookingDoc, printBookingDoc, printPreAuthForm } from "../BookingDocs.jsx";
 import { roomLabel } from "../../../../lib/rooms.js";
@@ -2958,6 +2958,61 @@ function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLo
   const [txId, setTxId] = React.useState("");
   const [chargeNotes, setChargeNotes] = React.useState("");
 
+  // Full-number reveal. Masked by default; a manager can reveal the full PAN
+  // to key a manual charge into the terminal. Every reveal is audit-logged
+  // and the number auto-re-hides after 30s so it isn't left on screen.
+  const [revealed, setRevealed] = React.useState(false);
+  const revealTimer = React.useRef(null);
+  const canReveal = allowed && card && hasFullPan(card);
+  const fullNumber = revealed && canReveal ? revealCardNumber(card) : "";
+  React.useEffect(() => () => { if (revealTimer.current) clearTimeout(revealTimer.current); }, []);
+  // Re-hide whenever the card changes / panel re-renders for a different booking.
+  React.useEffect(() => { setRevealed(false); }, [booking.id]);
+
+  const toggleReveal = () => {
+    if (!canReveal) return;
+    if (revealed) {
+      setRevealed(false);
+      if (revealTimer.current) clearTimeout(revealTimer.current);
+      return;
+    }
+    setRevealed(true);
+    if (revealTimer.current) clearTimeout(revealTimer.current);
+    revealTimer.current = setTimeout(() => setRevealed(false), 30000);
+    try {
+      appendAuditLog?.({
+        ts: new Date().toISOString(),
+        actor: staffSession?.id || "anon",
+        actorName: staffSession?.name || "Staff",
+        action: "card-vault.reveal",
+        target: { kind: "booking", id: booking.id },
+        note: `Revealed full card number (•••• ${card.last4 || "????"}) for booking ${booking.id}`,
+      });
+    } catch (_) {}
+  };
+
+  const copyFull = () => {
+    if (!canReveal) return;
+    const digits = revealCardNumber(card).replace(/\s/g, "");
+    if (!digits) return;
+    try {
+      navigator.clipboard?.writeText(digits);
+      pushToast({ message: "Full card number copied" });
+      try {
+        appendAuditLog?.({
+          ts: new Date().toISOString(),
+          actor: staffSession?.id || "anon",
+          actorName: staffSession?.name || "Staff",
+          action: "card-vault.copy-full",
+          target: { kind: "booking", id: booking.id },
+          note: `Copied full card number (•••• ${card.last4 || "????"}) for booking ${booking.id}`,
+        });
+      } catch (_) {}
+    } catch (_) {
+      pushToast({ message: "Copy failed", kind: "warn" });
+    }
+  };
+
   // Auto-purge on render once the retention window passes. The booking
   // hits the store with `cardOnFile: null` and an audit-log entry so the
   // change is traceable.
@@ -3098,18 +3153,44 @@ function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLo
           </div>
         ) : (
           <>
-            {/* Headline — masked last-4 only. The full PAN is never
-                stored (see buildCardOnFile), so there is nothing to
-                reveal — the hotel charges via the gateway/terminal and
-                uses last-4 only to recognise the card. */}
+            {/* Headline — masked by default. A manager can reveal the full
+                number to key a manual charge into the terminal; the reveal is
+                audit-logged and auto-hides after 30s. Legacy cards captured
+                before full-PAN storage show masked only (no reveal). */}
             <div className="flex items-center justify-between gap-2">
-              <div style={{ color: p.textPrimary, fontWeight: 700, fontFamily: "'Manrope', sans-serif", fontSize: "0.92rem", letterSpacing: "0.04em", fontVariantNumeric: "tabular-nums" }}>
-                {maskCardNumber(card)}
+              <div style={{ color: revealed ? p.accent : p.textPrimary, fontWeight: 700, fontFamily: "'Manrope', sans-serif", fontSize: "0.92rem", letterSpacing: "0.04em", fontVariantNumeric: "tabular-nums" }}>
+                {revealed ? fullNumber : maskCardNumber(card)}
               </div>
-              <span style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, padding: "1px 6px", border: `1px solid ${p.border}` }}>
-                {card.brand || "Card"}
-              </span>
+              <div className="flex items-center gap-2">
+                {canReveal && (
+                  <button
+                    type="button"
+                    onClick={toggleReveal}
+                    title={revealed ? "Hide number" : "View full number"}
+                    style={{ background: "transparent", border: "none", color: revealed ? p.accent : p.textMuted, cursor: "pointer", display: "inline-flex", alignItems: "center", padding: 2 }}
+                    onMouseEnter={(e) => e.currentTarget.style.color = p.accent}
+                    onMouseLeave={(e) => e.currentTarget.style.color = revealed ? p.accent : p.textMuted}
+                    aria-label={revealed ? "Hide full card number" : "View full card number"}
+                  >
+                    {revealed ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                )}
+                <span style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, padding: "1px 6px", border: `1px solid ${p.border}` }}>
+                  {card.brand || "Card"}
+                </span>
+              </div>
             </div>
+            {revealed && (
+              <div style={{ color: p.textMuted, fontSize: "0.62rem", marginTop: -2 }}>
+                Auto-hides in 30s · this view is logged
+              </div>
+            )}
+            {allowed && card.last4 && !hasFullPan(card) && (
+              <div className="p-2 flex items-start gap-2" style={{ backgroundColor: p.bgPanelAlt, border: `1px dashed ${p.border}`, color: p.textMuted, fontSize: "0.7rem", lineHeight: 1.5 }}>
+                <ShieldCheck size={11} style={{ marginTop: 2, flexShrink: 0, color: p.accent }} />
+                <span>This card was captured before full-number storage, so only the last 4 digits are on file. Re-capture the card to enable full-number view.</span>
+              </div>
+            )}
             <SnapRow p={p} label="Cardholder" value={card.name || "—"} />
             <SnapRow p={p} label="Expiry"     value={card.exp  || "—"} />
             <SnapRow p={p} label="Captured"   value={fmtDate(card.capturedAt) || "—"} />
@@ -3223,6 +3304,12 @@ function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLo
             <div className="flex flex-wrap gap-2 pt-1">
               {allowed ? (
                 <>
+                  {canReveal && (
+                    <SidebarBtn p={p} icon={revealed ? <EyeOff size={12} /> : <Eye size={12} />} label={revealed ? "Hide number" : "View full number"} onClick={toggleReveal} />
+                  )}
+                  {canReveal && (
+                    <SidebarBtn p={p} icon={<Copy size={12} />} label="Copy full number" onClick={copyFull} />
+                  )}
                   <SidebarBtn p={p} icon={<Copy size={12} />} label="Copy masked" onClick={copyMasked} />
                   {canMarkCharged && chargeMode !== "form" && (
                     <button
@@ -3259,7 +3346,7 @@ function CardVaultPanel({ p, booking, draft, update, staffSession, appendAuditLo
           </>
         )}
         <div style={{ color: p.textMuted, fontSize: "0.66rem", lineHeight: 1.5, marginTop: 6 }}>
-          Only the last 4 digits are stored — never the full card number. Records auto-purge {CARD_VAULT_RETENTION_DAYS} days after capture.
+          Full number stored to enable manual terminal charges · CVV is never stored · reveals are logged · records auto-purge {CARD_VAULT_RETENTION_DAYS} days after capture.
         </div>
       </div>
     </div>

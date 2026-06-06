@@ -3682,13 +3682,36 @@ export function cardOnFileExpired(card) {
 // Standard policy window. Centralised here so a future change to "10
 // days" is a one-line edit rather than a global search.
 export const CARD_VAULT_RETENTION_DAYS = 30;
-// Build the card-on-file record persisted onto a booking. SECURITY: the
-// full PAN is NEVER stored. We keep only the last 4 digits + the inferred
-// brand for identification, plus the cardholder name + expiry. A real
-// integration would store the gateway's tokenised reference here instead;
-// until then the hotel charges via the gateway/terminal directly and uses
-// last4 only to recognise the card. Anything that needs to "charge the
-// card on file" must go through the gateway token, not a stored PAN.
+
+// Base64 helpers for the stored PAN. NOTE: base64 is OBFUSCATION, not
+// encryption — it keeps the number from being readable at a casual glance
+// in the DB/console, but it is reversible. See the security note on
+// buildCardOnFile. Browser btoa/atob are available in the app + Node 16+.
+function encodePan(digits) {
+  try { return typeof btoa === "function" ? btoa(digits) : Buffer.from(digits, "utf8").toString("base64"); }
+  catch (_) { return ""; }
+}
+function decodePan(enc) {
+  try { return typeof atob === "function" ? atob(enc) : Buffer.from(enc, "base64").toString("utf8"); }
+  catch (_) { return ""; }
+}
+
+// Build the card-on-file record persisted onto a booking.
+//
+// SECURITY — read before changing. Hotels guarantee bookings by manually
+// keying the card into a terminal, so by explicit operator decision this
+// vault stores the FULL card number (PAN) so an authorised manager can
+// reveal it to charge. Mitigations that MUST stay in place:
+//   • CVV is NEVER stored (PCI prohibits retaining it post-auth — the
+//     capture form doesn't even collect it). Do not add it.
+//   • The PAN is held base64-obfuscated under `pan` (not plaintext) and
+//     auto-purges after CARD_VAULT_RETENTION_DAYS.
+//   • Reveal is gated to managers (canViewCardOnFile) and every reveal is
+//     written to the audit log by the UI.
+//   • last4/masked/brand remain for everyday display so the PAN is only
+//     ever materialised on an explicit reveal.
+// The correct long-term fix is a tokenising payment gateway (store a token,
+// charge via the gateway) — swapping `pan` for a token needs no shape change.
 export function buildCardOnFile({ name, number, exp }) {
   const now = new Date();
   const expires = new Date(now.getTime() + CARD_VAULT_RETENTION_DAYS * 86400000);
@@ -3698,11 +3721,30 @@ export function buildCardOnFile({ name, number, exp }) {
     name:       String(name || "").trim(),
     last4,
     masked:     last4 ? `•••• ${last4}` : "",
+    pan:        digits ? encodePan(digits) : "",   // base64-obfuscated full number
     exp:        String(exp || "").trim(),
     brand:      detectCardBrand(number),
     capturedAt: now.toISOString(),
     expiresAt:  expires.toISOString(),
   };
+}
+
+// Reveal the full card number from a card-on-file record, grouped in 4s
+// (e.g. "4242 4242 4242 4242"). Returns "" when no PAN is stored (legacy
+// records captured before full-PAN storage hold only last4). Callers MUST
+// be permission-gated (canViewCardOnFile) and SHOULD audit-log the reveal.
+export function revealCardNumber(card) {
+  if (!card) return "";
+  const digits = card.pan ? decodePan(card.pan).replace(/\D/g, "") : "";
+  if (!digits) return "";
+  return digits.replace(/(.{4})/g, "$1 ").trim();
+}
+
+// True when a card record actually carries a recoverable full PAN (vs a
+// legacy last4-only record). Lets the UI show "View full number" only when
+// there's something to reveal.
+export function hasFullPan(card) {
+  return !!(card && card.pan && decodePan(card.pan).replace(/\D/g, "").length >= 12);
 }
 
 // ---------------------------------------------------------------------------
