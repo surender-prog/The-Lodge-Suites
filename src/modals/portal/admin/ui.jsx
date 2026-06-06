@@ -277,6 +277,10 @@ export const FileUpload = ({ value, onChange, variant = "photo", label, hint, ac
   const inputRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
   const isPhoto = variant === "photo";
+  // "cover" = a wide image dropzone (hero / gallery / marketing imagery):
+  // full-width like the document variant, but image-semantic (image icon,
+  // "Upload image" label, image-only accept).
+  const isCover = variant === "cover";
 
   const handleFiles = (files) => {
     const f = files?.[0];
@@ -290,7 +294,7 @@ export const FileUpload = ({ value, onChange, variant = "photo", label, hint, ac
   const onDrop = (e) => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files); };
   const clear = (e) => { e.stopPropagation(); onChange(null); };
 
-  const accepts = accept || (isPhoto ? "image/*" : "image/*,application/pdf");
+  const accepts = accept || (isPhoto || isCover ? "image/*" : "image/*,application/pdf");
   const isImage = value?.type?.startsWith?.("image/") || (typeof value?.url === "string" && value.url.startsWith("data:image"));
 
   return (
@@ -342,7 +346,7 @@ export const FileUpload = ({ value, onChange, variant = "photo", label, hint, ac
         ) : (
           <div className="text-center px-4">
             {isPhoto ? <Camera size={22} style={{ color: p.accent, margin: "0 auto" }} /> : <Upload size={22} style={{ color: p.accent, margin: "0 auto" }} />}
-            <div className="mt-2" style={{ color: p.textSecondary, fontWeight: 600 }}>{isPhoto ? "Upload photo" : "Upload document"}</div>
+            <div className="mt-2" style={{ color: p.textSecondary, fontWeight: 600 }}>{isPhoto ? "Upload photo" : isCover ? "Upload image" : "Upload document"}</div>
             <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 2 }}>{hint || "Click or drag a file"}</div>
           </div>
         )}

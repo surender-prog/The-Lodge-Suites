@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from "react";
 import {
   AlertCircle, ArrowDown, ArrowUp, Building2, ChefHat, ExternalLink, Eye,
-  Globe, HelpCircle, Image as ImageIcon, ImagePlus, Layout, MapPin, Megaphone,
-  Plus, RotateCcw, Save, Search, Sparkles, Trash2, X,
+  Globe, HelpCircle, Image as ImageIcon, ImagePlus, Layout, Link as LinkIcon,
+  MapPin, Megaphone, Plus, RotateCcw, Save, Search, Sparkles, Trash2, Upload, X,
 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useData } from "../../../../data/store.jsx";
@@ -11,7 +11,7 @@ import { AMENITIES } from "../../../../data/amenities.js";
 import { FAQS }      from "../../../../data/faqs.js";
 import { DEFAULT_GALLERY_ITEMS } from "../../../../data/gallery.js";
 import {
-  Card, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast,
+  Card, FileUpload, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast,
   TextField,
 } from "../ui.jsx";
 import { useT } from "../../../../i18n/LanguageContext.jsx";
@@ -93,6 +93,80 @@ function CmsField({ path, label, hint, multiline = false, placeholder, defaultVa
   );
 }
 
+// ImageSourceControl — the shared "upload from desktop OR paste a URL/path"
+// control used by every image input in the CMS. Emits the resolved value as
+// a plain string (a /images/… path, an https URL, or a base64 data: URL from
+// a desktop upload) via onChange, so it drops into the existing string-based
+// setters (setSiteImage / gallery onPatch) with no store changes.
+function ImageSourceControl({ value, placeholder, onChange, aspect = "16/10" }) {
+  const p = usePalette();
+  // Default to the URL tab when there's a non-data value to show; the upload
+  // tab when empty or already holding an uploaded data: URL.
+  const isData = typeof value === "string" && value.startsWith("data:");
+  const [mode, setMode] = useState(isData ? "upload" : "url");
+
+  const Tab = ({ id, icon: Icon, children }) => {
+    const active = mode === id;
+    return (
+      <button
+        type="button"
+        onClick={() => setMode(id)}
+        className="inline-flex items-center gap-1.5"
+        style={{
+          padding: "0.32rem 0.7rem",
+          backgroundColor: active ? `${p.accent}1F` : "transparent",
+          border: `1px solid ${active ? p.accent : p.border}`,
+          color: active ? p.accent : p.textMuted,
+          fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem",
+          letterSpacing: "0.16em", textTransform: "uppercase", fontWeight: 700,
+          cursor: "pointer",
+        }}
+      ><Icon size={11} /> {children}</button>
+    );
+  };
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-[180px,1fr] gap-3 items-start">
+      {/* Live preview thumbnail */}
+      <div style={{
+        width: "100%", aspectRatio: aspect,
+        backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}`,
+        backgroundImage: value ? `url(${value})` : "none",
+        backgroundSize: "cover", backgroundPosition: "center",
+      }} />
+      <div>
+        {/* Source toggle */}
+        <div className="flex gap-2 mb-2">
+          <Tab id="upload" icon={Upload}>Upload</Tab>
+          <Tab id="url" icon={LinkIcon}>URL / path</Tab>
+        </div>
+
+        {mode === "upload" ? (
+          <FileUpload
+            variant="cover"
+            accept="image/*"
+            value={value ? { url: value, type: "image/png", name: "image", size: 0 } : null}
+            onChange={(file) => onChange(file?.url || "")}
+            hint="Click or drag an image from your desktop"
+          />
+        ) : (
+          <input
+            value={isData ? "" : (value || "")}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={isData ? "Uploaded image in use — paste a URL to replace" : (placeholder || "/images/your-photo.jpg or https://…")}
+            className="w-full outline-none"
+            style={{
+              backgroundColor: p.inputBg, color: p.textPrimary,
+              border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem",
+              fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem",
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ImageField({ imgKey, label, hint }) {
   const p = usePalette();
   const { siteContent, setSiteImage } = useData();
@@ -102,42 +176,14 @@ function ImageField({ imgKey, label, hint }) {
   const value = override ?? fallback;
   return (
     <FormGroup label={label}>
-      <div className="grid grid-cols-1 md:grid-cols-[180px,1fr] gap-3 items-start">
-        <div style={{
-          width: "100%", aspectRatio: "16/10",
-          backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}`,
-          backgroundImage: value ? `url(${value})` : "none",
-          backgroundSize: "cover", backgroundPosition: "center",
-        }} />
+      <ImageSourceControl
+        value={value}
+        placeholder={fallback}
+        onChange={(v) => setSiteImage(imgKey, v)}
+      />
+      <div className="mt-2 flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <div className="flex" style={{ border: `1px solid ${isOverridden ? p.accent : p.border}`, backgroundColor: p.inputBg }}>
-            <input
-              value={value}
-              onChange={(e) => setSiteImage(imgKey, e.target.value)}
-              placeholder={fallback}
-              className="flex-1 outline-none"
-              style={{
-                backgroundColor: "transparent", color: p.textPrimary,
-                padding: "0.6rem 0.75rem",
-                fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem",
-                border: "none", minWidth: 0,
-              }}
-            />
-            {isOverridden && (
-              <button
-                type="button"
-                title="Reset to default"
-                onClick={() => setSiteImage(imgKey, "")}
-                className="flex items-center px-3"
-                style={{ color: p.textMuted, borderInlineStart: `1px solid ${p.border}`, background: "transparent" }}
-                onMouseEnter={(e) => e.currentTarget.style.color = p.accent}
-                onMouseLeave={(e) => e.currentTarget.style.color = p.textMuted}
-              >
-                <RotateCcw size={13} />
-              </button>
-            )}
-          </div>
-          {hint && <div style={{ color: p.textMuted, fontSize: "0.7rem", marginTop: 6 }}>{hint}</div>}
+          {hint && <div style={{ color: p.textMuted, fontSize: "0.7rem" }}>{hint}</div>}
           <div style={{ color: p.textMuted, fontSize: "0.66rem", marginTop: 4, fontFamily: "ui-monospace, Menlo, monospace" }}>
             Default: <span style={{ color: p.textPrimary }}>{fallback}</span>
           </div>
@@ -147,6 +193,21 @@ function ImageField({ imgKey, label, hint }) {
             </div>
           )}
         </div>
+        {isOverridden && (
+          <button
+            type="button"
+            onClick={() => setSiteImage(imgKey, "")}
+            className="inline-flex items-center gap-1.5"
+            style={{
+              color: p.textMuted, border: `1px solid ${p.border}`, background: "transparent",
+              padding: "0.35rem 0.7rem", fontFamily: "'Manrope', sans-serif",
+              fontSize: "0.62rem", letterSpacing: "0.16em", textTransform: "uppercase", fontWeight: 700,
+              cursor: "pointer",
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.color = p.accent}
+            onMouseLeave={(e) => e.currentTarget.style.color = p.textMuted}
+          ><RotateCcw size={12} /> Reset to default</button>
+        )}
       </div>
     </FormGroup>
   );
@@ -632,18 +693,8 @@ function GalleryItemRow({ index, total, item, onPatch, onRemove, onMove }) {
 
         {/* Editable fields */}
         <div className="min-w-0 space-y-3">
-          <FormGroup label="Image URL">
-            <input
-              value={item.src || ""}
-              onChange={(e) => onPatch({ src: e.target.value })}
-              placeholder="/images/your-photo.jpg or https://…"
-              className="w-full outline-none"
-              style={{
-                backgroundColor: p.inputBg, color: p.textPrimary,
-                border: `1px solid ${p.border}`, padding: "0.55rem 0.7rem",
-                fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem",
-              }}
-            />
+          <FormGroup label="Image · upload or URL">
+            <GalleryImageInput value={item.src || ""} onChange={(v) => onPatch({ src: v })} />
           </FormGroup>
           <FormGroup label="Caption (shown on hover)">
             <input
@@ -717,6 +768,65 @@ function GalleryItemRow({ index, total, item, onPatch, onRemove, onMove }) {
         </div>
       </div>
     </Card>
+  );
+}
+
+// Compact upload/URL switcher for a gallery row. No preview of its own — the
+// row already renders the thumbnail with its position badge. Emits the value
+// (path, URL, or base64 data URL) as a plain string.
+function GalleryImageInput({ value, onChange }) {
+  const p = usePalette();
+  const isData = typeof value === "string" && value.startsWith("data:");
+  const [mode, setMode] = useState(isData ? "upload" : "url");
+
+  const Tab = ({ id, icon: Icon, children }) => {
+    const active = mode === id;
+    return (
+      <button
+        type="button"
+        onClick={() => setMode(id)}
+        className="inline-flex items-center gap-1.5"
+        style={{
+          padding: "0.3rem 0.65rem",
+          backgroundColor: active ? `${p.accent}1F` : "transparent",
+          border: `1px solid ${active ? p.accent : p.border}`,
+          color: active ? p.accent : p.textMuted,
+          fontFamily: "'Manrope', sans-serif", fontSize: "0.58rem",
+          letterSpacing: "0.16em", textTransform: "uppercase", fontWeight: 700,
+          cursor: "pointer",
+        }}
+      ><Icon size={11} /> {children}</button>
+    );
+  };
+
+  return (
+    <div>
+      <div className="flex gap-2 mb-2">
+        <Tab id="upload" icon={Upload}>Upload</Tab>
+        <Tab id="url" icon={LinkIcon}>URL / path</Tab>
+      </div>
+      {mode === "upload" ? (
+        <FileUpload
+          variant="cover"
+          accept="image/*"
+          value={value ? { url: value, type: "image/png", name: "image", size: 0 } : null}
+          onChange={(file) => onChange(file?.url || "")}
+          hint="Click or drag an image from your desktop"
+        />
+      ) : (
+        <input
+          value={isData ? "" : (value || "")}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={isData ? "Uploaded image in use — paste a URL to replace" : "/images/your-photo.jpg or https://…"}
+          className="w-full outline-none"
+          style={{
+            backgroundColor: p.inputBg, color: p.textPrimary,
+            border: `1px solid ${p.border}`, padding: "0.55rem 0.7rem",
+            fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem",
+          }}
+        />
+      )}
+    </div>
   );
 }
 
