@@ -27,7 +27,12 @@ export const PackagesSection = ({ onBookPackage }) => {
 
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
           {PACKAGES.map((p) => {
-            const inclusions = t(`packages.${p.id}.inclusions`);
+            // Prefer the operator-saved inclusions; fall back to the i18n seed
+            // only when the package has never been edited. (Reading t() first
+            // would make every admin edit invisible on the public card.)
+            const inclusions = (Array.isArray(p.inclusions) && p.inclusions.length > 0)
+              ? p.inclusions
+              : t(`packages.${p.id}.inclusions`);
             const headline = getPackageMinPrice(p);
             return (
               <div

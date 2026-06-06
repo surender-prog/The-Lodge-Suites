@@ -80,7 +80,14 @@ export const Offers = () => {
         nights: t(`packages.${pkg.id}.nights`) || pkg.nights || "",
         image: pkg.image,
         icon: pkg.icon,
-        inclusions: t(`packages.${pkg.id}.inclusions`) || pkg.inclusions || [""],
+        // Prefer the operator-saved inclusions over the i18n seed value.
+        // If we read t() first, any edit (delete / add / reorder) silently
+        // reverts on reopen because the translation always wins — the saved
+        // array must take precedence; i18n is only the fallback for seed
+        // packages the operator has never edited.
+        inclusions: (Array.isArray(pkg.inclusions) && pkg.inclusions.length > 0)
+          ? pkg.inclusions
+          : (t(`packages.${pkg.id}.inclusions`) || [""]),
         color: pkg.color,
         featured: !!pkg.featured,
         active: pkg.active !== false,
