@@ -22,7 +22,7 @@ import { ensurePlanList, resolveDefaultPlan } from "./ContractEditor.jsx";
 
 const FALLBACK_HOTEL = {
   name:     "The Lodge Suites",
-  legal:    "The Lodge Hotel Apartments W.L.L.",
+  legal:    "The Lodge Suites W.L.L.",
   tagline:  "We Speak Your Language",
   address:  "Building 916, Road 4019, Block 340",
   area:     "Shabab Avenue, Juffair, Manama",

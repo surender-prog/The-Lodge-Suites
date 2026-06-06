@@ -57,7 +57,7 @@ export const PropertyInfo = () => {
                 <TextField value={draft.name} onChange={(v) => update({ name: v })} placeholder="The Lodge Suites" />
               </FormGroup>
               <FormGroup label="Legal entity">
-                <TextField value={draft.legal} onChange={(v) => update({ legal: v })} placeholder="The Lodge Hotel Apartments W.L.L." />
+                <TextField value={draft.legal} onChange={(v) => update({ legal: v })} placeholder="The Lodge Suites W.L.L." />
               </FormGroup>
               <FormGroup label="Tagline" className="sm:col-span-2">
                 <TextField value={draft.tagline || ""} onChange={(v) => update({ tagline: v })} placeholder="We Speak Your Language" />

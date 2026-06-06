@@ -18,7 +18,7 @@ import { useT } from "../../../i18n/LanguageContext.jsx";
 
 const FALLBACK_HOTEL = {
   name:     "The Lodge Suites",
-  legal:    "The Lodge Hotel Apartments W.L.L.",
+  legal:    "The Lodge Suites W.L.L.",
   address:  "Building 916, Road 4019, Block 340",
   area:     "Shabab Avenue, Juffair, Manama",
   country:  "Kingdom of Bahrain",
@@ -619,26 +619,26 @@ export function buildPreAuthFormHtml(booking, { hotel, rooms } = {}) {
 <meta charset="utf-8" />
 <title>Credit Card Pre-Authorisation · ${escapeHtml(booking.id || "")}</title>
 <style>
-  @page { size: A4; margin: 16mm; }
+  @page { size: A4; margin: 12mm; }
   * { box-sizing: border-box; }
-  body { font-family: 'Manrope', system-ui, -apple-system, sans-serif; color: #15161A; background: #F5F1E8; margin: 0; padding: 26px; line-height: 1.5; font-size: 12.5px; }
-  .doc { background: #FBF8F1; padding: 40px 50px; max-width: 860px; margin: 0 auto; box-shadow: 0 4px 22px rgba(0,0,0,0.08); }
-  h1 { font-family: 'Cormorant Garamond', Georgia, serif; font-style: italic; font-weight: 600; font-size: 2.1rem; margin: 0; line-height: 1.05; }
-  h2 { font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 600; font-size: 1.55rem; margin: 0; }
-  .eyebrow { font-size: 0.64rem; letter-spacing: 0.28em; text-transform: uppercase; color: #8A7A4F; font-weight: 700; }
+  body { font-family: 'Manrope', system-ui, -apple-system, sans-serif; color: #15161A; background: #F5F1E8; margin: 0; padding: 14px; line-height: 1.4; font-size: 11px; }
+  .doc { background: #FBF8F1; padding: 24px 38px; max-width: 860px; margin: 0 auto; box-shadow: 0 4px 22px rgba(0,0,0,0.08); }
+  h1 { font-family: 'Cormorant Garamond', Georgia, serif; font-style: italic; font-weight: 600; font-size: 1.65rem; margin: 0; line-height: 1.05; }
+  h2 { font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 600; font-size: 1.15rem; margin: 0; white-space: nowrap; }
+  .eyebrow { font-size: 0.6rem; letter-spacing: 0.26em; text-transform: uppercase; color: #8A7A4F; font-weight: 700; }
   .muted { color: #555; }
-  .header { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 16px; border-bottom: 2px solid #15161A; }
-  h3 { font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 600; font-size: 1.25rem; margin: 24px 0 8px; }
-  table.kv { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-  table.kv td { padding: 7px 10px; border-bottom: 1px solid #d8d2c4; vertical-align: bottom; }
-  td.lbl { width: 38%; color: #6B7280; font-size: 0.62rem; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 11px; border-bottom: 2px solid #15161A; }
+  h3 { font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 600; font-size: 1.02rem; margin: 14px 0 5px; }
+  table.kv { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+  table.kv td { padding: 4px 9px; border-bottom: 1px solid #d8d2c4; vertical-align: bottom; }
+  td.lbl { width: 38%; color: #6B7280; font-size: 0.6rem; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; }
   td.val { color: #15161A; font-weight: 600; }
-  td.val.fill { border-bottom: 1px solid #15161A; min-height: 18px; }
-  .consent { margin-top: 22px; padding: 16px 18px; background: rgba(201,169,97,0.07); border: 1px solid rgba(201,169,97,0.4); border-inline-start: 4px solid #C9A961; font-size: 0.8rem; line-height: 1.6; color: #333; }
-  .sig { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 40px; }
-  .sigline { border-top: 1.5px solid #15161A; padding-top: 6px; font-size: 0.66rem; letter-spacing: 0.16em; text-transform: uppercase; color: #6B7280; font-weight: 700; }
-  .footer { margin-top: 28px; padding-top: 14px; border-top: 1px solid #C9A961; font-size: 0.68rem; color: #666; text-align: center; letter-spacing: 0.04em; }
-  .note { font-size: 0.66rem; color: #8A7A4F; margin-top: 6px; }
+  td.val.fill { border-bottom: 1px solid #15161A; min-height: 15px; }
+  .consent { margin-top: 12px; padding: 10px 13px; background: rgba(201,169,97,0.07); border: 1px solid rgba(201,169,97,0.4); border-inline-start: 4px solid #C9A961; font-size: 0.72rem; line-height: 1.45; color: #333; }
+  .sig { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 30px; }
+  .sigline { border-top: 1.5px solid #15161A; padding-top: 5px; font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; color: #6B7280; font-weight: 700; }
+  .footer { margin-top: 16px; padding-top: 9px; border-top: 1px solid #C9A961; font-size: 0.64rem; color: #666; text-align: center; letter-spacing: 0.04em; }
+  .note { font-size: 0.64rem; color: #8A7A4F; margin-top: 5px; }
   @media print { body { background: #FBF8F1; padding: 0; } .doc { box-shadow: none; padding: 0; } }
 </style>
 </head><body>
@@ -650,8 +650,8 @@ export function buildPreAuthFormHtml(booking, { hotel, rooms } = {}) {
       <div class="muted" style="font-size:0.72rem; margin-top:4px;">${escapeHtml([HOTEL.country, legalLine(HOTEL)].filter(Boolean).join(" · "))}</div>
     </div>
     <div style="text-align:right;">
-      <h2>Credit Card<br/>Pre-Authorisation</h2>
-      <div class="muted" style="margin-top:4px; font-size:0.72rem;">Booking ${escapeHtml(booking.id || "—")} · ${escapeHtml(todayLong())}</div>
+      <h2>Credit Card Pre-Authorisation</h2>
+      <div class="muted" style="margin-top:4px; font-size:0.7rem;">Booking ${escapeHtml(booking.id || "—")} · ${escapeHtml(todayLong())}</div>
     </div>
   </div>
 

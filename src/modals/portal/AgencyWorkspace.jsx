@@ -25,7 +25,7 @@ import { AccountActivities } from "./ActivityHub.jsx";
 // the resolved value via closures created inside the component.
 const FALLBACK_HOTEL = {
   name:    "The Lodge Suites",
-  legal:   "The Lodge Hotel Apartments W.L.L.",
+  legal:   "The Lodge Suites W.L.L.",
   address: "Building 916, Road 4019, Block 340",
   area:    "Shabab Avenue, Juffair, Manama",
   country: "Kingdom of Bahrain",
