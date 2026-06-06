@@ -39,6 +39,41 @@ function warnSkipOnce(table) {
 // .env.local, or before the schema is applied).
 
 /** Fetch every row from a JSONB-entity table, return raw `data` blobs. */
+// Tables whose `data` JSONB carries credentials have password-stripping read
+// RPCs available (members_safe / agreements_safe / agencies_safe, migration
+// 021 · auth Phase 0). They are NOT yet used for hydration: the current
+// login compares passwords client-side (GuestPortal tryLogin), so the
+// browser still needs the raw rows until login moves to real Supabase Auth
+// (auth Phase 2). At that cutover, route these three tables here and the
+// browser stops ever seeing a password. The DB-side protections from 021
+// (password-preserving merge triggers + anon credential-write block) are
+// active now regardless.
+// eslint-disable-next-line no-unused-vars
+const SANITIZED_READ_RPC = {
+  members:    "members_safe",
+  agreements: "agreements_safe",
+  agencies:   "agencies_safe",
+};
+
+// Client-side mirror of the DB strip (migration 021) for realtime payloads,
+// which broadcast the RAW row. Removes a top-level `password` and any
+// `users[].password`. Returns a new object; never mutates the input.
+// Ready for the Phase-2 auth cutover (paired with the *_safe RPC reads).
+export function stripCredentials(row) {
+  if (!row || typeof row !== "object") return row;
+  const out = { ...row };
+  if ("password" in out) delete out.password;
+  if (Array.isArray(out.users)) {
+    out.users = out.users.map((u) => {
+      if (u && typeof u === "object" && "password" in u) {
+        const c = { ...u }; delete c.password; return c;
+      }
+      return u;
+    });
+  }
+  return out;
+}
+
 export async function fetchAll(table) {
   if (!SUPABASE_CONFIGURED) return null;
   try {
@@ -350,7 +385,7 @@ export function useSlicePersistence(table, value, hydrated) {
 //
 // Returns nothing. The channel is torn down automatically on unmount.
 export function useRealtimeSlice(table, setValue, hydrated, options = {}) {
-  const { onConflict } = options;
+  const { onConflict, sanitize } = options;
   // Mirror the latest `hydrated` boolean into a ref so the postgres
   // callback can read it without re-subscribing on every flip. The
   // channel lifecycle stays tied to `table`.
@@ -377,8 +412,14 @@ export function useRealtimeSlice(table, setValue, hydrated, options = {}) {
 
           const eventType = payload.eventType || payload.type;
           if (eventType === "INSERT" || eventType === "UPDATE") {
-            const incoming = payload.new?.data;
+            let incoming = payload.new?.data;
             if (!incoming || incoming.id === undefined) return;
+            // Strip credentials from realtime payloads for tables whose
+            // base rows still carry passwords (auth Phase 0). The fetchAll
+            // path uses the *_safe RPC, but realtime broadcasts the RAW row,
+            // so without this a live UPDATE would push a plaintext password
+            // back into client state.
+            if (typeof sanitize === "function") incoming = sanitize(incoming);
             setValue((cur) => {
               const list = Array.isArray(cur) ? cur : [];
               const idx = list.findIndex((x) => x && x.id === incoming.id);

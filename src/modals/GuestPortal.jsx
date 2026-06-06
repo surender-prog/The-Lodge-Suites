@@ -303,6 +303,21 @@ function LoginPanel({ data, onSignIn }) {
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState(null);
 
+  // Demo quick-fill tiles — DEV ONLY. Loaded via a dynamic import guarded by
+  // import.meta.env.DEV so the real account passwords are tree-shaken out of
+  // the production bundle entirely (verified: grep of dist finds nothing).
+  const [demoCreds, setDemoCreds] = useState([]);
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    let alive = true;
+    import("../data/demoCredentials.dev.js").then((m) => {
+      if (!alive) return;
+      const ICONS = { Building2, Briefcase, Crown, Sparkles };
+      setDemoCreds((m.DEMO_CREDS || []).map((c) => ({ ...c, icon: ICONS[c.icon] || Crown })));
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
   const tryLogin = (e) => {
     e?.preventDefault?.();
     const em = email.trim().toLowerCase();
@@ -346,19 +361,10 @@ function LoginPanel({ data, onSignIn }) {
       return;
     }
 
-    setError("Email or password didn't match. Try the demo credentials below.");
+    setError(import.meta.env.DEV ? "Email or password didn't match. Try the demo credentials below." : "Email or password didn't match.");
   };
 
   const fill = (em, pw) => { setEmail(em); setPassword(pw); setError(null); };
-
-  const demoCreds = [
-    { kind: "Corporate · BAPCO",      email: "sara.h@bapco.com.bh",  password: "LodgeStay-2026", color: "#D97706", icon: Building2 },
-    { kind: "Corporate · GFH",        email: "y.mannai@gfh.com",     password: "LodgeStay-2026", color: "#D97706", icon: Building2 },
-    { kind: "Travel Agent · Globepass", email: "reem@globepass.bh",  password: "AgentLogin-2026", color: "#7C3AED", icon: Briefcase },
-    { kind: "Travel Agent · Cleartrip", email: "v.iyer@cleartrip.com",password: "AgentLogin-2026", color: "#7C3AED", icon: Briefcase },
-    { kind: "LS Privilege · Gold",    email: "l.alkhalifa@example.com", password: "Member-2026",   color: "#C9A961", icon: Crown },
-    { kind: "LS Privilege · Platinum",email: "s.holloway@example.com",  password: "Member-2026",   color: "#D4B97A", icon: Sparkles },
-  ];
 
   return (
     <div className="max-w-5xl mx-auto px-6 md:px-10 py-12">
@@ -452,7 +458,8 @@ function LoginPanel({ data, onSignIn }) {
           </form>
         </div>
 
-        {/* Demo credentials sidebar */}
+        {/* Demo credentials sidebar — DEV ONLY (demoCreds is empty in prod). */}
+        {demoCreds.length > 0 && (
         <div className="lg:col-span-3">
           <div style={{ color: p.accent, fontSize: "0.66rem", letterSpacing: "0.28em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700, marginBottom: 8 }}>
             Demo accounts
@@ -489,6 +496,7 @@ function LoginPanel({ data, onSignIn }) {
             })}
           </div>
         </div>
+        )}
       </div>
     </div>
   );
