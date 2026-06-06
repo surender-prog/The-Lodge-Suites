@@ -15,7 +15,8 @@ import {
 import { useT } from "../i18n/LanguageContext.jsx";
 import { useData, applyTaxes, priceExtra, priceLabelFor, legalLine, roomFitsParty, buildCardOnFile, nightlyBreakdown, formatCurrency, resolveCurrency, MEAL_PLANS, mealPlanSupplement, mealPlanLabel, enabledMealPlansFor, roomTypeAvailable } from "../data/store.jsx";
 import { roomLabel, roomShort, sortRoomsByPrice, giftCardBookingBlockers } from "../lib/rooms.js";
-import { validateCard } from "../lib/cardValidation.js";
+import { validateCard, formatExpiry } from "../lib/cardValidation.js";
+import { CardBrandRow } from "../components/CardBrandMark.jsx";
 import { ensurePlanList, resolveDefaultPlan } from "./portal/ContractEditor.jsx";
 import { Icon as ExtraIcon } from "../components/Icon.jsx";
 import { PortalThemeProvider, ThemeToggle, usePalette } from "./portal/theme.jsx";
@@ -3444,12 +3445,17 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
                       <div className="grid grid-cols-3 gap-3">
                         <label className="block col-span-3">
                           <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Card number</div>
-                          <input value={cardNum} onChange={(e) => setCardNum(e.target.value)} placeholder="•••• •••• •••• ••••" className="w-full outline-none" style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${cardNum.trim() && cardCheck.errors.number ? p.danger : p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }} />
+                          <div style={{ position: "relative" }}>
+                            <input value={cardNum} onChange={(e) => setCardNum(e.target.value)} inputMode="numeric" placeholder="•••• •••• •••• ••••" className="w-full outline-none" style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${cardNum.trim() && cardCheck.errors.number ? p.danger : p.border}`, padding: "0.6rem 0.75rem", paddingInlineEnd: 132, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }} />
+                            <div style={{ position: "absolute", insetInlineEnd: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
+                              <CardBrandRow number={cardNum} brands={hotelInfo?.acceptedCardBrands} />
+                            </div>
+                          </div>
                           {cardNum.trim() && <CardFieldErr p={p} msg={cardCheck.errors.number} />}
                         </label>
                         <label className="block">
                           <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Exp</div>
-                          <input value={cardExp} onChange={(e) => setCardExp(e.target.value)} placeholder="MM/YY" className="w-full outline-none" style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${cardExp.trim() && cardCheck.errors.exp ? p.danger : p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }} />
+                          <input value={cardExp} onChange={(e) => setCardExp(formatExpiry(e.target.value))} inputMode="numeric" maxLength={5} placeholder="MM/YY" className="w-full outline-none" style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${cardExp.trim() && cardCheck.errors.exp ? p.danger : p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }} />
                           {cardExp.trim() && <CardFieldErr p={p} msg={cardCheck.errors.exp} />}
                         </label>
                         <label className="block">
@@ -5054,6 +5060,7 @@ function BookStayTab({ session, kind, account, onComplete }) {
               cardCvc={cardCvc}   setCardCvc={setCardCvc}
               cardMissing={cardMissing}
               cardErrors={cardCheck.errors}
+              acceptedCardBrands={hotelInfo?.acceptedCardBrands}
               canDeductCommission={canDeductCommission}
               deductCommission={deductCommission}
               setDeductCommission={setDeductCommission}
@@ -5902,7 +5909,7 @@ function ConfirmStep({
   requestNotes, kind, account, session, tier, pointsEarned, memberDiscountPct, agentCommission,
   guest, bookFor, totalAdults, totalChildren,
   isPrepay, paymentTiming, setPaymentTiming, payNowDiscount, payNowDiscountPct,
-  cardName, setCardName, cardNum, setCardNum, cardExp, setCardExp, cardCvc, setCardCvc, cardMissing, cardErrors = {},
+  cardName, setCardName, cardNum, setCardNum, cardExp, setCardExp, cardCvc, setCardCvc, cardMissing, cardErrors = {}, acceptedCardBrands,
   canDeductCommission, deductCommission, setDeductCommission,
 }) {
   const t = useT();
@@ -6103,20 +6110,28 @@ function ConfirmStep({
                 <div className="grid grid-cols-3 gap-3">
                   <label className="block col-span-3">
                     <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Card number</div>
-                    <input
-                      value={cardNum}
-                      onChange={(e) => setCardNum?.(e.target.value)}
-                      placeholder="•••• •••• •••• ••••"
-                      className="w-full outline-none"
-                      style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${cardNum.trim() && cardErrors.number ? p.danger : p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
-                    />
+                    <div style={{ position: "relative" }}>
+                      <input
+                        value={cardNum}
+                        onChange={(e) => setCardNum?.(e.target.value)}
+                        inputMode="numeric"
+                        placeholder="•••• •••• •••• ••••"
+                        className="w-full outline-none"
+                        style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${cardNum.trim() && cardErrors.number ? p.danger : p.border}`, padding: "0.6rem 0.75rem", paddingInlineEnd: 132, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
+                      />
+                      <div style={{ position: "absolute", insetInlineEnd: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
+                        <CardBrandRow number={cardNum} brands={acceptedCardBrands} />
+                      </div>
+                    </div>
                     {cardNum.trim() && <CardFieldErr p={p} msg={cardErrors.number} />}
                   </label>
                   <label className="block">
                     <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Exp</div>
                     <input
                       value={cardExp}
-                      onChange={(e) => setCardExp?.(e.target.value)}
+                      onChange={(e) => setCardExp?.(formatExpiry(e.target.value))}
+                      inputMode="numeric"
+                      maxLength={5}
                       placeholder="MM/YY"
                       className="w-full outline-none"
                       style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${cardExp.trim() && cardErrors.exp ? p.danger : p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}

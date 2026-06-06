@@ -10,7 +10,8 @@ import { useT, useLang } from "../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween, todayISO } from "../utils/date.js";
 import { priceExtra, priceLabelFor, useData, evalPackageEligibility, describePackageConditions, roomFitsParty, computePackageCharge, computePackageSaving, packagePriceSuffix, getPackageRoomPrice, getPackageMinPrice, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, applyTaxes, nightlyBreakdown, formatCurrency, findRedeemableGiftCard, evaluateGiftCardForBooking, normaliseGiftCardCode, MEAL_PLANS, mealPlanSupplement, mealPlanLabel, enabledMealPlansFor, roomTypeAvailable } from "../data/store.jsx";
 import { roomLabel, roomShort, sortRoomsByPrice } from "../lib/rooms.js";
-import { validateCard } from "../lib/cardValidation.js";
+import { validateCard, formatExpiry } from "../lib/cardValidation.js";
+import { CardBrandRow } from "../components/CardBrandMark.jsx";
 
 // Inline per-field card-validation error for the public booking modal
 // (light surface — uses the brand danger token).
@@ -1630,11 +1631,18 @@ export const BookingModal = ({ open, onClose, initial }) => {
                         {data.cardName?.trim() && cardCheck.errors.name && <CardFieldErr msg={cardCheck.errors.name} />}
                         <div className="grid grid-cols-3 gap-3 mt-3">
                           <div className="col-span-3">
-                            <Field label={t("booking.fields.cardNum")} dark={false}><Input dark={false} placeholder="•••• •••• •••• ••••" value={data.cardNum} onChange={(v) => setData({ ...data, cardNum: v })} /></Field>
+                            <Field label={t("booking.fields.cardNum")} dark={false}>
+                              <div style={{ position: "relative" }}>
+                                <Input dark={false} placeholder="•••• •••• •••• ••••" value={data.cardNum} onChange={(v) => setData({ ...data, cardNum: v })} />
+                                <div style={{ position: "absolute", insetInlineEnd: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
+                                  <CardBrandRow number={data.cardNum} brands={hotelInfo?.acceptedCardBrands} />
+                                </div>
+                              </div>
+                            </Field>
                             {data.cardNum?.trim() && cardCheck.errors.number && <CardFieldErr msg={cardCheck.errors.number} />}
                           </div>
                           <div>
-                            <Field label={t("booking.fields.exp")} dark={false}><Input dark={false} placeholder="MM/YY" value={data.cardExp} onChange={(v) => setData({ ...data, cardExp: v })} /></Field>
+                            <Field label={t("booking.fields.exp")} dark={false}><Input dark={false} placeholder="MM/YY" value={data.cardExp} onChange={(v) => setData({ ...data, cardExp: formatExpiry(v) })} /></Field>
                             {data.cardExp?.trim() && cardCheck.errors.exp && <CardFieldErr msg={cardCheck.errors.exp} />}
                           </div>
                           <div>

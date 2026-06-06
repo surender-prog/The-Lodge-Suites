@@ -8,7 +8,8 @@ import { useData, applyTaxes, roomFitsParty, canViewCardOnFile, maskCardNumber, 
 import { Card, Drawer, FieldError, FileUpload, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 import { BookingDocPreviewModal, emailBookingDoc, printBookingDoc, printPreAuthForm } from "../BookingDocs.jsx";
 import { roomLabel } from "../../../../lib/rooms.js";
-import { validateCard } from "../../../../lib/cardValidation.js";
+import { validateCard, formatExpiry } from "../../../../lib/cardValidation.js";
+import { CardBrandRow } from "../../../../components/CardBrandMark.jsx";
 
 const STATUS_LABEL = {
   "in-house":    "In-house",
@@ -1388,11 +1389,11 @@ function BookingCreator({ onClose }) {
                     <div className="grid grid-cols-3 gap-3">
                       <div className="col-span-3">
                         <FormGroup label="Card number">
-                          <TextField value={cardNum} onChange={setCardNum} placeholder="•••• •••• •••• ••••" />
+                          <TextField value={cardNum} onChange={setCardNum} placeholder="•••• •••• •••• ••••" suffix={<CardBrandRow number={cardNum} brands={hotelInfo?.acceptedCardBrands} />} />
                           {cardNum.trim() && <FieldError message={cardCheck.errors.number} />}
                         </FormGroup>
                       </div>
-                      <FormGroup label="Exp"><TextField value={cardExp} onChange={setCardExp} placeholder="MM/YY" />{cardExp.trim() && <FieldError message={cardCheck.errors.exp} />}</FormGroup>
+                      <FormGroup label="Exp"><TextField value={cardExp} onChange={(v) => setCardExp(formatExpiry(v))} placeholder="MM/YY" />{cardExp.trim() && <FieldError message={cardCheck.errors.exp} />}</FormGroup>
                       <FormGroup label="CVC"><TextField value={cardCvc} onChange={setCardCvc} placeholder="•••" />{cardCvc.trim() && <FieldError message={cardCheck.errors.cvv} />}</FormGroup>
                     </div>
                     {cardMissing && !cardNum.trim() && (

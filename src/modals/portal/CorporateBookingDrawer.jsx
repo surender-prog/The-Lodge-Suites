@@ -6,7 +6,8 @@ import {
 import { usePalette } from "./theme.jsx";
 import { useT } from "../../i18n/LanguageContext.jsx";
 import { useData, applyTaxes, buildCardOnFile, nightlyBreakdown, formatCurrency, roomTypeAvailable } from "../../data/store.jsx";
-import { validateCard } from "../../lib/cardValidation.js";
+import { validateCard, formatExpiry } from "../../lib/cardValidation.js";
+import { CardBrandRow } from "../../components/CardBrandMark.jsx";
 import { roomLabel } from "../../lib/rooms.js";
 
 // Pay-now incentive — applied when a pre-payment-contracted account opts to
@@ -512,20 +513,28 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
                         <div className="grid grid-cols-3 gap-3">
                           <div className="col-span-3">
                             <Field label="Card number" p={p}>
-                              <input
-                                value={draft.cardNum}
-                                onChange={(e) => set({ cardNum: e.target.value })}
-                                placeholder="•••• •••• •••• ••••"
-                                className="w-full outline-none"
-                                style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${(draft.cardNum||"").trim() && cardCheck.errors.number ? p.danger : p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
-                              />
+                              <div style={{ position: "relative" }}>
+                                <input
+                                  value={draft.cardNum}
+                                  onChange={(e) => set({ cardNum: e.target.value })}
+                                  inputMode="numeric"
+                                  placeholder="•••• •••• •••• ••••"
+                                  className="w-full outline-none"
+                                  style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${(draft.cardNum||"").trim() && cardCheck.errors.number ? p.danger : p.border}`, padding: "0.6rem 0.75rem", paddingInlineEnd: 132, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
+                                />
+                                <div style={{ position: "absolute", insetInlineEnd: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
+                                  <CardBrandRow number={draft.cardNum} brands={hotelInfo?.acceptedCardBrands} />
+                                </div>
+                              </div>
                               {(draft.cardNum||"").trim() && cardCheck.errors.number && <CardErr p={p} msg={cardCheck.errors.number} />}
                             </Field>
                           </div>
                           <Field label="Exp" p={p}>
                             <input
                               value={draft.cardExp}
-                              onChange={(e) => set({ cardExp: e.target.value })}
+                              onChange={(e) => set({ cardExp: formatExpiry(e.target.value) })}
+                              inputMode="numeric"
+                              maxLength={5}
                               placeholder="MM/YY"
                               className="w-full outline-none"
                               style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${(draft.cardExp||"").trim() && cardCheck.errors.exp ? p.danger : p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}

@@ -167,3 +167,23 @@ export function formatCardNumber(input) {
   }
   return d.replace(/(.{4})/g, "$1 ").trim();
 }
+
+// Format an expiry as the user types → "MM/YY". Auto-inserts the slash after
+// the month, clamps the month to 01–12, and caps at 4 digits. So "1234"
+// becomes "12/34" and "1" stays "1" (lets them keep typing). Pure helper.
+export function formatExpiry(input) {
+  let d = digitsOf(input).slice(0, 4);
+  if (d.length === 0) return "";
+  // Normalise an obviously-too-big first month digit: "5" → "05/" so a single
+  // 5–9 keypress jumps straight to a valid month.
+  if (d.length === 1 && /[2-9]/.test(d)) d = "0" + d;
+  if (d.length >= 2) {
+    let mm = d.slice(0, 2);
+    let m = parseInt(mm, 10);
+    if (m === 0) mm = "01";
+    else if (m > 12) mm = "12";
+    const yy = d.slice(2);
+    return yy.length ? `${mm}/${yy}` : `${mm}/`;
+  }
+  return d;
+}
