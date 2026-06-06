@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Ban, Briefcase, Building2, Calculator, CalendarCheck, Check, CheckCircle2, ChevronDown, Coins, Copy, CreditCard, Download, Edit2, Eye, EyeOff, FileText, FileCheck, Gift, Globe, Hotel as HotelIcon, Lock, LogIn, LogOut, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Printer, Receipt, RotateCcw, Save, Search, ShieldCheck, Sparkles, Trash2, Upload, User as UserIcon, Users as UsersIcon, X } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
@@ -597,23 +598,54 @@ function RowActions({ booking, onEdit }) {
   const { updateBooking, removeBooking, addInvoice, invoices, tax, rooms, extras, staffSession, appendAuditLog, hotelInfo, members, releaseGiftCardForBooking } = useData();
   const { lang } = useLang();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState(null); // {top,right} in viewport coords for the portal
   const [docPreview, setDocPreview] = useState(null); // "invoice" | "receipt" | null
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [whatsAppPreview, setWhatsAppPreview] = useState(false);
   const [statusChange, setStatusChange] = useState(null); // target status string, or null
   const ref = useRef(null);
+  const kebabRef = useRef(null);
+
+  // Open the kebab menu, capturing the button's viewport rect so the menu
+  // can be portalled to <body> at fixed coords. This escapes the void-row
+  // stacking context (cancelled/rejected rows use opacity:0.6, which traps a
+  // normally-positioned dropdown behind later rows) and guarantees the menu
+  // paints opaque, above everything.
+  const openMenu = () => {
+    const r = kebabRef.current?.getBoundingClientRect();
+    if (r) setMenuPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
+    setMenuOpen(true);
+  };
 
   const alreadyBilled = invoices.some(i => i.bookingId === booking.id);
   const hasPayment    = (booking.paid || 0) > 0;
+  // Void bookings (a stay that didn't happen) can't be billed or settled —
+  // no invoice, no "mark as paid". Used to gate those actions in the menu.
+  const isVoid = ["cancelled", "rejected", "sold-out"].includes(booking.status);
   // Operator must hold `bookings_delete` for the destructive entry to render.
   const canDeleteBooking = Array.isArray(staffSession?.permissions)
     && staffSession.permissions.includes("bookings_delete");
 
+  const menuRef = useRef(null);
   React.useEffect(() => {
     if (!menuOpen) return;
-    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setMenuOpen(false); };
+    // The menu is portalled outside `ref`, so check both the anchor and the
+    // menu itself before closing on an outside click.
+    const onDoc = (e) => {
+      if (ref.current?.contains(e.target)) return;
+      if (menuRef.current?.contains(e.target)) return;
+      setMenuOpen(false);
+    };
+    // Fixed-positioned menu would drift on scroll — close it instead.
+    const onScrollOrResize = () => setMenuOpen(false);
     document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    window.addEventListener("scroll", onScrollOrResize, true);
+    window.addEventListener("resize", onScrollOrResize);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("scroll", onScrollOrResize, true);
+      window.removeEventListener("resize", onScrollOrResize);
+    };
   }, [menuOpen]);
 
   const sendEmail = () => {
@@ -704,6 +736,7 @@ function RowActions({ booking, onEdit }) {
     pushToast({ message: `Invoice for ${booking.id} dispatched` });
   };
   const markPaid = () => {
+    if (isVoid) { pushToast({ message: `${STATUS_LABEL[booking.status] || booking.status} bookings can't be marked as paid.`, kind: "warn" }); return; }
     updateBooking(booking.id, { paymentStatus: "paid", paid: booking.total });
     pushToast({ message: `${booking.id} marked as paid` });
   };
@@ -792,6 +825,7 @@ function RowActions({ booking, onEdit }) {
     setConfirmDelete(false);
   };
   const generateInvoice = () => {
+    if (isVoid) { pushToast({ message: `Can't invoice a ${STATUS_LABEL[booking.status] || booking.status} booking.`, kind: "warn" }); return; }
     const today = new Date().toISOString().slice(0, 10);
     const due = booking.source === "guest" || booking.source === "direct" ? today
               : new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
@@ -822,27 +856,31 @@ function RowActions({ booking, onEdit }) {
       ><Receipt size={13} /></IconBtn>
       <IconBtn title="Edit booking" onClick={onEdit}><Edit2 size={13} /></IconBtn>
       <button
-        onClick={() => setMenuOpen((v) => !v)}
+        ref={kebabRef}
+        onClick={() => (menuOpen ? setMenuOpen(false) : openMenu())}
         title="More actions"
-        style={{ color: p.textMuted, padding: "4px 6px", border: `1px solid ${p.border}` }}
+        style={{ color: menuOpen ? p.accent : p.textMuted, padding: "4px 6px", border: `1px solid ${menuOpen ? p.accent : p.border}` }}
         onMouseEnter={(e) => { e.currentTarget.style.color = p.accent; e.currentTarget.style.borderColor = p.accent; }}
-        onMouseLeave={(e) => { e.currentTarget.style.color = p.textMuted; e.currentTarget.style.borderColor = p.border; }}
+        onMouseLeave={(e) => { if (!menuOpen) { e.currentTarget.style.color = p.textMuted; e.currentTarget.style.borderColor = p.border; } }}
       >
         <MoreHorizontal size={13} />
       </button>
-      {menuOpen && (
-        <div className="absolute end-0 top-full mt-1 z-20 min-w-[200px]" style={{
-          backgroundColor: p.bgPanel, border: `1px solid ${p.border}`,
-          boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
+      {menuOpen && menuPos && createPortal(
+        <div ref={menuRef} className="min-w-[210px]" style={{
+          position: "fixed", top: menuPos.top, right: menuPos.right, zIndex: 9999,
+          backgroundColor: p.bgPanel, border: `1px solid ${p.border}`, borderRadius: 8,
+          boxShadow: "0 12px 32px rgba(0,0,0,0.28)", overflow: "hidden",
           fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem",
         }}>
-          {!alreadyBilled ? (
-            <MenuItem icon={FileText} label="Generate invoice" onClick={() => { setMenuOpen(false); generateInvoice(); }} />
-          ) : (
-            <MenuItem icon={FileText} label="Resend invoice" onClick={() => { setMenuOpen(false); sendInvoice(); }} />
+          {!isVoid && (
+            !alreadyBilled ? (
+              <MenuItem icon={FileText} label="Generate invoice" onClick={() => { setMenuOpen(false); generateInvoice(); }} />
+            ) : (
+              <MenuItem icon={FileText} label="Resend invoice" onClick={() => { setMenuOpen(false); sendInvoice(); }} />
+            )
           )}
           <MenuItem icon={MessageCircle} label="WhatsApp message" onClick={() => { setMenuOpen(false); setWhatsAppPreview(true); }} />
-          {booking.paymentStatus !== "paid" && (
+          {!isVoid && booking.paymentStatus !== "paid" && (
             <MenuItem icon={CheckCircle2} label="Mark as paid" onClick={() => { setMenuOpen(false); markPaid(); }} />
           )}
           {/* Status transitions — only what the workflow allows from the
@@ -872,7 +910,8 @@ function RowActions({ booking, onEdit }) {
           {canDeleteBooking && (
             <MenuItem icon={Trash2} label="Delete permanently" onClick={() => { setMenuOpen(false); setConfirmDelete(true); }} danger />
           )}
-        </div>
+        </div>,
+        document.body
       )}
       {docPreview && (
         <BookingDocPreviewModal
@@ -1589,6 +1628,9 @@ function BookingEditor({ booking, onClose }) {
   const grandTotal  = Number(draft.total) || 0;
   const paid        = Number(draft.paid)  || 0;
   const balance     = Math.max(0, +(grandTotal - paid).toFixed(3));
+  // Void bookings (cancelled / rejected / sold-out) can't be billed or
+  // settled — hide invoice + mark-paid for them in the editor sidebar.
+  const isVoid      = ["cancelled", "rejected", "sold-out"].includes(draft.status);
   // When the stored breakdown is missing (older bookings), fall back to
   // the legacy "total − subtotal − extras" implied-tax estimate so the row
   // doesn't go blank on records taken before the unified engine landed.
@@ -1657,7 +1699,7 @@ function BookingEditor({ booking, onClose }) {
   const reset = () => setDraft(booking);
 
   // ---- Lifecycle / inline actions ----------------------------------------
-  const markPaid   = () => { update({ paymentStatus: "paid", paid: grandTotal }); pushToast({ message: "Marked paid (unsaved)" }); };
+  const markPaid   = () => { if (isVoid) { pushToast({ message: `${STATUS_LABEL[draft.status] || draft.status} bookings can't be marked as paid.`, kind: "warn" }); return; } update({ paymentStatus: "paid", paid: grandTotal }); pushToast({ message: "Marked paid (unsaved)" }); };
   const checkIn    = () => { update({ status: "in-house" });   pushToast({ message: "Status set to in-house (unsaved)" }); };
   const checkOut   = () => { update({ status: "checked-out" }); pushToast({ message: "Status set to checked-out (unsaved)" }); };
   // Route the sidebar cancel through the same StatusChangeDialog the pill
@@ -1693,6 +1735,7 @@ function BookingEditor({ booking, onClose }) {
   };
 
   const genInvoice = () => {
+    if (isVoid) { pushToast({ message: `Can't invoice a ${STATUS_LABEL[draft.status] || draft.status} booking.`, kind: "warn" }); return; }
     const today = new Date().toISOString().slice(0, 10);
     const due   = booking.source === "guest" || booking.source === "direct" ? today
                 : new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
@@ -2283,7 +2326,7 @@ function BookingEditor({ booking, onClose }) {
 
             {/* Lifecycle */}
             <SidebarCard title="Lifecycle" p={p}>
-              {paid < grandTotal && (
+              {!isVoid && paid < grandTotal && (
                 <SidebarBtn p={p} icon={<CheckCircle2 size={12} />} label="Mark as paid" onClick={markPaid} />
               )}
               {draft.status === "confirmed" && (
@@ -2292,7 +2335,7 @@ function BookingEditor({ booking, onClose }) {
               {draft.status === "in-house" && (
                 <SidebarBtn p={p} icon={<LogOut size={12} />} label="Check guest out" onClick={checkOut} />
               )}
-              {!hasInvoice && (
+              {!isVoid && !hasInvoice && (
                 <SidebarBtn p={p} icon={<FileText size={12} />} label="Generate invoice" onClick={genInvoice} />
               )}
               {draft.status !== "cancelled" && (
