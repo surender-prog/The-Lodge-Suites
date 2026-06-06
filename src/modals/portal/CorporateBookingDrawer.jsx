@@ -505,8 +505,9 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
                             value={draft.cardName}
                             onChange={(e) => set({ cardName: e.target.value })}
                             className="w-full outline-none"
-                            style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
+                            style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${(draft.cardName||"").trim() && cardCheck.errors.name ? p.danger : p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
                           />
+                          {(draft.cardName||"").trim() && cardCheck.errors.name && <CardErr p={p} msg={cardCheck.errors.name} />}
                         </Field>
                         <div className="grid grid-cols-3 gap-3">
                           <div className="col-span-3">
@@ -516,8 +517,9 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
                                 onChange={(e) => set({ cardNum: e.target.value })}
                                 placeholder="•••• •••• •••• ••••"
                                 className="w-full outline-none"
-                                style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
+                                style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${(draft.cardNum||"").trim() && cardCheck.errors.number ? p.danger : p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
                               />
+                              {(draft.cardNum||"").trim() && cardCheck.errors.number && <CardErr p={p} msg={cardCheck.errors.number} />}
                             </Field>
                           </div>
                           <Field label="Exp" p={p}>
@@ -526,8 +528,9 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
                               onChange={(e) => set({ cardExp: e.target.value })}
                               placeholder="MM/YY"
                               className="w-full outline-none"
-                              style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
+                              style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${(draft.cardExp||"").trim() && cardCheck.errors.exp ? p.danger : p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
                             />
+                            {(draft.cardExp||"").trim() && cardCheck.errors.exp && <CardErr p={p} msg={cardCheck.errors.exp} />}
                           </Field>
                           <Field label="CVC" p={p}>
                             <input
@@ -535,14 +538,15 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
                               onChange={(e) => set({ cardCvc: e.target.value })}
                               placeholder="•••"
                               className="w-full outline-none"
-                              style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
+                              style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${(draft.cardCvc||"").trim() && cardCheck.errors.cvv ? p.danger : p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
                             />
+                            {(draft.cardCvc||"").trim() && cardCheck.errors.cvv && <CardErr p={p} msg={cardCheck.errors.cvv} />}
                           </Field>
                         </div>
                       </div>
-                      {needsCard && !cardComplete && (draft.cardNum || draft.cardName || draft.cardExp || draft.cardCvc) && (
+                      {needsCard && !cardComplete && !(draft.cardNum||"").trim() && (
                         <div style={{ color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.5, marginTop: 8 }}>
-                          {cardCheck.errors.number || cardCheck.errors.exp || cardCheck.errors.cvv || cardCheck.errors.name || "Complete the card details."}
+                          Card details required for Pay-now bookings.
                         </div>
                       )}
                     </div>
@@ -682,6 +686,12 @@ function Field({ label, children, p }) {
       {children}
     </label>
   );
+}
+
+// Inline per-field card-validation error.
+function CardErr({ msg, p }) {
+  if (!msg) return null;
+  return <div style={{ color: p.danger, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", lineHeight: 1.4, marginTop: 4 }}>{msg}</div>;
 }
 
 function SummaryRow({ label, value, accent, bold, muted, p }) {

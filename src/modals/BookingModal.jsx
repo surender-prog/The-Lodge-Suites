@@ -12,6 +12,12 @@ import { priceExtra, priceLabelFor, useData, evalPackageEligibility, describePac
 import { roomLabel, roomShort, sortRoomsByPrice } from "../lib/rooms.js";
 import { validateCard } from "../lib/cardValidation.js";
 
+// Inline per-field card-validation error for the public booking modal
+// (light surface — uses the brand danger token).
+const CardFieldErr = ({ msg }) => msg ? (
+  <div style={{ color: C.danger || "#9A3A30", fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", lineHeight: 1.4, marginTop: 4 }}>{msg}</div>
+) : null;
+
 export const BookingModal = ({ open, onClose, initial }) => {
   const t = useT();
   const { lang } = useLang();
@@ -526,6 +532,14 @@ export const BookingModal = ({ open, onClose, initial }) => {
     && childrenCapacity >= (Number(data.children) || 0)
     && totalCapacity    >= partySize
     && (!pkg || (pkgEval && pkgEval.ok));
+
+  // Live per-field card validation for inline errors on the payment step.
+  // (The hard gate is in confirm(); this just surfaces the reason next to
+  // each field as the guest types.)
+  const cardCheck = validateCard(
+    { name: data.cardName, number: data.cardNum, exp: data.cardExp, cvv: data.cardCvc },
+    { acceptedBrands: hotelInfo?.acceptedCardBrands }
+  );
 
   const next = () => {
     if (step === 1 && !canAdvanceFromStep1) return;
@@ -1613,10 +1627,20 @@ export const BookingModal = ({ open, onClose, initial }) => {
                           </div>
                         )}
                         <Field label={t("booking.fields.cardName")} dark={false}><Input dark={false} value={data.cardName} onChange={(v) => setData({ ...data, cardName: v })} /></Field>
+                        {data.cardName?.trim() && cardCheck.errors.name && <CardFieldErr msg={cardCheck.errors.name} />}
                         <div className="grid grid-cols-3 gap-3 mt-3">
-                          <div className="col-span-3"><Field label={t("booking.fields.cardNum")} dark={false}><Input dark={false} placeholder="•••• •••• •••• ••••" value={data.cardNum} onChange={(v) => setData({ ...data, cardNum: v })} /></Field></div>
-                          <Field label={t("booking.fields.exp")} dark={false}><Input dark={false} placeholder="MM/YY" value={data.cardExp} onChange={(v) => setData({ ...data, cardExp: v })} /></Field>
-                          <Field label={t("booking.fields.cvc")} dark={false}><Input dark={false} placeholder="•••" value={data.cardCvc} onChange={(v) => setData({ ...data, cardCvc: v })} /></Field>
+                          <div className="col-span-3">
+                            <Field label={t("booking.fields.cardNum")} dark={false}><Input dark={false} placeholder="•••• •••• •••• ••••" value={data.cardNum} onChange={(v) => setData({ ...data, cardNum: v })} /></Field>
+                            {data.cardNum?.trim() && cardCheck.errors.number && <CardFieldErr msg={cardCheck.errors.number} />}
+                          </div>
+                          <div>
+                            <Field label={t("booking.fields.exp")} dark={false}><Input dark={false} placeholder="MM/YY" value={data.cardExp} onChange={(v) => setData({ ...data, cardExp: v })} /></Field>
+                            {data.cardExp?.trim() && cardCheck.errors.exp && <CardFieldErr msg={cardCheck.errors.exp} />}
+                          </div>
+                          <div>
+                            <Field label={t("booking.fields.cvc")} dark={false}><Input dark={false} placeholder="•••" value={data.cardCvc} onChange={(v) => setData({ ...data, cardCvc: v })} /></Field>
+                            {data.cardCvc?.trim() && cardCheck.errors.cvv && <CardFieldErr msg={cardCheck.errors.cvv} />}
+                          </div>
                         </div>
                       </div>
                     )}

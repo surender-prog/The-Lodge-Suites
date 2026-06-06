@@ -377,6 +377,22 @@ export const FormGroup = ({ label, children, className = "" }) => (
   </div>
 );
 
+// Inline per-field validation error — sits directly under the input it refers
+// to. Renders nothing when there's no message, so callers can drop it after
+// every field unconditionally: <FieldError message={errors.number} />
+export const FieldError = ({ message }) => {
+  const p = usePalette();
+  if (!message) return null;
+  return (
+    <div style={{
+      color: p.danger, fontFamily: "'Manrope', sans-serif",
+      fontSize: "0.7rem", lineHeight: 1.4, marginTop: 4,
+    }}>
+      {message}
+    </div>
+  );
+};
+
 export const PageHeader = ({ title, intro, action }) => {
   const p = usePalette();
   return (

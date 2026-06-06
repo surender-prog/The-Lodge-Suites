@@ -535,6 +535,12 @@ function PortalLayout({ session, setSession, banner, tabs, tab, setTab, children
   );
 }
 
+// Inline per-field card-validation error (portal palette passed in as `p`).
+function CardFieldErr({ msg, p }) {
+  if (!msg) return null;
+  return <div style={{ color: p.danger, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", lineHeight: 1.4, marginTop: 4 }}>{msg}</div>;
+}
+
 function Stat({ label, value, hint, color }) {
   const p = usePalette();
   return (
@@ -3432,23 +3438,27 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
                       )}
                       <label className="block">
                         <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Name on card</div>
-                        <input value={cardName} onChange={(e) => setCardName(e.target.value)} className="w-full outline-none" style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }} />
+                        <input value={cardName} onChange={(e) => setCardName(e.target.value)} className="w-full outline-none" style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${cardName.trim() && cardCheck.errors.name ? p.danger : p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }} />
+                        {cardName.trim() && <CardFieldErr p={p} msg={cardCheck.errors.name} />}
                       </label>
                       <div className="grid grid-cols-3 gap-3">
                         <label className="block col-span-3">
                           <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Card number</div>
-                          <input value={cardNum} onChange={(e) => setCardNum(e.target.value)} placeholder="•••• •••• •••• ••••" className="w-full outline-none" style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }} />
+                          <input value={cardNum} onChange={(e) => setCardNum(e.target.value)} placeholder="•••• •••• •••• ••••" className="w-full outline-none" style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${cardNum.trim() && cardCheck.errors.number ? p.danger : p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }} />
+                          {cardNum.trim() && <CardFieldErr p={p} msg={cardCheck.errors.number} />}
                         </label>
                         <label className="block">
                           <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Exp</div>
-                          <input value={cardExp} onChange={(e) => setCardExp(e.target.value)} placeholder="MM/YY" className="w-full outline-none" style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }} />
+                          <input value={cardExp} onChange={(e) => setCardExp(e.target.value)} placeholder="MM/YY" className="w-full outline-none" style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${cardExp.trim() && cardCheck.errors.exp ? p.danger : p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }} />
+                          {cardExp.trim() && <CardFieldErr p={p} msg={cardCheck.errors.exp} />}
                         </label>
                         <label className="block">
                           <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>CVC</div>
-                          <input value={cardCvc} onChange={(e) => setCardCvc(e.target.value)} placeholder="•••" className="w-full outline-none" style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }} />
+                          <input value={cardCvc} onChange={(e) => setCardCvc(e.target.value)} placeholder="•••" className="w-full outline-none" style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${cardCvc.trim() && cardCheck.errors.cvv ? p.danger : p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }} />
+                          {cardCvc.trim() && <CardFieldErr p={p} msg={cardCheck.errors.cvv} />}
                         </label>
                       </div>
-                      {cardMissing && (
+                      {cardMissing && !cardNum.trim() && (
                         <div style={{ color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.5 }}>
                           Card details required for {payTiming === "now" ? "pay-now bookings" : "holding the room with a card"}.
                         </div>
@@ -5043,6 +5053,7 @@ function BookStayTab({ session, kind, account, onComplete }) {
               cardExp={cardExp}   setCardExp={setCardExp}
               cardCvc={cardCvc}   setCardCvc={setCardCvc}
               cardMissing={cardMissing}
+              cardErrors={cardCheck.errors}
               canDeductCommission={canDeductCommission}
               deductCommission={deductCommission}
               setDeductCommission={setDeductCommission}
@@ -5891,7 +5902,7 @@ function ConfirmStep({
   requestNotes, kind, account, session, tier, pointsEarned, memberDiscountPct, agentCommission,
   guest, bookFor, totalAdults, totalChildren,
   isPrepay, paymentTiming, setPaymentTiming, payNowDiscount, payNowDiscountPct,
-  cardName, setCardName, cardNum, setCardNum, cardExp, setCardExp, cardCvc, setCardCvc, cardMissing,
+  cardName, setCardName, cardNum, setCardNum, cardExp, setCardExp, cardCvc, setCardCvc, cardMissing, cardErrors = {},
   canDeductCommission, deductCommission, setDeductCommission,
 }) {
   const t = useT();
@@ -6088,6 +6099,7 @@ function ConfirmStep({
                     style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
                   />
                 </label>
+                {cardName.trim() && <CardFieldErr p={p} msg={cardErrors.name} />}
                 <div className="grid grid-cols-3 gap-3">
                   <label className="block col-span-3">
                     <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Card number</div>
@@ -6096,8 +6108,9 @@ function ConfirmStep({
                       onChange={(e) => setCardNum?.(e.target.value)}
                       placeholder="•••• •••• •••• ••••"
                       className="w-full outline-none"
-                      style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
+                      style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${cardNum.trim() && cardErrors.number ? p.danger : p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
                     />
+                    {cardNum.trim() && <CardFieldErr p={p} msg={cardErrors.number} />}
                   </label>
                   <label className="block">
                     <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Exp</div>
@@ -6106,8 +6119,9 @@ function ConfirmStep({
                       onChange={(e) => setCardExp?.(e.target.value)}
                       placeholder="MM/YY"
                       className="w-full outline-none"
-                      style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
+                      style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${cardExp.trim() && cardErrors.exp ? p.danger : p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
                     />
+                    {cardExp.trim() && <CardFieldErr p={p} msg={cardErrors.exp} />}
                   </label>
                   <label className="block">
                     <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>CVC</div>
@@ -6116,11 +6130,12 @@ function ConfirmStep({
                       onChange={(e) => setCardCvc?.(e.target.value)}
                       placeholder="•••"
                       className="w-full outline-none"
-                      style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
+                      style={{ backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${cardCvc.trim() && cardErrors.cvv ? p.danger : p.border}`, padding: "0.6rem 0.75rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}
                     />
+                    {cardCvc.trim() && <CardFieldErr p={p} msg={cardErrors.cvv} />}
                   </label>
                 </div>
-                {cardMissing && (
+                {cardMissing && !cardNum.trim() && (
                   <div style={{ color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.5 }}>
                     Card details required for Pay-now bookings.
                   </div>

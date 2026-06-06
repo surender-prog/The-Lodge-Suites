@@ -5,7 +5,7 @@ import { usePalette } from "../../theme.jsx";
 import { useT, useLang } from "../../../../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween } from "../../../../utils/date.js";
 import { useData, applyTaxes, roomFitsParty, canViewCardOnFile, maskCardNumber, revealCardNumber, hasFullPan, cardOnFileExpired, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, describePackageConditions, packagePriceSuffix, getPackageRoomPrice, formatCurrency, MEAL_PLANS, mealPlanLabel, roomTypeAvailable } from "../../../../data/store.jsx";
-import { Card, Drawer, FileUpload, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
+import { Card, Drawer, FieldError, FileUpload, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 import { BookingDocPreviewModal, emailBookingDoc, printBookingDoc, printPreAuthForm } from "../BookingDocs.jsx";
 import { roomLabel } from "../../../../lib/rooms.js";
 import { validateCard } from "../../../../lib/cardValidation.js";
@@ -1383,19 +1383,21 @@ function BookingCreator({ onClose }) {
                   <div className="mt-3 grid gap-3">
                     <FormGroup label="Name on card">
                       <TextField value={cardName} onChange={setCardName} />
+                      {cardName.trim() && <FieldError message={cardCheck.errors.name} />}
                     </FormGroup>
                     <div className="grid grid-cols-3 gap-3">
                       <div className="col-span-3">
                         <FormGroup label="Card number">
                           <TextField value={cardNum} onChange={setCardNum} placeholder="•••• •••• •••• ••••" />
+                          {cardNum.trim() && <FieldError message={cardCheck.errors.number} />}
                         </FormGroup>
                       </div>
-                      <FormGroup label="Exp"><TextField value={cardExp} onChange={setCardExp} placeholder="MM/YY" /></FormGroup>
-                      <FormGroup label="CVC"><TextField value={cardCvc} onChange={setCardCvc} placeholder="•••" /></FormGroup>
+                      <FormGroup label="Exp"><TextField value={cardExp} onChange={setCardExp} placeholder="MM/YY" />{cardExp.trim() && <FieldError message={cardCheck.errors.exp} />}</FormGroup>
+                      <FormGroup label="CVC"><TextField value={cardCvc} onChange={setCardCvc} placeholder="•••" />{cardCvc.trim() && <FieldError message={cardCheck.errors.cvv} />}</FormGroup>
                     </div>
-                    {cardMissing && (
+                    {cardMissing && !cardNum.trim() && (
                       <div style={{ color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.5 }}>
-                        {cardCheck.errors.number || cardCheck.errors.exp || cardCheck.errors.cvv || cardCheck.errors.name || "Card details required for Pay-now bookings."}
+                        Card details required for Pay-now bookings.
                       </div>
                     )}
                   </div>
