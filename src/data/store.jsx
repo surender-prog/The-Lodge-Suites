@@ -8,7 +8,8 @@ import {
 } from "../utils/notifications.js";
 import { sendTransactionalEmail } from "../utils/email.js";
 import { PACKAGES as INITIAL_PACKAGES } from "./packages.js";
-import { supabase, SUPABASE_CONFIGURED, hasSupabaseSession } from "../lib/supabase.js";
+import { supabase, SUPABASE_CONFIGURED, hasSupabaseSession, REAL_GUEST_AUTH } from "../lib/supabase.js";
+import { sessionFromClaims } from "../lib/guestAuth.js";
 import {
   fetchRooms, persistRoomPatch, persistRoomInsert, persistRoomRemove,
   dbRoomToClient,
@@ -4399,6 +4400,12 @@ export function DataProvider({ children }) {
   // successful credential check; cleared by `signOutStaff`. In-memory only
   // (per CLAUDE.md: no localStorage).
   const [staffSession, setStaffSession] = useState(null);
+  // Real guest auth session (Phase 1/2) — derived from Supabase JWT claims via
+  // sessionFromClaims, kept current by the onAuthStateChange listener below.
+  // Null when the flag is off, when no guest is signed in, or when the signed-
+  // in user has no portal claim (e.g. staff). GuestPortalInner adopts this so
+  // a real guest session survives reload.
+  const [guestAuthSession, setGuestAuthSession] = useState(null);
   // Staff-on-staff impersonation. When the Owner clicks "Login as user" against
   // an admin teammate, we stash the Owner's original session here, swap
   // `staffSession` to the target's session, and the Partner Portal banner
@@ -4738,15 +4745,26 @@ export function DataProvider({ children }) {
   useEffect(() => {
     if (!SUPABASE_CONFIGURED) return;
     let stillMounted = true;
-    const sub = supabase.auth.onAuthStateChange((event) => {
+
+    // Real-guest-auth (Phase 1/2): derive the portal session from the JWT's
+    // custom claims (migration 022 hook). Null for staff / unprovisioned /
+    // flag-off. Runs on the SAME listener as the re-hydration bump — no
+    // second subscription. Restores a guest session before first portal paint.
+    const recomputeGuest = (session) => {
+      if (!REAL_GUEST_AUTH) return;
+      setGuestAuthSession(sessionFromClaims(session?.user || null));
+    };
+
+    const sub = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "TOKEN_REFRESHED") {
         setHydrationVersion((v) => v + 1);
       }
+      recomputeGuest(session);
     });
     supabase.auth.getSession().then(({ data }) => {
-      if (stillMounted && data?.session) {
-        setHydrationVersion((v) => v + 1);
-      }
+      if (!stillMounted) return;
+      if (data?.session) setHydrationVersion((v) => v + 1);
+      recomputeGuest(data?.session);
     });
     return () => {
       stillMounted = false;
@@ -6076,7 +6094,7 @@ export function DataProvider({ children }) {
     testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment,
     auditLogs, appendAuditLog, clearAuditLogs,
     impersonation, startImpersonation, endImpersonation,
-    staffSession, signInStaff, signOutStaff,
+    staffSession, signInStaff, signOutStaff, guestAuthSession, REAL_GUEST_AUTH,
     staffImpersonation, startStaffImpersonation, endStaffImpersonation,
     hotelInfo, updateHotelInfo, resetHotelInfo,
     eventSupplements, upsertEventSupplement, removeEventSupplement, resetEventSupplements,
@@ -6101,7 +6119,7 @@ export function DataProvider({ children }) {
     setCalendar, setCalendarCell,
     setLoyalty,
     addBooking, updateBooking, removeBooking,
-  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, addRoom, removeRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, releaseGiftCardForBooking, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, templateCopyFor, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, eventSupplements, upsertEventSupplement, removeEventSupplement, resetEventSupplements, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
+  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, addRoom, removeRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, releaseGiftCardForBooking, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, templateCopyFor, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, guestAuthSession, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, eventSupplements, upsertEventSupplement, removeEventSupplement, resetEventSupplements, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
 
   return <DataStoreContext.Provider value={value}>{children}</DataStoreContext.Provider>;
 }

@@ -25,6 +25,8 @@ import { GiftCardDocPreviewModal } from "./portal/admin/GiftCardDocs.jsx";
 import { NotificationBell, MessagesQuickButton } from "../components/NotificationBell.jsx";
 import { MessageThread } from "../components/MessageThread.jsx";
 import { sendTransactionalEmail } from "../utils/email.js";
+import { REAL_GUEST_AUTH } from "../lib/supabase.js";
+import { signInGuestOtp, verifyGuestOtp, signInGuestPassword, resetGuest, signOutGuest, sessionFromClaims } from "../lib/guestAuth.js";
 
 // ---------------------------------------------------------------------------
 // GuestPortal — self-service portal for the three customer cohorts:
@@ -52,7 +54,7 @@ export const GuestPortal = ({ open, onClose }) => {
 function GuestPortalInner({ onClose }) {
   const p = usePalette();
   const data = useData();
-  const { impersonation, endImpersonation } = data;
+  const { impersonation, endImpersonation, guestAuthSession } = data;
 
   // When the Owner triggers impersonation from Staff & Access, the store's
   // `impersonation` state is set. We hydrate a session from it on mount so
@@ -80,6 +82,15 @@ function GuestPortalInner({ onClose }) {
       });
     }
   }, [impersonation]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reload persistence (Phase 1/2): when real guest auth is on, adopt the
+  // store's JWT-derived guest session so a refresh keeps the user signed in.
+  // Impersonation (operator override, handled above) always wins; null on
+  // sign-out clears the portal back to the login panel.
+  useEffect(() => {
+    if (!REAL_GUEST_AUTH || impersonation) return;
+    setSession(guestAuthSession || null);
+  }, [guestAuthSession, impersonation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Lock body scroll while the portal owns the viewport
   useEffect(() => {
@@ -167,7 +178,11 @@ function GuestPortalInner({ onClose }) {
           <ThemeToggle />
           {session && !impersonation && (
             <button
-              onClick={() => { setSession(null); pushToast({ message: "Signed out" }); }}
+              onClick={async () => {
+                if (REAL_GUEST_AUTH) await signOutGuest();
+                setSession(null);
+                pushToast({ message: "Signed out" });
+              }}
               title="Sign out"
               aria-label="Sign out"
               className="flex items-center gap-2 flex-shrink-0"
@@ -366,6 +381,81 @@ function LoginPanel({ data, onSignIn }) {
 
   const fill = (em, pw) => { setEmail(em); setPassword(pw); setError(null); };
 
+  // ── Real guest auth (Phase 1/2), behind REAL_GUEST_AUTH ──────────────────
+  // members → email OTP (request → verify); corporate/agent → email+password.
+  const [mode, setMode] = useState("otp");             // "otp"=member | "password"=corp/agent
+  const [otpStage, setOtpStage] = useState("request"); // "request" | "verify"
+  const [otpCode, setOtpCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState(null);          // neutral status line
+
+  // Mint the portal session from the verified JWT claims, then hand to
+  // onSignIn. No `kind` claim ⇒ the account isn't provisioned for the portal
+  // (e.g. a staff email) ⇒ sign back out rather than render a broken portal.
+  const finishWithUser = async (user) => {
+    const sess = sessionFromClaims(user);
+    if (!sess) {
+      await signOutGuest();
+      setError("This account isn't set up for the portal yet. Contact the front office.");
+      return;
+    }
+    onSignIn(sess);
+    pushToast({ message: `Welcome back, ${sess.displayName}` });
+  };
+
+  const realSubmit = async () => {
+    setError(null); setNotice(null);
+    const em = email.trim().toLowerCase();
+
+    if (mode === "password") {                          // corporate / agent
+      if (!em || !password) { setError("Enter email and password."); return; }
+      setBusy(true);
+      const r = await signInGuestPassword(em, password);
+      setBusy(false);
+      if (!r.ok) { setError(r.error); return; }
+      await finishWithUser(r.user);
+      return;
+    }
+
+    // member, two-stage OTP
+    if (otpStage === "request") {
+      if (!em) { setError("Enter your email address."); return; }
+      setBusy(true);
+      const r = await signInGuestOtp(em);
+      setBusy(false);
+      if (!r.ok) { setError(r.error); return; }
+      setOtpStage("verify");
+      setNotice(`We emailed a 6-digit code to ${em}.`);
+      return;
+    }
+    if (!otpCode.trim()) { setError("Enter the code we emailed you."); return; }
+    setBusy(true);
+    const r = await verifyGuestOtp(em, otpCode);
+    setBusy(false);
+    if (!r.ok) { setError(r.error); return; }
+    await finishWithUser(r.user);
+  };
+
+  const onSubmit = (e) => {
+    e?.preventDefault?.();
+    if (!REAL_GUEST_AUTH) return tryLogin(e);           // legacy path, unchanged
+    return realSubmit();
+  };
+
+  const handleForgot = async (e) => {
+    e?.preventDefault?.();
+    const r = await resetGuest(email);
+    if (r.ok) { setNotice("Password reset email sent."); setError(null); }
+    else setError(r.error);
+  };
+
+  // Field-visibility helpers for the flag-on UI.
+  const showPwField  = !REAL_GUEST_AUTH || mode === "password";
+  const showOtpField = REAL_GUEST_AUTH && mode === "otp" && otpStage === "verify";
+  const submitLabel  = !REAL_GUEST_AUTH || mode === "password"
+    ? "Sign in"
+    : (otpStage === "request" ? "Email me a code" : "Verify code");
+
   return (
     <div className="max-w-5xl mx-auto px-6 md:px-10 py-12">
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
@@ -383,7 +473,32 @@ function LoginPanel({ data, onSignIn }) {
             </p>
           </div>
 
-          <form onSubmit={tryLogin} className="space-y-4" style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}`, padding: 24 }}>
+          <form onSubmit={onSubmit} className="space-y-4" style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}`, padding: 24 }}>
+            {REAL_GUEST_AUTH && (
+              <div className="flex gap-2" role="tablist" aria-label="Account type">
+                {[
+                  { key: "otp", label: "Member" },
+                  { key: "password", label: "Corporate / Agent" },
+                ].map((t) => {
+                  const active = mode === t.key;
+                  return (
+                    <button
+                      key={t.key} type="button" role="tab" aria-selected={active}
+                      onClick={() => { setMode(t.key); setError(null); setNotice(null); setOtpStage("request"); setOtpCode(""); }}
+                      className="flex-1"
+                      style={{
+                        padding: "0.55rem 0.5rem", fontFamily: "'Manrope', sans-serif",
+                        fontSize: "0.64rem", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase",
+                        cursor: "pointer",
+                        color: active ? (p.theme === "light" ? "#FFFFFF" : "#15161A") : p.textMuted,
+                        backgroundColor: active ? p.accent : "transparent",
+                        border: `1px solid ${active ? p.accent : p.border}`,
+                      }}
+                    >{t.label}</button>
+                  );
+                })}
+              </div>
+            )}
             <div>
               <label style={{ color: p.textMuted, fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700, display: "block", marginBottom: 6 }}>
                 Email address
@@ -404,6 +519,7 @@ function LoginPanel({ data, onSignIn }) {
                 />
               </div>
             </div>
+            {showPwField && (
             <div>
               <label style={{ color: p.textMuted, fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700, display: "block", marginBottom: 6 }}>
                 Password
@@ -427,6 +543,41 @@ function LoginPanel({ data, onSignIn }) {
                 </button>
               </div>
             </div>
+            )}
+            {showOtpField && (
+            <div>
+              <label style={{ color: p.textMuted, fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700, display: "block", marginBottom: 6 }}>
+                6-digit code
+              </label>
+              <div className="flex" style={{ border: `1px solid ${p.border}`, backgroundColor: p.inputBg }}>
+                <span className="flex items-center px-3" style={{ color: p.textMuted }}><KeyRound size={14} /></span>
+                <input
+                  type="text" inputMode="numeric" maxLength={6} autoComplete="one-time-code" autoFocus
+                  value={otpCode}
+                  onChange={(e) => { setOtpCode(e.target.value.replace(/\D/g, "")); setError(null); }}
+                  placeholder="••••••"
+                  className="flex-1 outline-none"
+                  style={{
+                    backgroundColor: "transparent", color: p.textPrimary,
+                    padding: "0.7rem 0.5rem", fontFamily: "'Manrope', sans-serif", fontSize: "1.05rem", letterSpacing: "0.3em",
+                    border: "none", minWidth: 0,
+                  }}
+                />
+              </div>
+              <button type="button" onClick={() => { setOtpStage("request"); setOtpCode(""); setNotice(null); setError(null); }}
+                style={{ color: p.accent, fontSize: "0.74rem", fontWeight: 700, marginTop: 6, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+                Use a different email
+              </button>
+            </div>
+            )}
+            {notice && (
+              <div className="flex items-center gap-2 p-3" style={{
+                backgroundColor: `${p.accent}10`, border: `1px solid ${p.accent}40`,
+                color: p.accent, fontSize: "0.84rem",
+              }}>
+                <Mail size={14} /> {notice}
+              </div>
+            )}
             {error && (
               <div className="flex items-center gap-2 p-3" style={{
                 backgroundColor: `${p.danger}10`, border: `1px solid ${p.danger}40`,
@@ -437,6 +588,7 @@ function LoginPanel({ data, onSignIn }) {
             )}
             <button
               type="submit"
+              disabled={busy}
               className="w-full inline-flex items-center justify-center gap-2"
               style={{
                 backgroundColor: p.accent,
@@ -445,15 +597,19 @@ function LoginPanel({ data, onSignIn }) {
                 padding: "0.9rem 1rem",
                 fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem",
                 fontWeight: 700, letterSpacing: "0.25em", textTransform: "uppercase",
-                cursor: "pointer",
+                cursor: busy ? "wait" : "pointer", opacity: busy ? 0.7 : 1,
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = p.accentDeep; e.currentTarget.style.borderColor = p.accentDeep; }}
+              onMouseEnter={(e) => { if (!busy) { e.currentTarget.style.backgroundColor = p.accentDeep; e.currentTarget.style.borderColor = p.accentDeep; } }}
               onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = p.accent; e.currentTarget.style.borderColor = p.accent; }}
             >
-              <LogIn size={14} /> Sign in
+              <LogIn size={14} /> {busy ? "Please wait…" : submitLabel}
             </button>
             <div className="text-center" style={{ color: p.textMuted, fontSize: "0.78rem", marginTop: 4 }}>
-              Forgot password? <a href={`mailto:${supportEmail}?subject=Portal%20password%20reset`} style={{ color: p.accent, fontWeight: 700 }}>Email front office →</a>
+              {REAL_GUEST_AUTH && mode === "password" ? (
+                <>Forgot password? <button type="button" onClick={handleForgot} style={{ color: p.accent, fontWeight: 700, background: "none", border: "none", cursor: "pointer", padding: 0 }}>Email me a reset link →</button></>
+              ) : (
+                <>Need help? <a href={`mailto:${supportEmail}?subject=Portal%20sign-in%20help`} style={{ color: p.accent, fontWeight: 700 }}>Email front office →</a></>
+              )}
             </div>
           </form>
         </div>

@@ -24,6 +24,12 @@ const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 let supabase = null;
 export const SUPABASE_CONFIGURED = Boolean(url && anonKey);
 
+// Phase 1/2 real guest auth. Off by default → legacy client-compare login.
+// Vite inlines import.meta.env at build time; "true" is the only truthy
+// trigger so blank/"false"/undefined keeps the legacy path (and the dead
+// real-auth branch is tree-shaken from the prod bundle).
+export const REAL_GUEST_AUTH = import.meta.env.VITE_REAL_GUEST_AUTH === "true";
+
 // Live auth-session cache so synchronous code paths (the persistence
 // debouncer, mostly) can decide whether a Supabase write is worth
 // attempting. We populate it on boot and keep it in sync via the
@@ -41,6 +47,11 @@ if (SUPABASE_CONFIGURED) {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
+      // Explicit PKCE — required for the email-OTP / reset-link guest flow
+      // (verifyOtp + reset links round-trip a code_verifier). v2 defaults to
+      // pkce, but we pin it so a future supabase-js bump can't silently drop
+      // us to the implicit flow.
+      flowType: "pkce",
     },
   });
   // Hydrate the session cache asynchronously and keep it current.
