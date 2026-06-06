@@ -6,6 +6,7 @@ import {
 import { usePalette } from "./theme.jsx";
 import { useT } from "../../i18n/LanguageContext.jsx";
 import { useData, applyTaxes, buildCardOnFile, nightlyBreakdown, formatCurrency, roomTypeAvailable } from "../../data/store.jsx";
+import { validateCard } from "../../lib/cardValidation.js";
 import { roomLabel } from "../../lib/rooms.js";
 
 // Pay-now incentive — applied when a pre-payment-contracted account opts to
@@ -177,10 +178,13 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
   // until all four fields are populated. Pay-on-arrival keeps the existing
   // contract-only validation.
   const needsCard = isPrepay && draft.paymentTiming === "now";
-  const cardComplete = !!draft.cardName?.trim()
-    && !!draft.cardNum?.trim()
-    && !!draft.cardExp?.trim()
-    && !!draft.cardCvc?.trim();
+  // Real card validation against the property's accepted brands — rejects
+  // dummy / test numbers, bad checksums, expired cards and unsupported brands.
+  const cardCheck = validateCard(
+    { name: draft.cardName, number: draft.cardNum, exp: draft.cardExp, cvv: draft.cardCvc },
+    { acceptedBrands: hotelInfo?.acceptedCardBrands }
+  );
+  const cardComplete = cardCheck.ok;
   const cardMissing = needsCard && !cardComplete;
   const valid = !!draft.guestName?.trim() && !!draft.roomId && nights > 0 && !cardMissing;
 
@@ -536,6 +540,11 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
                           </Field>
                         </div>
                       </div>
+                      {needsCard && !cardComplete && (draft.cardNum || draft.cardName || draft.cardExp || draft.cardCvc) && (
+                        <div style={{ color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.5, marginTop: 8 }}>
+                          {cardCheck.errors.number || cardCheck.errors.exp || cardCheck.errors.cvv || cardCheck.errors.name || "Complete the card details."}
+                        </div>
+                      )}
                     </div>
                   )}
                 </CardBlock>

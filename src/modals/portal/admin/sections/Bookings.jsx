@@ -8,6 +8,7 @@ import { useData, applyTaxes, roomFitsParty, canViewCardOnFile, maskCardNumber, 
 import { Card, Drawer, FileUpload, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 import { BookingDocPreviewModal, emailBookingDoc, printBookingDoc, printPreAuthForm } from "../BookingDocs.jsx";
 import { roomLabel } from "../../../../lib/rooms.js";
+import { validateCard } from "../../../../lib/cardValidation.js";
 
 const STATUS_LABEL = {
   "in-house":    "In-house",
@@ -1010,7 +1011,7 @@ const SOURCE_OPTIONS = [
 function BookingCreator({ onClose }) {
   const t = useT();
   const p = usePalette();
-  const { rooms, members, agreements, agencies, calendar, addBooking, updateMember, loyalty, tiers, bookings, roomUnits, staffSession } = useData();
+  const { rooms, members, agreements, agencies, calendar, addBooking, updateMember, loyalty, tiers, bookings, roomUnits, staffSession, hotelInfo } = useData();
 
   const [source, setSource] = useState("direct");
   const [client, setClient] = useState(null); // member / agreement / agency object
@@ -1044,7 +1045,14 @@ function BookingCreator({ onClose }) {
   const isPrepay = (source === "corporate" || source === "agent")
     && (client?.paymentTerms || "") === "Pre-payment (cash)";
   const needsCard = isPrepay && paymentTiming === "now";
-  const cardComplete = !!cardName.trim() && !!cardNum.trim() && !!cardExp.trim() && !!cardCvc.trim();
+  // Real validation against the property's accepted brands — blocks dummy /
+  // test numbers, bad Luhn, expired cards, wrong CVV length, and unsupported
+  // brands. Only enforced when a card is actually required.
+  const cardCheck = validateCard(
+    { name: cardName, number: cardNum, exp: cardExp, cvv: cardCvc },
+    { acceptedBrands: hotelInfo?.acceptedCardBrands }
+  );
+  const cardComplete = cardCheck.ok;
   const cardMissing = needsCard && !cardComplete;
 
   const room = rooms.find(r => r.id === draft.roomId);
@@ -1387,7 +1395,7 @@ function BookingCreator({ onClose }) {
                     </div>
                     {cardMissing && (
                       <div style={{ color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.5 }}>
-                        Card details required for Pay-now bookings.
+                        {cardCheck.errors.number || cardCheck.errors.exp || cardCheck.errors.cvv || cardCheck.errors.name || "Card details required for Pay-now bookings."}
                       </div>
                     )}
                   </div>

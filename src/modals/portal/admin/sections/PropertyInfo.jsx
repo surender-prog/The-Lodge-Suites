@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import { Building2, Calendar as CalendarIcon, CalendarDays, Coins, CreditCard, FileBadge, Globe, Mail, MapPin, Phone, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
+import { Building2, Calendar as CalendarIcon, CalendarDays, Check, Coins, CreditCard, FileBadge, Globe, Mail, MapPin, Phone, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useData, legalLine, formatCurrency } from "../../../../data/store.jsx";
+import { CARD_BRANDS, DEFAULT_ACCEPTED_CARD_BRANDS } from "../../../../lib/cardValidation.js";
 import { Card, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, TextField } from "../ui.jsx";
 
 // ---------------------------------------------------------------------------
@@ -139,6 +140,50 @@ export const PropertyInfo = () => {
               <FormGroup label="IBAN">
                 <TextField value={draft.iban || ""} onChange={(v) => update({ iban: v })} placeholder="BH## NBOB ##############" />
               </FormGroup>
+            </div>
+          </Card>
+
+          {/* Accepted cards — the brands this property will take for booking
+              guarantees / charges. Every card-capture surface validates the
+              entered card against this finalised list (and rejects test/dummy
+              numbers). At least one brand must stay selected. */}
+          <Card title="Accepted cards · booking guarantees">
+            <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", lineHeight: 1.55, marginBottom: 12 }}>
+              Finalise which card types the property accepts. Cards entered at booking are validated against this list — unsupported brands, and test / dummy numbers, are rejected everywhere a card is captured.
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {CARD_BRANDS.map((b) => {
+                const selected = (Array.isArray(draft.acceptedCardBrands) ? draft.acceptedCardBrands : DEFAULT_ACCEPTED_CARD_BRANDS).includes(b.id);
+                return (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => {
+                      const cur = Array.isArray(draft.acceptedCardBrands) ? draft.acceptedCardBrands : [...DEFAULT_ACCEPTED_CARD_BRANDS];
+                      let next;
+                      if (cur.includes(b.id)) {
+                        next = cur.filter((x) => x !== b.id);
+                        if (next.length === 0) { pushToast({ message: "Keep at least one accepted card.", kind: "warn" }); return; }
+                      } else {
+                        next = [...cur, b.id];
+                      }
+                      update({ acceptedCardBrands: next });
+                    }}
+                    className="inline-flex items-center gap-2"
+                    style={{
+                      padding: "0.5rem 0.9rem",
+                      backgroundColor: selected ? `${p.accent}1F` : p.bgPanelAlt,
+                      border: `1px solid ${selected ? p.accent : p.border}`,
+                      color: selected ? p.accent : p.textMuted,
+                      fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <CreditCard size={13} /> {b.label}
+                    {selected && <Check size={13} />}
+                  </button>
+                );
+              })}
             </div>
           </Card>
 

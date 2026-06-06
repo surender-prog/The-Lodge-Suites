@@ -10,6 +10,7 @@ import { useT, useLang } from "../i18n/LanguageContext.jsx";
 import { fmtDate, inDays, nightsBetween, todayISO } from "../utils/date.js";
 import { priceExtra, priceLabelFor, useData, evalPackageEligibility, describePackageConditions, roomFitsParty, computePackageCharge, computePackageSaving, packagePriceSuffix, getPackageRoomPrice, getPackageMinPrice, buildCardOnFile, CARD_VAULT_RETENTION_DAYS, applyTaxes, nightlyBreakdown, formatCurrency, findRedeemableGiftCard, evaluateGiftCardForBooking, normaliseGiftCardCode, MEAL_PLANS, mealPlanSupplement, mealPlanLabel, enabledMealPlansFor, roomTypeAvailable } from "../data/store.jsx";
 import { roomLabel, roomShort, sortRoomsByPrice } from "../lib/rooms.js";
+import { validateCard } from "../lib/cardValidation.js";
 
 export const BookingModal = ({ open, onClose, initial }) => {
   const t = useT();
@@ -557,6 +558,21 @@ export const BookingModal = ({ open, onClose, initial }) => {
 
   const confirm = () => {
     if (!validateContact()) return;
+    // Card validation — required for Pay-now and for Pay-later when the guest
+    // chose the card guarantee. Rejects dummy / test numbers, bad checksums,
+    // expired cards, wrong CVV length, and brands the property doesn't accept.
+    const cardRequired = data.paymentTiming === "now"
+      || (data.paymentTiming === "later" && data.guaranteeMode === "card");
+    if (cardRequired) {
+      const cc = validateCard(
+        { name: data.cardName, number: data.cardNum, exp: data.cardExp, cvv: data.cardCvc },
+        { acceptedBrands: hotelInfo?.acceptedCardBrands }
+      );
+      if (!cc.ok) {
+        setConfirmError(cc.errors.number || cc.errors.exp || cc.errors.cvv || cc.errors.name || "Enter valid card details to continue.");
+        return;
+      }
+    }
     const code = "LS" + Math.random().toString(36).slice(2, 8).toUpperCase();
     setData((d) => ({ ...d, confirmCode: code }));
     // Persist a booking record. When an offer is applied, stamp the

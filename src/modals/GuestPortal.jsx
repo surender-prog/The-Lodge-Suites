@@ -15,6 +15,7 @@ import {
 import { useT } from "../i18n/LanguageContext.jsx";
 import { useData, applyTaxes, priceExtra, priceLabelFor, legalLine, roomFitsParty, buildCardOnFile, nightlyBreakdown, formatCurrency, resolveCurrency, MEAL_PLANS, mealPlanSupplement, mealPlanLabel, enabledMealPlansFor, roomTypeAvailable } from "../data/store.jsx";
 import { roomLabel, roomShort, sortRoomsByPrice, giftCardBookingBlockers } from "../lib/rooms.js";
+import { validateCard } from "../lib/cardValidation.js";
 import { ensurePlanList, resolveDefaultPlan } from "./portal/ContractEditor.jsx";
 import { Icon as ExtraIcon } from "../components/Icon.jsx";
 import { PortalThemeProvider, ThemeToggle, usePalette } from "./portal/theme.jsx";
@@ -2678,7 +2679,7 @@ function GiftCardRow({ card, onShare, onPreview, onBook, p }) {
 // portal; stop-sale + event-period windows block submission outright.
 function BookWithGiftCardDialog({ card, member, onClose, p }) {
   const t = useT();
-  const { rooms, bookings, roomUnits, addBooking, calendar, eventSupplements, appendAuditLog, redeemGiftCard } = useData();
+  const { rooms, bookings, roomUnits, addBooking, calendar, eventSupplements, appendAuditLog, redeemGiftCard, hotelInfo } = useData();
   const sourceRoom = useMemo(() => (rooms || []).find((r) => r.id === card.roomId), [rooms, card.roomId]);
   const remaining = (card.totalNights || 0) - (card.nightsUsed || 0);
   const today = todayISO();
@@ -2803,7 +2804,11 @@ function BookWithGiftCardDialog({ card, member, onClose, p }) {
   // room with a card. Minimal validation — the gateway does the real
   // work; we only gate on the fields being non-empty.
   const cardNeeded = hasTopUp && (payTiming === "now" || holdWithCard);
-  const cardComplete = cardName.trim().length >= 2 && cardNum.replace(/\D/g, "").length >= 12 && cardExp.trim().length >= 4 && cardCvc.trim().length >= 3;
+  const cardCheck = validateCard(
+    { name: cardName, number: cardNum, exp: cardExp, cvv: cardCvc },
+    { acceptedBrands: hotelInfo?.acceptedCardBrands }
+  );
+  const cardComplete = cardCheck.ok;
   const cardMissing = cardNeeded && !cardComplete;
 
   // Stop-sale / event windows block submit outright per the operator's
@@ -4449,7 +4454,11 @@ function BookStayTab({ session, kind, account, onComplete }) {
   const [cardExp,  setCardExp]  = useState("");
   const [cardCvc,  setCardCvc]  = useState("");
   const needsCard = isPrepay && paymentTiming === "now";
-  const cardComplete = !!cardName.trim() && !!cardNum.trim() && !!cardExp.trim() && !!cardCvc.trim();
+  const cardCheck = validateCard(
+    { name: cardName, number: cardNum, exp: cardExp, cvv: cardCvc },
+    { acceptedBrands: hotelInfo?.acceptedCardBrands }
+  );
+  const cardComplete = cardCheck.ok;
   const cardMissing = needsCard && !cardComplete;
 
   // Booking on behalf — toggle between booking for yourself (default) or

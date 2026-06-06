@@ -3611,6 +3611,13 @@ const DEFAULT_HOTEL_INFO = {
   // (Currency & decimals card).
   currency:          "BHD",
   currencyDecimals:  3,
+  // Accepted credit-card brands — the card types this property will take for
+  // booking guarantees / charges. Brand ids match CARD_BRANDS in
+  // src/lib/cardValidation.js. Every card-capture surface validates the
+  // entered card against this list (and rejects test/dummy numbers), so the
+  // admin "finalises" which cards apply to the property by editing this in
+  // Property Info → Accepted cards.
+  acceptedCardBrands: ["Visa", "Mastercard", "Amex"],
 };
 
 // ---------------------------------------------------------------------------
