@@ -542,44 +542,12 @@ export function inverseApplyTaxes(gross, tax, nights = 1) {
   return +((lo + hi) / 2).toFixed(3);
 }
 
-// Demo card-on-file payloads — used so the Card Vault has something to
-// show out of the box. The expiresAt dates are computed relative to
-// "now" so the retention countdown stays sensible whenever the demo is
-// loaded fresh. In production these come from a tokenised gateway, never
-// from raw input.
-const _now = new Date();
-const _capturedDaysAgo = (n) => new Date(_now.getTime() - n * 86400000).toISOString();
-const _expiresInDaysFrom = (capturedDaysAgo) =>
-  new Date(_now.getTime() + (30 - capturedDaysAgo) * 86400000).toISOString();
-
-const SAMPLE_BOOKINGS = [
-  { id: "LS-A8K2N4", guest: "Sarah Holloway",       email: "s.holloway@example.com",    source: "direct",   roomId: "one-bed",   checkIn: "2026-04-28", checkOut: "2026-05-05", nights: 7,  guests: 2, rate: 44, total: 339, paid: 339, status: "in-house",  paymentStatus: "paid",
-    paymentTiming: "now",
-    cardOnFile: { name: "Sarah Holloway", last4: "4242", masked: "•••• 4242", exp: "08/27", brand: "Visa",
-                  capturedAt: _capturedDaysAgo(2), expiresAt: _expiresInDaysFrom(2) } },
-  { id: "LS-B3M1Q7", guest: "Mohammed Al-Ansari",    email: "m.ansari@example.com",      source: "corporate",accountId: "AGR-2026-001", roomId: "two-bed",   checkIn: "2026-04-28", checkOut: "2026-04-30", nights: 2,  guests: 4, rate: 65, total: 142, paid: 0,   status: "in-house",  paymentStatus: "invoiced",
-    paymentTiming: "later" },
-  { id: "LS-C9P5R2", guest: "Lorenzo Caretti",       email: "l.caretti@example.com",     source: "agent",    agencyId: "AGT-0124", roomId: "studio",    checkIn: "2026-05-04", checkOut: "2026-05-08", nights: 4,  guests: 2, rate: 38, total: 167, paid: 167, status: "confirmed", paymentStatus: "paid",
-    paymentTiming: "now",
-    cardOnFile: { name: "Lorenzo Caretti", last4: "4444", masked: "•••• 4444", exp: "11/26", brand: "Mastercard",
-                  capturedAt: _capturedDaysAgo(28), expiresAt: _expiresInDaysFrom(28) } },
-  { id: "LS-D2T7W8", guest: "Kenji Tanaka",          email: "k.tanaka@example.com",      source: "agent",    agencyId: "AGT-0211", roomId: "two-bed",   checkIn: "2026-05-12", checkOut: "2026-05-15", nights: 3,  guests: 3, rate: 78, total: 257, paid: 50,  status: "confirmed", paymentStatus: "deposit",
-    paymentTiming: "later",
-    cardOnFile: { name: "Kenji Tanaka", last4: "0005", masked: "•••• 0005", exp: "03/28", brand: "Amex",
-                  capturedAt: _capturedDaysAgo(10), expiresAt: _expiresInDaysFrom(10) } },
-  { id: "LS-E5V9X1", guest: "Layla Al-Khalifa",      email: "l.alkhalifa@example.com",   source: "direct",   roomId: "three-bed", checkIn: "2026-05-18", checkOut: "2026-05-25", nights: 7,  guests: 4, rate: 96, total: 740, paid: 0,   status: "confirmed", paymentStatus: "pending",
-    paymentTiming: "later",
-    cardOnFile: { name: "Layla Al-Khalifa", last4: "1111", masked: "•••• 1111", exp: "06/29", brand: "Visa",
-                  capturedAt: _capturedDaysAgo(5), expiresAt: _expiresInDaysFrom(5) } },
-  { id: "LS-F6Y2Z4", guest: "James Holloway",        email: "j.holloway@example.com",    source: "ota",      roomId: "studio",    checkIn: "2026-04-15", checkOut: "2026-04-19", nights: 4,  guests: 1, rate: 38, total: 167, paid: 167, status: "checked-out", paymentStatus: "paid",
-    paymentTiming: "now" },
-  { id: "LS-G7Z3A5", guest: "Aisha Rahimi",          email: "a.rahimi@example.com",      source: "corporate",accountId: "AGR-2026-002", roomId: "one-bed",   checkIn: "2026-04-20", checkOut: "2026-04-23", nights: 3,  guests: 2, rate: 38, total: 125, paid: 125, status: "checked-out", paymentStatus: "paid",
-    paymentTiming: "now" },
-  { id: "LS-H8A4B6", guest: "Robert Thompson",       email: "r.thompson@example.com",    source: "ota",      roomId: "one-bed",   checkIn: "2026-05-22", checkOut: "2026-05-29", nights: 7,  guests: 2, rate: 44, total: 339, paid: 100, status: "confirmed", paymentStatus: "deposit",
-    paymentTiming: "later",
-    cardOnFile: { name: "Robert Thompson", last4: "1117", masked: "•••• 1117", exp: "12/27", brand: "Discover",
-                  capturedAt: _capturedDaysAgo(20), expiresAt: _expiresInDaysFrom(20) } },
-];
+// Bookings seed — intentionally EMPTY. The property runs on live bookings
+// only; demo reservations were removed so a fresh / empty environment starts
+// clean and the admin sees real reservations exclusively. New bookings are
+// created through the booking flows and persisted to the DB. (Historic demo
+// guests like Sarah Holloway / Lorenzo Caretti lived here previously.)
+const SAMPLE_BOOKINGS = [];
 
 // Invoices carry an optional `kind` discriminator:
 //   "booking"    — money the client (guest / corporate / agent) owes the hotel
