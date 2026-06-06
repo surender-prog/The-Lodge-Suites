@@ -16,7 +16,15 @@ Project ref: `tbmmmsldanxhgfmyoamy` · Dashboard: https://supabase.com/dashboard
 
 ---
 
-## 1. Apply migration 022  *(required first)*
+## 0. Apply migrations 022 then 023  *(required first, in order)*
+
+- **022** — `supabase/migrations/022_auth_phase1_portal_identities.sql` ✅ (applied)
+- **023** — `supabase/migrations/023_auth_phase1_member_otp_provisioning.sql` —
+  makes EVERY member email-OTP-capable (incl. password-less + future website
+  signups). Run it the same way. After it, every member with an email has a
+  `portal_identities` row (member count rises from 3 → all members).
+
+## 1. (reference) Apply migration 022
 Supabase Dashboard → **SQL Editor** → New query → paste the full contents of
 `supabase/migrations/022_auth_phase1_portal_identities.sql` → **Run**.
 Expect "Success. No rows returned."
