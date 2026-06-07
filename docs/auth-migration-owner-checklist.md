@@ -23,15 +23,13 @@ Project ref: `tbmmmsldanxhgfmyoamy` · Dashboard: https://supabase.com/dashboard
   - Agent password login → agent portal ✓
   - Member email OTP (real email → real code → verify) → member portal ✓
 - **Phase 1/2 client code** — shipped, dormant behind the flag.
-- **Phase 4 scoped RLS** (migration 024) — applied. Member scoping verified
-  (member sees only own data; blocked from admin/other accounts).
+- **Phase 4 scoped RLS** (migrations 024 + 025) — applied & **verified for all
+  three guest tiers**: member, corporate, and agent each read only their own
+  data and are blocked from staff tables / other accounts.
 - **Capacitor mobile foundation** — done (see `CAPACITOR.md`).
 
-> 🐛 **Hotfix needed — migration 025.** Verification caught that the access-token
-> hook minted a reserved top-level `role` claim, which broke ALL corporate/agent
-> data queries (`role "primary" does not exist`). **Apply
-> `supabase/migrations/025_auth_fix_reserved_role_claim.sql` now**, then
-> corporate/agent users re-login. Members were unaffected.
+> ✅ Migration **025** (reserved-`role`-claim hotfix) applied — corporate/agent
+> queries confirmed working (no more `role "primary" does not exist`).
 
 ---
 
