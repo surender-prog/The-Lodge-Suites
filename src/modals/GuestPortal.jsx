@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle, ArrowRight, BedDouble, Briefcase, Building2, Calendar,
   CalendarDays, Check, CheckCircle2, ChevronLeft, ClipboardList, Coins, Copy, CreditCard,
-  Crown, Download, Edit2, ExternalLink, Eye, EyeOff, FileBadge, FileText, Gift,
+  Download, Edit2, ExternalLink, Eye, EyeOff, FileBadge, FileText, Gift,
   Image as ImageIcon, KeyRound, Link as LinkIcon, Lock, LogIn, LogOut, Mail,
   MessageCircle, Minus, Paperclip, Phone, Plus, Printer,
   Receipt as ReceiptIcon, Save, Send, Share2, Shield, Sparkles, Star, Trash2,
@@ -318,21 +318,6 @@ function LoginPanel({ data, onSignIn }) {
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState(null);
 
-  // Demo quick-fill tiles — DEV ONLY. Loaded via a dynamic import guarded by
-  // import.meta.env.DEV so the real account passwords are tree-shaken out of
-  // the production bundle entirely (verified: grep of dist finds nothing).
-  const [demoCreds, setDemoCreds] = useState([]);
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    let alive = true;
-    import("../data/demoCredentials.dev.js").then((m) => {
-      if (!alive) return;
-      const ICONS = { Building2, Briefcase, Crown, Sparkles };
-      setDemoCreds((m.DEMO_CREDS || []).map((c) => ({ ...c, icon: ICONS[c.icon] || Crown })));
-    }).catch(() => {});
-    return () => { alive = false; };
-  }, []);
-
   const tryLogin = (e) => {
     e?.preventDefault?.();
     const em = email.trim().toLowerCase();
@@ -376,10 +361,8 @@ function LoginPanel({ data, onSignIn }) {
       return;
     }
 
-    setError(import.meta.env.DEV ? "Email or password didn't match. Try the demo credentials below." : "Email or password didn't match.");
+    setError("Email or password didn't match.");
   };
-
-  const fill = (em, pw) => { setEmail(em); setPassword(pw); setError(null); };
 
   // ── Real guest auth (Phase 1/2), behind REAL_GUEST_AUTH ──────────────────
   // members → email OTP (request → verify); corporate/agent → email+password.
@@ -457,10 +440,9 @@ function LoginPanel({ data, onSignIn }) {
     : (otpStage === "request" ? "Email me a code" : "Verify code");
 
   return (
-    <div className="max-w-5xl mx-auto px-6 md:px-10 py-12">
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
+    <div className="max-w-md mx-auto px-6 md:px-10 py-12">
         {/* Login form */}
-        <div className="lg:col-span-2">
+        <div>
           <div className="mb-8">
             <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.28em", textTransform: "uppercase", color: p.accent, fontWeight: 700 }}>
               Sign in
@@ -613,47 +595,6 @@ function LoginPanel({ data, onSignIn }) {
             </div>
           </form>
         </div>
-
-        {/* Demo credentials sidebar — DEV ONLY (demoCreds is empty in prod). */}
-        {demoCreds.length > 0 && (
-        <div className="lg:col-span-3">
-          <div style={{ color: p.accent, fontSize: "0.66rem", letterSpacing: "0.28em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700, marginBottom: 8 }}>
-            Demo accounts
-          </div>
-          <p style={{ color: p.textMuted, fontSize: "0.86rem", marginBottom: 14, maxWidth: 580 }}>
-            Click any tile to auto-fill the form. The portal supports three account types — corporate, travel agent, and LS Privilege loyalty member — each with its own dashboard and document set.
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {demoCreds.map((d) => {
-              const Icon = d.icon;
-              return (
-                <button
-                  key={d.email}
-                  onClick={() => fill(d.email, d.password)}
-                  className="text-start p-4 transition-colors"
-                  style={{
-                    backgroundColor: `${d.color}0E`,
-                    border: `1px solid ${d.color}40`,
-                    borderInlineStart: `3px solid ${d.color}`,
-                    cursor: "pointer",
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = `${d.color}1F`; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = `${d.color}0E`; }}
-                >
-                  <div className="flex items-center gap-2" style={{ color: d.color, fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700, marginBottom: 6 }}>
-                    <Icon size={12} /> {d.kind}
-                  </div>
-                  <div style={{ color: p.textPrimary, fontSize: "0.84rem", fontWeight: 600 }}>{d.email}</div>
-                  <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 3, fontFamily: "'Manrope', sans-serif" }}>
-                    Password · <code style={{ color: p.accent }}>{d.password}</code>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        )}
-      </div>
     </div>
   );
 }
