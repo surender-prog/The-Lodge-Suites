@@ -17,6 +17,7 @@ import { useData, applyTaxes, priceExtra, priceLabelFor, legalLine, roomFitsPart
 import { roomLabel, roomShort, sortRoomsByPrice, giftCardBookingBlockers } from "../lib/rooms.js";
 import { validateCard, formatExpiry } from "../lib/cardValidation.js";
 import { CardBrandRow } from "../components/CardBrandMark.jsx";
+import { ErrorBoundary } from "../components/ErrorBoundary.jsx";
 import { ensurePlanList, resolveDefaultPlan } from "./portal/ContractEditor.jsx";
 import { Icon as ExtraIcon } from "../components/Icon.jsx";
 import { PortalThemeProvider, ThemeToggle, usePalette } from "./portal/theme.jsx";
@@ -288,12 +289,22 @@ function GuestPortalInner({ onClose }) {
         )}
         {!session ? (
           <LoginPanel data={data} onSignIn={setSession} />
-        ) : session.kind === "corporate" ? (
-          <CorporatePortal session={session} setSession={setSession} pendingNav={pendingNav} consumePendingNav={consumePendingNav} />
-        ) : session.kind === "agent" ? (
-          <AgentPortal session={session} setSession={setSession} pendingNav={pendingNav} consumePendingNav={consumePendingNav} />
         ) : (
-          <MemberPortal session={session} setSession={setSession} pendingNav={pendingNav} consumePendingNav={consumePendingNav} />
+          // Catch-all so a crash in any portal shows a readable card and a way
+          // out (sign out) instead of blanking the whole app. On close we clear
+          // the local session and sign out of Supabase under the real-auth flag.
+          <ErrorBoundary
+            label="portal"
+            onClose={async () => { if (REAL_GUEST_AUTH) await signOutGuest(); setSession(null); }}
+          >
+            {session.kind === "corporate" ? (
+              <CorporatePortal session={session} setSession={setSession} pendingNav={pendingNav} consumePendingNav={consumePendingNav} />
+            ) : session.kind === "agent" ? (
+              <AgentPortal session={session} setSession={setSession} pendingNav={pendingNav} consumePendingNav={consumePendingNav} />
+            ) : (
+              <MemberPortal session={session} setSession={setSession} pendingNav={pendingNav} consumePendingNav={consumePendingNav} />
+            )}
+          </ErrorBoundary>
         )}
       </main>
 
@@ -776,15 +787,17 @@ function CorporatePortal({ session, setSession, pendingNav, consumePendingNav })
   // bookings tab so coming back lands on the list, not a stale detail.
   useEffect(() => { if (tab !== "bookings") setSelectedBookingId(null); }, [tab]);
 
-  if (!agreement) return <NoAccount p={p} />;
+  // Guard lives AFTER all hooks — `agreement` can be momentarily undefined
+  // right after sign-in (own row not re-hydrated yet under scoped RLS).
+  // Early-returning before the hooks below would crash React (hook count).
 
   // Filter scopes by account
   const accBookings = useMemo(
-    () => bookings.filter((b) => b.source === "corporate" && b.accountId === agreement.id),
-    [bookings, agreement.id]
+    () => agreement ? bookings.filter((b) => b.source === "corporate" && b.accountId === agreement.id) : [],
+    [bookings, agreement?.id]
   );
   const accInvoices = useMemo(
-    () => invoices.filter((i) => i.clientType === "corporate" && i.clientName?.toLowerCase().includes(agreement.account.toLowerCase())),
+    () => agreement ? invoices.filter((i) => i.clientType === "corporate" && i.clientName?.toLowerCase().includes((agreement.account || "").toLowerCase())) : [],
     [invoices, agreement]
   );
   const bookingIds = new Set(accBookings.map((b) => b.id));
@@ -792,6 +805,8 @@ function CorporatePortal({ session, setSession, pendingNav, consumePendingNav })
     () => payments.filter((pay) => bookingIds.has(pay.bookingId)),
     [payments, accBookings] // eslint-disable-line react-hooks/exhaustive-deps
   );
+
+  if (!agreement) return <NoAccount p={p} />;
 
   const tabs = [
     { id: "dashboard",  label: "Dashboard",  icon: Building2 },
@@ -915,16 +930,18 @@ function AgentPortal({ session, setSession, pendingNav, consumePendingNav }) {
   }, [pendingNav]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (tab !== "bookings") setSelectedBookingId(null); }, [tab]);
 
-  if (!agency) return <NoAccount p={p} />;
+  // Guard lives AFTER all hooks — `agency` can be momentarily undefined right
+  // after sign-in (own row not re-hydrated yet under scoped RLS). Early-
+  // returning before the hooks below would crash React (hook count).
 
   const accBookings = useMemo(
-    () => bookings.filter((b) => b.source === "agent" && b.agencyId === agency.id),
-    [bookings, agency.id]
+    () => agency ? bookings.filter((b) => b.source === "agent" && b.agencyId === agency.id) : [],
+    [bookings, agency?.id]
   );
   // All agent-tagged invoices for this agency. Kept for back-compat and for
   // anything that needs the full ledger (e.g. dashboard outstanding totals).
   const accInvoices = useMemo(
-    () => invoices.filter((i) => i.clientType === "agent" && i.clientName?.toLowerCase().includes(agency.name.toLowerCase())),
+    () => agency ? invoices.filter((i) => i.clientType === "agent" && i.clientName?.toLowerCase().includes((agency.name || "").toLowerCase())) : [],
     [invoices, agency]
   );
   // Booking ledger — what the agency owes the hotel for stays. Treat missing
@@ -944,6 +961,8 @@ function AgentPortal({ session, setSession, pendingNav, consumePendingNav }) {
     () => payments.filter((pay) => bookingIds.has(pay.bookingId)),
     [payments, accBookings] // eslint-disable-line react-hooks/exhaustive-deps
   );
+
+  if (!agency) return <NoAccount p={p} />;
 
   const tabs = [
     { id: "dashboard",  label: "Dashboard",  icon: Briefcase },
@@ -1199,11 +1218,14 @@ function MemberPortal({ session, setSession, pendingNav, consumePendingNav }) {
   }, [pendingNav]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (tab !== "bookings") setSelectedBookingId(null); }, [tab]);
 
-  if (!member) return <NoAccount p={p} />;
-
-  const tier = tiers.find((t) => t.id === member.tier);
+  // NOTE: do NOT early-return before the hooks below — `member` can be
+  // momentarily undefined right after sign-in (the member's own row hasn't
+  // re-hydrated yet under scoped RLS). Returning here would change the hook
+  // count between renders and crash React. The guard lives after all hooks.
+  const tier = tiers.find((t) => t.id === member?.tier);
 
   const myBookings = useMemo(() => {
+    if (!member) return [];
     const lower = (member.email || "").toLowerCase();
     // Match three ways: by memberId stamp on bookings the member created
     // (covers "book for someone else"), by guest email (their own stays),
@@ -1211,9 +1233,9 @@ function MemberPortal({ session, setSession, pendingNav, consumePendingNav }) {
     return bookings.filter((b) =>
       b.memberId === member.id ||
       (b.email && b.email.toLowerCase() === lower) ||
-      (b.guest && b.guest.toLowerCase() === member.name.toLowerCase())
+      (b.guest && member.name && b.guest.toLowerCase() === member.name.toLowerCase())
     );
-  }, [bookings, member.id, member.email, member.name]);
+  }, [bookings, member?.id, member?.email, member?.name]);
   const myBookingIds = new Set(myBookings.map((b) => b.id));
   // Gift cards this member BOUGHT (their senderMemberId). The matching
   // invoice + payment records carry the gift-card payment, which belongs
@@ -1249,6 +1271,11 @@ function MemberPortal({ session, setSession, pendingNav, consumePendingNav }) {
     () => (giftCards || []).filter((c) => c.recipientMemberId === member?.id),
     [giftCards, member?.id]
   );
+
+  // Account row not loaded yet (or no longer exists) — render the graceful
+  // placeholder instead of crashing. Resolves automatically once the
+  // member's own row hydrates after sign-in.
+  if (!member) return <NoAccount p={p} />;
 
   const tabs = [
     { id: "dashboard", label: "Dashboard", icon: Sparkles },
