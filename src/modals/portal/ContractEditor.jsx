@@ -2015,6 +2015,10 @@ function ContractMealPlansPicker({ p, kind, availablePlans, defaultMealPlan, onC
 }
 
 export function MealPlanSupplementMatrix({ p, rooms, selectedPlan, selectedPlans, defaultPlan, onUpdateRoom }) {
+  // Own translate fn — this is a top-level component (not nested in
+  // ContractEditor), so it must source `t` itself for roomLabel(); otherwise
+  // the rooms row throws "t is not defined" and crashes the editor.
+  const t = useT();
   // When `onUpdateRoom` is supplied the matrix offers an inline edit
   // mode — the operator can adjust per-suite supplements directly from
   // the contract / tier editor instead of navigating to Rooms & Rates.
