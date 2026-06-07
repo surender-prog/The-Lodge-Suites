@@ -18,6 +18,7 @@ import { roomLabel, roomShort, sortRoomsByPrice, giftCardBookingBlockers } from 
 import { validateCard, formatExpiry } from "../lib/cardValidation.js";
 import { CardBrandRow } from "../components/CardBrandMark.jsx";
 import { ErrorBoundary } from "../components/ErrorBoundary.jsx";
+import { GiftCardRequestPanel } from "../components/GiftCardRequestPanel.jsx";
 import { ensurePlanList, resolveDefaultPlan } from "./portal/ContractEditor.jsx";
 import { Icon as ExtraIcon } from "../components/Icon.jsx";
 import { PortalThemeProvider, ThemeToggle, usePalette } from "./portal/theme.jsx";
@@ -825,7 +826,17 @@ function CorporatePortal({ session, setSession, pendingNav, consumePendingNav })
       tabs={tabs} tab={tab} setTab={setTab}
       banner={<AccountBanner kindLabel="Corporate Account" name={agreement.account} subtitle={`${agreement.industry} · Contract ${agreement.id}`} session={session} accent="#D97706" />}
     >
-      {tab === "dashboard"  && <CorpDashboard agreement={agreement} bookings={accBookings} invoices={accInvoices} setTab={setTab} />}
+      {tab === "dashboard"  && (
+        <>
+          <GiftCardRequestPanel
+            palette={p}
+            buyer={{ id: agreement.id, name: agreement.account, email: agreement.pocEmail || session.email }}
+            buyerKind="corporate"
+            onSubmitted={(saved) => saved && pushToast({ message: `Gift card request submitted · ${saved.code}` })}
+          />
+          <CorpDashboard agreement={agreement} bookings={accBookings} invoices={accInvoices} setTab={setTab} />
+        </>
+      )}
       {tab === "book"       && <BookStayTab session={session} kind="corporate" account={agreement} onComplete={(next) => next && setTab(next)} />}
       {tab === "bookings"   && (
         selectedBookingId ? (
@@ -981,7 +992,17 @@ function AgentPortal({ session, setSession, pendingNav, consumePendingNav }) {
       tabs={tabs} tab={tab} setTab={setTab}
       banner={<AccountBanner kindLabel="Travel Agent" name={agency.name} subtitle={`Commission ${agency.commissionPct}% · Contract ${agency.id}`} session={session} accent="#7C3AED" />}
     >
-      {tab === "dashboard" && <AgentDashboard agency={agency} bookings={accBookings} invoices={accInvoices} setTab={setTab} />}
+      {tab === "dashboard" && (
+        <>
+          <GiftCardRequestPanel
+            palette={p}
+            buyer={{ id: agency.id, name: agency.name, email: agency.pocEmail || session.email }}
+            buyerKind="agent"
+            onSubmitted={(saved) => saved && pushToast({ message: `Gift card request submitted · ${saved.code}` })}
+          />
+          <AgentDashboard agency={agency} bookings={accBookings} invoices={accInvoices} setTab={setTab} />
+        </>
+      )}
       {tab === "book"      && <BookStayTab session={session} kind="agent" account={agency} onComplete={(next) => next && setTab(next)} />}
       {tab === "bookings"  && (
         selectedBookingId ? (
@@ -2539,6 +2560,15 @@ function MemberGiftCardsTab({ member, cards, transferGiftCard }) {
 
   return (
     <div>
+      {/* Request a new gift card — admin processes payment offline (no
+          gateway capture here), then issues the certificate to this tab. */}
+      <GiftCardRequestPanel
+        palette={p}
+        buyer={{ id: member.id, name: member.name, email: member.email }}
+        buyerKind="member"
+        onSubmitted={(saved) => saved && pushToast({ message: `Request submitted · ${saved.code}` })}
+      />
+
       {/* Help panel — explains how the share + redeem flow works */}
       <div className="p-4 mb-6" style={{
         backgroundColor: `${p.accent}10`,
