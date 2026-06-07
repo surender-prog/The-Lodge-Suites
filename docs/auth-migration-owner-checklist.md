@@ -11,8 +11,56 @@ Project ref: `tbmmmsldanxhgfmyoamy` · Dashboard: https://supabase.com/dashboard
 ## Status so far
 - ✅ **Phase 0** (migration 021) — applied & live. Plaintext no longer leaks to
   the browser on the write side; password-preserving triggers verified working.
-- ✅ **Phase 1/2 code** (commit `c9da740`) — shipped, dormant behind the flag.
-- ⬜ **The steps below** — needed to actually turn real auth on.
+- ✅ **Phase 1/1b** (migrations 022, 023) — applied & verified. portal_identities
+  populated; every member OTP-capable. Access token hook enabled.
+- ✅ **Phase 1/2 code** — shipped, dormant behind the flag.
+- ✅ **Auth tested end-to-end** — corporate/agent password login + member email
+  OTP (real code) both verified against live Supabase.
+- ✅ **Phase 4 scoped RLS** (migration 024) — written, awaiting apply (with the
+  flag flip). See the dedicated section below.
+- ⬜ **The remaining steps** — turn real auth on (flag) once Phase 4 is applied.
+
+---
+
+## ★ Phase 4 — scoped RLS (apply in lockstep with the flag flip)
+
+This is the **security gate**: without it, a logged-in guest could read other
+accounts' data over the API. Apply migration **024** right before flipping the
+flag. Keep **`024_rollback_scoped_rls.sql`** open in another tab.
+
+**Apply order (one sitting):**
+1. **Re-login as staff first won't help yet — apply 024 first.** Run
+   `supabase/migrations/024_auth_phase4_scoped_rls.sql` in the SQL Editor.
+2. **⚠️ Immediately SIGN OUT and SIGN IN again in the operator portal.** The new
+   hook stamps `is_staff` only on *fresh* tokens — your currently-open staff
+   session has an old token without it and will see empty data until you
+   re-login (or the token auto-refreshes within the hour). **Re-login fixes it.**
+3. **Test the operator portal** (as staff): every section still shows data —
+   bookings, members, invoices, agreements, agencies, payments, etc. If anything
+   is empty → run the rollback and tell me.
+4. **Flip `VITE_REAL_GUEST_AUTH=true`** on staging → test the guest side:
+   - Member logs in (OTP) → sees only **their** bookings/invoices/receipts.
+   - Corporate/agent logs in → sees only **their** account's data.
+   - (Optional, decisive) In the browser console as a logged-in member, try to
+     read another account: `await supabase.from('bookings').select('*')` should
+     return **only their rows**, never everyone's.
+5. If all green on staging → flip the flag in **production**.
+
+**Known trade-offs (by design, flagged):**
+- A member's bookings are matched by `memberId` or `email` (not fuzzy guest
+  name) — a few legacy bookings with neither won't show until re-stamped. Only
+  ever hides, never over-shows.
+- Corporate/agent **sub-user password changes** via the old JSONB path stop
+  working under scoped RLS — route them through Supabase password reset
+  (`resetGuest`) instead. Member profile edits keep working (guarded so tier/
+  points can't be self-edited).
+- **Watch the console** when a member creates a booking on flag-on staging: the
+  per-row write persists fine; if you see noisy failed bulk-writes, tell me and
+  I'll gate the persistence layer to staff-only (a small client follow-up).
+
+**Rollback:** if the operator portal breaks, run
+`supabase/migrations/024_rollback_scoped_rls.sql` (restores the old permissive
+policies + reverts the hook). Keep the flag OFF after a rollback.
 
 ---
 
