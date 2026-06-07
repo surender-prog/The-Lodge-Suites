@@ -12,6 +12,7 @@ import { fmtDate } from "../../utils/date.js";
 import { useData, legalLine, formatCurrency } from "../../data/store.jsx";
 import { usePalette } from "./theme.jsx";
 import { ContractEditor, defaultAgencyDraft } from "./ContractEditor.jsx";
+import { ErrorBoundary } from "../../components/ErrorBoundary.jsx";
 import { ContractPreviewModal, downloadContract, emailContract } from "./ContractDocument.jsx";
 import { AgencyWorkspaceDrawer } from "./AgencyWorkspace.jsx";
 import { ProspectExplorerDrawer } from "./ProspectExplorer.jsx";
@@ -492,14 +493,16 @@ export const AgentTab = () => {
         </div>
 
         {editingAgency && (
-          <ContractEditor
-            open
-            kind="agent"
-            contract={editingAgency}
-            onClose={() => setEditingAgency(null)}
-            onSave={(a) => { upsertAgency(a); setEditingAgency(null); }}
-            onRemove={(id) => { removeAgency(id); setEditingAgency(null); }}
-          />
+          <ErrorBoundary label="contract editor" onClose={() => setEditingAgency(null)}>
+            <ContractEditor
+              open
+              kind="agent"
+              contract={editingAgency}
+              onClose={() => setEditingAgency(null)}
+              onSave={(a) => { upsertAgency(a); setEditingAgency(null); }}
+              onRemove={(id) => { removeAgency(id); setEditingAgency(null); }}
+            />
+          </ErrorBoundary>
         )}
         {previewing && (
           <ContractPreviewModal
@@ -988,14 +991,16 @@ export const AgentTab = () => {
       </div>
 
       {editingAgency && (
-        <ContractEditor
-          open
-          kind="agent"
-          contract={editingAgency}
-          onClose={() => setEditingAgency(null)}
-          onSave={(a) => { upsertAgency(a); setEditingAgency(null); }}
-          onRemove={(id) => { removeAgency(id); setEditingAgency(null); }}
-        />
+        <ErrorBoundary label="contract editor" onClose={() => setEditingAgency(null)}>
+          <ContractEditor
+            open
+            kind="agent"
+            contract={editingAgency}
+            onClose={() => setEditingAgency(null)}
+            onSave={(a) => { upsertAgency(a); setEditingAgency(null); }}
+            onRemove={(id) => { removeAgency(id); setEditingAgency(null); }}
+          />
+        </ErrorBoundary>
       )}
       {previewing && (
         <ContractPreviewModal

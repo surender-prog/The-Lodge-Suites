@@ -10,6 +10,7 @@ import { useT } from "../../i18n/LanguageContext.jsx";
 import { useData, formatCurrency } from "../../data/store.jsx";
 import { usePalette } from "./theme.jsx";
 import { ContractEditor, defaultCorporateDraft } from "./ContractEditor.jsx";
+import { ErrorBoundary } from "../../components/ErrorBoundary.jsx";
 import { ContractPreviewModal, downloadContract, emailContract } from "./ContractDocument.jsx";
 import { RfpEditor, rfpToContractDraft, RFP_STAGES, stagePillStyle, stageDotStyle } from "./RfpEditor.jsx";
 import { CorporateWorkspaceDrawer } from "./CorporateWorkspace.jsx";
@@ -516,14 +517,16 @@ export const CorporateTab = () => {
         </div>
 
         {editingAgr && (
-          <ContractEditor
-            open
-            kind="corporate"
-            contract={editingAgr}
-            onClose={() => setEditingAgr(null)}
-            onSave={(a) => { upsertAgreement(a); setEditingAgr(null); }}
-            onRemove={(id) => { removeAgreement(id); setEditingAgr(null); }}
-          />
+          <ErrorBoundary label="contract editor" onClose={() => setEditingAgr(null)}>
+            <ContractEditor
+              open
+              kind="corporate"
+              contract={editingAgr}
+              onClose={() => setEditingAgr(null)}
+              onSave={(a) => { upsertAgreement(a); setEditingAgr(null); }}
+              onRemove={(id) => { removeAgreement(id); setEditingAgr(null); }}
+            />
+          </ErrorBoundary>
         )}
         {previewing && (
           <ContractPreviewModal
@@ -772,14 +775,16 @@ export const CorporateTab = () => {
       )}
 
       {editingAgr && (
-        <ContractEditor
-          open
-          kind="corporate"
-          contract={editingAgr}
-          onClose={() => setEditingAgr(null)}
-          onSave={(a) => { upsertAgreement(a); setEditingAgr(null); }}
-          onRemove={(id) => { removeAgreement(id); setEditingAgr(null); }}
-        />
+        <ErrorBoundary label="contract editor" onClose={() => setEditingAgr(null)}>
+          <ContractEditor
+            open
+            kind="corporate"
+            contract={editingAgr}
+            onClose={() => setEditingAgr(null)}
+            onSave={(a) => { upsertAgreement(a); setEditingAgr(null); }}
+            onRemove={(id) => { removeAgreement(id); setEditingAgr(null); }}
+          />
+        </ErrorBoundary>
       )}
 
       {editingRfp && (
