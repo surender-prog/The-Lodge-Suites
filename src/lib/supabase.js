@@ -1,4 +1,29 @@
 import { createClient } from "@supabase/supabase-js";
+import { Capacitor } from "@capacitor/core";
+
+// True only inside the native iOS/Android shell (Capacitor). False on the web.
+const IS_NATIVE = (() => {
+  try { return Capacitor?.isNativePlatform?.() === true; } catch { return false; }
+})();
+export { IS_NATIVE };
+
+// Native session storage. A WebView's localStorage is not durable (can be
+// evicted under storage pressure) and is readable on jailbroken/rooted
+// devices, so on device we persist the Supabase session via
+// @capacitor/preferences (iOS UserDefaults / Android SharedPreferences),
+// lazy-imported so the web bundle stays lean. NOTE: Preferences is durable but
+// is NOT the Keychain/Keystore — upgrade to a secure-storage plugin before
+// production hardening (see CAPACITOR.md). On web this is unused and supabase-js
+// keeps its default localStorage (behaviour unchanged).
+function nativeSessionStorage() {
+  let prefs;
+  const load = () => (prefs ??= import("@capacitor/preferences").then((m) => m.Preferences));
+  return {
+    async getItem(key) { const P = await load(); const { value } = await P.get({ key }); return value ?? null; },
+    async setItem(key, value) { const P = await load(); await P.set({ key, value }); },
+    async removeItem(key) { const P = await load(); await P.remove({ key }); },
+  };
+}
 
 // ─── Supabase singleton client ────────────────────────────────────────────
 //
@@ -46,12 +71,19 @@ if (SUPABASE_CONFIGURED) {
       // rather force a fresh sign-in every page load.
       persistSession: true,
       autoRefreshToken: true,
-      detectSessionInUrl: true,
+      // On the web, OAuth/reset links round-trip through the URL hash so we let
+      // supabase-js detect them. In the native shell the app loads from a
+      // capacitor:// scheme (no redirect URL on boot) — deep links are handled
+      // explicitly — so detection is disabled there.
+      detectSessionInUrl: !IS_NATIVE,
       // Explicit PKCE — required for the email-OTP / reset-link guest flow
       // (verifyOtp + reset links round-trip a code_verifier). v2 defaults to
       // pkce, but we pin it so a future supabase-js bump can't silently drop
       // us to the implicit flow.
       flowType: "pkce",
+      // Native: persist the session in durable OS storage (see above). Web:
+      // leave undefined → supabase-js default localStorage (unchanged).
+      ...(IS_NATIVE ? { storage: nativeSessionStorage() } : {}),
     },
   });
   // Hydrate the session cache asynchronously and keep it current.

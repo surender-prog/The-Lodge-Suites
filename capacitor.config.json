@@ -1,0 +1,11 @@
+{
+  "appId": "com.thelodgesuites.app",
+  "appName": "The Lodge Suites",
+  "webDir": "dist",
+  "ios": {
+    "contentInset": "always"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}
