@@ -112,7 +112,33 @@ export const Footer = ({ onPortal, onNav, onOpenVouchers, onOpenJuffair, onOpenP
           </div>
         </div>
 
-        <div className="pt-8 flex flex-wrap items-center justify-between gap-4" style={{ fontFamily: "'Manrope', sans-serif", color: C.textDim, fontSize: "0.75rem" }}>
+        {/* Partner credits — hospitality operator + technology partner. Lives
+            above the legal/copyright row so the brand-credit reads naturally
+            before the boilerplate. Links open in a new tab + rel=noopener so
+            outbound clicks don't navigate away from the property. */}
+        <div className="pt-8 pb-4 flex flex-wrap items-center justify-center gap-x-8 gap-y-2 text-center"
+          style={{ fontFamily: "'Manrope', sans-serif", color: C.textDim, fontSize: "0.74rem" }}>
+          <span>
+            Hospitality Partner: <strong style={{ color: C.textOnDark }}>Ziva Hospitality Management</strong>
+            <span aria-hidden="true" style={{ margin: "0 6px" }}>·</span>
+            <a href="https://www.zivahotels.com" target="_blank" rel="noopener noreferrer"
+              style={{ color: C.gold, textDecoration: "none" }}
+              onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}
+            >www.zivahotels.com</a>
+          </span>
+          <span style={{ color: C.border }} aria-hidden="true">|</span>
+          <span>
+            Technology powered by: <a href="https://www.equalpixels.ae" target="_blank" rel="noopener noreferrer"
+              style={{ color: C.gold, textDecoration: "none" }}
+              onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}
+            >www.equalpixels.ae</a>
+          </span>
+        </div>
+
+        <div className="pt-4 flex flex-wrap items-center justify-between gap-4"
+          style={{ fontFamily: "'Manrope', sans-serif", color: C.textDim, fontSize: "0.75rem", borderTop: `1px solid ${C.border}` }}>
           <div>{copyrightLine}</div>
           <div className="flex gap-6">
             <button onClick={onPortal} style={{ color: C.gold, letterSpacing: "0.18em", textTransform: "uppercase", fontSize: "0.7rem", fontWeight: 700 }}>
