@@ -576,16 +576,36 @@ function escapeHtml(s) {
 // Side-effect helpers (mirror ContractDocument's set).
 // ---------------------------------------------------------------------------
 export function downloadBookingDoc(booking, kind, opts = {}) {
+  // Download as PDF. We render the print-styled document into a new window and
+  // hand it to the browser's native print engine ("Save as PDF") — this keeps
+  // perfect fidelity (the real brand fonts + the A4 @page print CSS already in
+  // buildBookingDocHtml) with zero extra dependencies, and the window title
+  // seeds the default PDF filename. If a pop-up blocker stops the window, we
+  // fall back to a self-contained .html download so the user still gets a file.
   const html = buildBookingDocHtml(booking, kind, opts);
-  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-  const url  = URL.createObjectURL(blob);
-  const safeId = String(booking.id || "doc").replace(/[^A-Za-z0-9_-]/g, "_");
   const filenameKind = kind === "receipt" ? "Receipt" : kind === "confirmation" ? "Confirmation" : "Invoice";
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `LS-${filenameKind}-${safeId}.html`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  const safeId = String(booking.id || "doc").replace(/[^A-Za-z0-9_-]/g, "_");
+  const fileName = `LS-${filenameKind}-${safeId}`;
+
+  const win = window.open("", "_blank", "width=900,height=1000");
+  if (!win) {
+    // Pop-up blocked — degrade gracefully to an HTML file download.
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url  = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${fileName}.html`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    return false;
+  }
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  try { win.document.title = fileName; } catch (_) { /* cross-origin guard */ }
+  // Let fonts + layout settle, then open the print → Save-as-PDF dialog.
+  setTimeout(() => { try { win.focus(); win.print(); } catch (_) { /* user can print manually */ } }, 400);
+  return true;
 }
 
 export function printBookingDoc(booking, kind, opts = {}) {
