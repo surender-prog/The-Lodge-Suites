@@ -62,12 +62,23 @@ function buildFolio(booking, tax, rooms, extras) {
     : 0;
   const netTotal = booking.total || 0;
   const gross    = netTotal + commissionCut;
-  const inv   = inverseApplyTaxes(gross, tax || { components: [] }, nights);
-  const net   = inv?.net || gross;
-  const compsApplied = inv?.components || [];
-
-  // Render percentage-based taxes against net using the same applyTaxes pass
-  const built = applyTaxes(net, tax || { components: [] }, nights);
+  // inverseApplyTaxes returns the NET as a plain NUMBER — it solves for the net
+  // such that net + tax(net) === gross. Earlier this code treated the result as
+  // an object ({ net, components }), so `net` silently fell back to `gross` and
+  // the tax breakdown came out empty (Subtotal === Total, no line items). Use
+  // the number, then derive the per-tax lines from a forward applyTaxes() pass
+  // on that net so the folio always reconciles back to the gross total.
+  const netNum = inverseApplyTaxes(gross, tax || { components: [] }, nights);
+  const net    = (typeof netNum === "number" && Number.isFinite(netNum)) ? netNum : gross;
+  const built  = applyTaxes(net, tax || { components: [] }, nights);
+  // Map applyTaxes()'s `lines` into the { label, amount, type, rate } shape the
+  // folio table and the printable/PDF document both render.
+  const taxComponents = (built.lines || []).map((l) => ({
+    label:  l.name,
+    amount: l.taxAmount,
+    type:   l.type,
+    rate:   l.rate,
+  }));
 
   // Weekday/weekend split — bookings created on the new pricing model stamp
   // these four fields; legacy records are missing them and the folio falls
@@ -84,7 +95,7 @@ function buildFolio(booking, tax, rooms, extras) {
     rate:        booking.rate || 0,
     netRoom:     net,
     extras:      [], // line items — bookings as stored don't carry per-extra entries; left empty
-    components:  built.components || compsApplied || [],
+    components:  taxComponents,
     gross,
     netTotal,
     commissionCut,
