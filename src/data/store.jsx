@@ -178,7 +178,7 @@ const INITIAL_PARTNER_LOYALTY = {
 // Booking statuses that count as "confirmed / stayed" and so award B2B points.
 const ACCRUAL_STATUSES = new Set(["confirmed", "in-house", "checked-out"]);
 
-function makeTierCrud(setTierList) {
+export function makeTierCrud(setTierList) {
   return {
     updateTier: (idx, patch) => setTierList(ts => ts.map((t, i) => i === idx ? { ...t, ...patch } : t)),
     toggleBenefit: (tierIdx, bid) => setTierList(ts => ts.map((t, i) => i !== tierIdx ? t

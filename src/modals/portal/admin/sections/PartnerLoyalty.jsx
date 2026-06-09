@@ -1,8 +1,8 @@
-import React, { useState } from "react";
-import { Award, Crown, Gem, Sparkles, Star, Heart, ArrowUp, ArrowDown, Plus, Trash2, Check } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { Award, Crown, Gem, Sparkles, Star, Heart, ArrowUp, ArrowDown, Plus, Trash2, Check, Save, RotateCcw } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
-import { useData } from "../../../../data/store.jsx";
-import { Card, GhostBtn, PageHeader, PrimaryBtn, SelectField, TextField } from "../ui.jsx";
+import { useData, makeTierCrud } from "../../../../data/store.jsx";
+import { Card, GhostBtn, PageHeader, PrimaryBtn, SelectField, TextField, pushToast } from "../ui.jsx";
 
 const TIER_ICONS = { Award, Crown, Gem, Sparkles, Star, Heart };
 const ICON_OPTIONS = [
@@ -15,9 +15,8 @@ const COLOR_OPTIONS = [
   { value: "#5C2A2F", label: "Burgundy" }, { value: "#2D2F36", label: "Onyx" },
 ];
 
-// One editable tier card (name, qualify threshold, earn rate, icon/colour,
-// intro, benefit list with on/off toggles). Drives the shared tier-CRUD action
-// set passed in `actions` (same shape as the member tier editor).
+// One editable tier card. Drives the shared tier-CRUD action set passed in
+// `actions` (operating on the local DRAFT, committed on Save).
 function TierCard({ tier, idx, total, actions, qualifyUnit, p }) {
   const Icon = TIER_ICONS[tier.icon] || Award;
   const lbl = { fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.16em", textTransform: "uppercase", color: p.textMuted, fontWeight: 700, marginBottom: 4 };
@@ -90,19 +89,57 @@ function TierCard({ tier, idx, total, actions, qualifyUnit, p }) {
 }
 
 // Admin editor for the two B2B loyalty ladders (corporate + agency) and the
-// shared points economy. Mirrors the member LS Privilege editor but is fully
-// self-contained so it can never affect the member program.
+// shared points economy. Edits are buffered in a local DRAFT and only written
+// to the store (and persisted) on Save — mirroring the member-economy editor.
 export const PartnerLoyalty = () => {
   const p = usePalette();
   const {
-    corporateTiers, agencyTiers, corporateTierActions, agencyTierActions,
-    partnerLoyalty, setPartnerLoyalty,
+    corporateTiers, agencyTiers, partnerLoyalty,
+    setCorporateTiers, setAgencyTiers, setPartnerLoyalty,
   } = useData();
 
   const [kind, setKind] = useState("corporate");
-  const tiers = kind === "corporate" ? corporateTiers : agencyTiers;
-  const actions = kind === "corporate" ? corporateTierActions : agencyTierActions;
-  const qualifyUnit = partnerLoyalty?.qualifyBy === "revenue" ? "BHD" : "nights";
+
+  // Local draft of everything editable on this tab. `touched` distinguishes a
+  // user edit from an inbound store change (hydration / realtime) so the sync
+  // effect below can refresh the draft only while there are no pending edits.
+  const [draftCorp, setDraftCorp] = useState(corporateTiers);
+  const [draftAgency, setDraftAgency] = useState(agencyTiers);
+  const [draftEcon, setDraftEcon] = useState(partnerLoyalty);
+  const [touched, setTouched] = useState(false);
+
+  useEffect(() => {
+    if (!touched) {
+      setDraftCorp(corporateTiers);
+      setDraftAgency(agencyTiers);
+      setDraftEcon(partnerLoyalty);
+    }
+  }, [corporateTiers, agencyTiers, partnerLoyalty, touched]);
+
+  // Touch-marking draft setters so any tier/benefit edit flips `touched`.
+  const editCorp = useMemo(() => (u) => { setTouched(true); setDraftCorp(u); }, []);
+  const editAgency = useMemo(() => (u) => { setTouched(true); setDraftAgency(u); }, []);
+  const corpActions = useMemo(() => makeTierCrud(editCorp), [editCorp]);
+  const agencyActions = useMemo(() => makeTierCrud(editAgency), [editAgency]);
+  const editEcon = (patch) => { setTouched(true); setDraftEcon((l) => ({ ...l, ...patch })); };
+
+  const tiers = kind === "corporate" ? draftCorp : draftAgency;
+  const actions = kind === "corporate" ? corpActions : agencyActions;
+  const qualifyUnit = draftEcon?.qualifyBy === "revenue" ? "BHD" : "nights";
+
+  const save = () => {
+    setCorporateTiers(draftCorp);
+    setAgencyTiers(draftAgency);
+    setPartnerLoyalty(draftEcon);
+    setTouched(false);
+    pushToast({ message: "Partner loyalty saved" });
+  };
+  const discard = () => {
+    setDraftCorp(corporateTiers);
+    setDraftAgency(agencyTiers);
+    setDraftEcon(partnerLoyalty);
+    setTouched(false);
+  };
 
   const pill = (active) => ({
     padding: "8px 18px", cursor: "pointer", fontFamily: "'Manrope', sans-serif",
@@ -114,10 +151,17 @@ export const PartnerLoyalty = () => {
   const lbl = { fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.16em", textTransform: "uppercase", color: p.textMuted, fontWeight: 700, marginBottom: 4 };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, position: "relative" }}>
       <PageHeader
         title="Partner Loyalty"
-        intro="Points + tiers for corporate accounts and travel agencies. Tiers are awarded automatically by lifetime volume; enable the programme per account from each account's workspace. Edits here apply the next time points accrue."
+        intro="Points + tiers for corporate accounts and travel agencies. Tiers are awarded automatically by lifetime volume; enable the programme per account from each account's workspace. Edit the ladders + economy here, then Save."
+        action={
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {touched
+              ? <span style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", color: p.accent, fontWeight: 600 }}>● Unsaved changes</span>
+              : <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", color: p.success, fontWeight: 600 }}><Check size={13} /> Saved</span>}
+          </div>
+        }
       />
 
       {/* Ladder switch */}
@@ -143,20 +187,20 @@ export const PartnerLoyalty = () => {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
           <div>
             <div style={lbl}>Redemption rate</div>
-            <TextField type="number" value={partnerLoyalty.redeemBhdPerPoints} onChange={(v) => setPartnerLoyalty((l) => ({ ...l, redeemBhdPerPoints: Math.max(1, Number(v) || 1) }))} suffix="pts = BHD 1" />
+            <TextField type="number" value={draftEcon.redeemBhdPerPoints} onChange={(v) => editEcon({ redeemBhdPerPoints: Math.max(1, Number(v) || 1) })} suffix="pts = BHD 1" />
           </div>
           <div>
             <div style={lbl}>Qualify tiers by</div>
             <SelectField
-              value={partnerLoyalty.qualifyBy || "nights"}
-              onChange={(v) => setPartnerLoyalty((l) => ({ ...l, qualifyBy: v }))}
+              value={draftEcon.qualifyBy || "nights"}
+              onChange={(v) => editEcon({ qualifyBy: v })}
               options={[{ value: "nights", label: "Lifetime room-nights" }, { value: "revenue", label: "Lifetime revenue (BHD)" }]}
             />
           </div>
           <div>
             <div style={lbl}>Gift-card denominations</div>
             <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
-              {(partnerLoyalty.giftCard?.denominations || [20, 50, 100]).map((d) => (
+              {(draftEcon.giftCard?.denominations || [20, 50, 100]).map((d) => (
                 <span key={d} style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.82rem", fontWeight: 600, color: p.textPrimary, border: `1px solid ${p.border}`, padding: "8px 12px" }}>BHD {d}</span>
               ))}
             </div>
@@ -166,6 +210,22 @@ export const PartnerLoyalty = () => {
           Points convert to BHD credit on a future booking, or (coming next) a fixed-value third-party gift card in the denominations above. Gift-card brands (e.g. Lulu, Sharaf DG, City Centre, Centrepoint) and the redemption flow arrive in the next phase.
         </div>
       </Card>
+
+      {/* Sticky Save bar — only when there are unsaved edits */}
+      {touched && (
+        <div style={{
+          position: "sticky", bottom: 0, marginTop: 4, zIndex: 5,
+          display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10,
+          padding: "12px 14px", backgroundColor: p.bgPanel, border: `1px solid ${p.accent}`,
+          boxShadow: "0 -6px 18px rgba(0,0,0,0.12)",
+        }}>
+          <span style={{ flex: 1, fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", color: p.textMuted }}>
+            You have unsaved changes to the partner-loyalty tiers / economy.
+          </span>
+          <GhostBtn small onClick={discard}><RotateCcw size={13} /> Discard</GhostBtn>
+          <PrimaryBtn small onClick={save}><Save size={14} /> Save changes</PrimaryBtn>
+        </div>
+      )}
     </div>
   );
 };
