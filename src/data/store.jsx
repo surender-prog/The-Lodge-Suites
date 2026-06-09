@@ -165,7 +165,12 @@ const INITIAL_AGENCY_TIERS = [
 const INITIAL_PARTNER_LOYALTY = {
   redeemBhdPerPoints: 100,                       // 100 points = BHD 1
   qualifyBy:          "nights",                  // "nights" | "revenue"
-  giftCard:           { denominations: [20, 50, 100], brands: [] },
+  giftCard:           { denominations: [20, 50, 100], brands: [
+    { id: "brand-lulu",        name: "Lulu",        active: true },
+    { id: "brand-sharafdg",    name: "Sharaf DG",   active: true },
+    { id: "brand-citycentre",  name: "City Centre", active: true },
+    { id: "brand-centrepoint", name: "Centrepoint", active: true },
+  ] },
   freeNightAfterPts:  0,                          // reserved (0 = disabled for B2B)
 };
 

@@ -50,13 +50,21 @@ const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString("en-GB", { day: 
 export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
   const p = usePalette();
   const t = useT();
-  const { rooms, addBooking, calendar, tax, taxPatterns, activePatternId, hotelInfo, bookings, roomUnits, staffSession } = useData();
+  const { rooms, addBooking, calendar, tax, taxPatterns, activePatternId, hotelInfo, bookings, roomUnits, staffSession, agreements, redeemPartnerPoints, partnerLoyalty } = useData();
 
   // When the contracted payment term is "Pre-payment (cash)", surface the
   // same Pay-on-arrival / Pay-now-save-5% choice the public booking modal
   // shows. Default to "later" (pay on arrival) so the operator confirms it
   // explicitly before charging.
   const isPrepay = (agreement.paymentTerms || "") === "Pre-payment (cash)";
+  // Partner-loyalty points redemption — staff can apply the account's points as
+  // a BHD discount on this booking (deducted on save). Reads the live account
+  // so the balance reflects any concurrent accrual/adjust.
+  const liveAgreement = agreements.find((a) => a.id === agreement.id) || agreement;
+  const loyaltyOn = !!liveAgreement.loyaltyEnabled;
+  const ptsBalance = Number(liveAgreement.points || 0);
+  const perBhd = Number(partnerLoyalty?.redeemBhdPerPoints) || 100;
+  const [redeemPts, setRedeemPts] = useState("");
 
   const [draft, setDraft] = useState({
     roomId:   rooms[0]?.id,
@@ -172,8 +180,15 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
       totalTax = taxed.totalTax;
       total = taxed.gross + accFee;
     }
-    return { room_subtotal, accFee, net, total, taxLines, totalTax, payNowDiscount };
-  }, [avgRate, nights, agreement.accommodationFee, agreement.taxIncluded, tax, isPrepay, draft.paymentTiming, breakdown.total]);
+    // Loyalty points → BHD discount, capped at the account balance and at the
+    // booking total (can't redeem more than the stay costs).
+    const grossBeforePoints = total;
+    const maxPts = loyaltyOn ? Math.min(ptsBalance, grossBeforePoints * perBhd) : 0;
+    const effPts = Math.min(Math.max(0, Math.round(Number(redeemPts) || 0)), maxPts);
+    const pointsDiscount = Math.floor(effPts / perBhd);
+    total = grossBeforePoints - pointsDiscount;
+    return { room_subtotal, accFee, net, total, taxLines, totalTax, payNowDiscount, pointsDiscount, effPts };
+  }, [avgRate, nights, agreement.accommodationFee, agreement.taxIncluded, tax, isPrepay, draft.paymentTiming, breakdown.total, loyaltyOn, ptsBalance, perBhd, redeemPts]);
 
   // Pay-now bookings require a card-on-file; the operator can't confirm
   // until all four fields are populated. Pay-on-arrival keeps the existing
@@ -260,6 +275,8 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
       nonRefundable: isPrepay && draft.paymentTiming === "now",
       payNowDiscountPct: (isPrepay && draft.paymentTiming === "now") ? PAY_NOW_DISCOUNT_PCT : 0,
       payNowDiscount: pricing.payNowDiscount || 0,
+      pointsRedeemed:  pricing.effPts || 0,
+      pointsCreditBhd: pricing.pointsDiscount || 0,
       cardOnFile,
       guaranteed,
       guaranteeMode: guaranteed ? "card" : "none",
@@ -285,6 +302,11 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
       rateWeekend:      breakdown.rateWeekend || 0,
     };
     addBooking(booking);
+    // Deduct the redeemed loyalty points from the account ledger (staff-side
+    // write; the account accrues on the net total inside addBooking first).
+    if (pricing.effPts > 0) {
+      redeemPartnerPoints("corporate", agreement.id, pricing.effPts, `Applied to booking ${id}`, { bookingId: id });
+    }
     onSaved?.(booking);
     onClose();
   };
@@ -616,6 +638,20 @@ export function CorporateBookingDrawer({ agreement, onClose, onSaved }) {
                   })}
                   {agreement.taxIncluded && (
                     <SummaryRow label="Tax handling" value="Inclusive" muted p={p} />
+                  )}
+                  {loyaltyOn && ptsBalance > 0 && (
+                    <div className="flex items-center justify-between gap-2" style={{ marginTop: 6, paddingTop: 8, borderTop: `1px dashed ${p.border}` }}>
+                      <span style={{ color: p.textMuted, fontSize: "0.78rem" }}>
+                        Redeem loyalty points <span style={{ color: p.textPrimary }}>· {ptsBalance.toLocaleString()} available</span>
+                      </span>
+                      <input
+                        type="number" min="0" value={redeemPts} onChange={(e) => setRedeemPts(e.target.value)} placeholder="0"
+                        style={{ width: 96, padding: "5px 8px", backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}`, color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.82rem", textAlign: "end" }}
+                      />
+                    </div>
+                  )}
+                  {pricing.pointsDiscount > 0 && (
+                    <SummaryRow label={`Loyalty credit · ${pricing.effPts.toLocaleString()} pts`} value={`− ${fmtBhd(pricing.pointsDiscount)}`} accent p={p} />
                   )}
                   <div className="pt-3 mt-3 flex justify-between items-baseline" style={{ borderTop: `1px solid ${p.border}` }}>
                     <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.2rem", color: p.textPrimary }}>Total</span>
