@@ -341,14 +341,19 @@ function StaffLogin({ onClose }) {
     setBusy(true);
     setError(null);
     // Tiny delay so the operator perceives an authentication beat.
-    setTimeout(() => {
-      const result = signInStaff(email, password);
-      if (!result.ok) {
-        setError(result.error);
-      } else {
-        pushToast({ message: `Welcome back, ${result.user.name}` });
+    setTimeout(async () => {
+      try {
+        const result = await signInStaff(email, password);
+        if (!result.ok) {
+          setError(result.error);
+        } else {
+          pushToast({ message: `Welcome back, ${result.user.name}` });
+        }
+      } catch (_) {
+        setError("Sign-in failed — please try again.");
+      } finally {
+        setBusy(false);
       }
-      setBusy(false);
     }, 350);
   };
 

@@ -5173,8 +5173,75 @@ export function DataProvider({ children }) {
   // Staff sign-in. Validates email + password against the live adminUsers
   // store and refuses suspended accounts. On success, sets the session and
   // appends a `login` event to the audit log.
-  const signInStaff = useCallback((email, password) => {
+  const signInStaff = useCallback(async (email, password) => {
     const lower = (email || "").trim().toLowerCase();
+
+    // Build the operator session + login audit for an already-validated,
+    // ACTIVE staff record. Each path below checks status before calling this.
+    const buildSession = (user) => {
+      const session = {
+        id: user.id, name: user.name, email: user.email, role: user.role,
+        permissions: user.permissions || [], mfa: user.mfa, title: user.title,
+        avatarColor: user.avatarColor, signedInAt: new Date().toISOString(),
+      };
+      setStaffSession(session);
+      setAdminUsers((us) => us.map((u) => u.id === user.id ? { ...u, lastLogin: session.signedInAt } : u));
+      setAuditLogs((ls) => {
+        const nextNum = ls.reduce((m, l) => {
+          const n = parseInt((l.id || "").replace(/^AUD-/, ""), 10);
+          return Number.isFinite(n) ? Math.max(m, n) : m;
+        }, 1000) + 1;
+        return [{
+          id: `AUD-${nextNum}`, ts: session.signedInAt, kind: "login",
+          actorId: user.id, actorName: user.name, actorRole: user.role,
+          targetKind: null, targetId: null, targetName: null,
+          details: `Signed in to admin portal${user.mfa ? " · MFA verified" : " · password"}`,
+          ip: "session",
+        }, ...ls].slice(0, 500);
+      });
+      return { ok: true, user, session };
+    };
+
+    // 1) PRIMARY — validate against the database via Supabase Auth. This works
+    //    from a cold / cleared browser because it does NOT depend on the client
+    //    being able to read admin_users (staff-only under RLS until signed in).
+    //    The real, DB-stored password is the source of truth.
+    if (SUPABASE_CONFIGURED) {
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({ email: lower, password });
+        if (!error && data?.session) {
+          // Authenticated. Resolve the operator profile (role / permissions).
+          // The bundled seed already carries the canonical accounts, so this
+          // usually resolves instantly; otherwise fetch now that we're an
+          // authenticated staff member (RLS now permits reading admin_users).
+          let user = adminUsers.find((u) => (u.email || "").toLowerCase() === lower);
+          if (!user) {
+            try {
+              const rows = await fetchAll("admin_users");
+              if (Array.isArray(rows) && rows.length > 0) {
+                setAdminUsers(rows);
+                writeAdminUsersCache(rows);
+                user = rows.find((u) => (u.email || "").toLowerCase() === lower);
+              }
+            } catch (_) { /* fall through to the no-profile guard */ }
+          }
+          if (!user) {
+            await supabase.auth.signOut().catch(() => {});
+            return { ok: false, error: "No operator profile is linked to this account." };
+          }
+          if (user.status !== "active") {
+            await supabase.auth.signOut().catch(() => {});
+            return { ok: false, error: "This account is suspended. Contact an Owner to reactivate." };
+          }
+          return buildSession(user);
+        }
+        // Credentials rejected by Supabase — fall through to the legacy local
+        // compare so seed / dev / offline + built-in accounts still sign in.
+      } catch (_) { /* auth service unreachable — fall through to local */ }
+    }
+
+    // 2) FALLBACK — legacy client-side compare against the loaded admin_users
+    //    (local dev with no Supabase, seed mode, built-in accounts).
     const user = adminUsers.find((u) => (u.email || "").toLowerCase() === lower);
     if (!user || user.password !== password) {
       return { ok: false, error: "Email or password didn't match." };
@@ -5182,45 +5249,16 @@ export function DataProvider({ children }) {
     if (user.status !== "active") {
       return { ok: false, error: "This account is suspended. Contact an Owner to reactivate." };
     }
-    const session = {
-      id: user.id, name: user.name, email: user.email, role: user.role,
-      permissions: user.permissions || [], mfa: user.mfa, title: user.title,
-      avatarColor: user.avatarColor, signedInAt: new Date().toISOString(),
-    };
-    setStaffSession(session);
-    // Best-effort Supabase auth so RLS-gated writes (rooms, bookings,
-    // members, etc.) actually land in the DB. We fire-and-forget so the
-    // local UI sign-in stays snappy; if Supabase auth fails the user is
-    // still logged in to the demo, just in degraded "writes won't
-    // persist" mode. The warning in the browser console tells the dev
-    // exactly what went wrong (commonly: matching auth.users row not
-    // created yet, or password mismatch).
+    // Best-effort Supabase auth so RLS-gated writes land in the DB (dev/seed).
     if (SUPABASE_CONFIGURED) {
       supabase.auth.signInWithPassword({ email: user.email, password }).then(({ error }) => {
         if (error) {
           // eslint-disable-next-line no-console
-          console.warn("[supabase] auth failed for", user.email, "—", error.message,
-            "\nWrites to RLS-gated tables (rooms, bookings, etc.) will fall back to local state until you create a matching Supabase Auth user.");
+          console.warn("[supabase] auth failed for", user.email, "—", error.message);
         }
       });
     }
-    // Update lastLogin on the user record + write audit
-    setAdminUsers(us => us.map(u => u.id === user.id ? { ...u, lastLogin: session.signedInAt } : u));
-    setAuditLogs(ls => {
-      const nextNum = ls.reduce((m, l) => {
-        const n = parseInt((l.id || "").replace(/^AUD-/, ""), 10);
-        return Number.isFinite(n) ? Math.max(m, n) : m;
-      }, 1000) + 1;
-      return [{
-        id: `AUD-${nextNum}`, ts: session.signedInAt,
-        kind: "login",
-        actorId: user.id, actorName: user.name, actorRole: user.role,
-        targetKind: null, targetId: null, targetName: null,
-        details: `Signed in to admin portal${user.mfa ? " · MFA verified" : " · password"}`,
-        ip: "session",
-      }, ...ls].slice(0, 500);
-    });
-    return { ok: true, user, session };
+    return buildSession(user);
   }, [adminUsers]);
 
   const signOutStaff = useCallback(() => {
