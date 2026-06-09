@@ -7,6 +7,7 @@ import {
   UserPlus, Users, X,
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
+import { PartnerLoyaltyPanel } from "./PartnerLoyaltyPanel.jsx";
 import { useData, legalLine, formatCurrency } from "../../data/store.jsx";
 import { pushToast } from "./admin/ui.jsx";
 import { BookingDocPreviewModal, downloadBookingDoc, emailBookingDoc } from "./admin/BookingDocs.jsx";
@@ -245,6 +246,7 @@ export function CorporateWorkspaceDrawer({ agreement: initialAgreement, onClose,
             <Tab id="receipts"   label="Receipts"   count={corpPayments.length} active={tab === "receipts"} onClick={() => setTab("receipts")} p={p} />
             <Tab id="profile"    label="Profile"    count={null} active={tab === "profile"} onClick={() => setTab("profile")} p={p} />
             <Tab id="users"      label="Users"      count={(agreement.users?.length || (agreement.pocName ? 1 : 0))} active={tab === "users"} onClick={() => setTab("users")} p={p} />
+            <Tab id="loyalty"    label="Loyalty"    count={null} active={tab === "loyalty"} onClick={() => setTab("loyalty")} p={p} />
             <Tab id="statement"  label="Statement"  count={null} active={tab === "statement"} onClick={() => setTab("statement")} p={p} />
           </div>
 
@@ -290,6 +292,9 @@ export function CorporateWorkspaceDrawer({ agreement: initialAgreement, onClose,
           )}
           {tab === "users" && (
             <UsersSection agreement={agreement} upsertAgreement={upsertAgreement} p={p} />
+          )}
+          {tab === "loyalty" && (
+            <PartnerLoyaltyPanel kind="corporate" accountId={agreement.id} />
           )}
           {tab === "statement" && (
             <StatementSection

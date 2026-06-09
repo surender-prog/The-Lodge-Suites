@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Activity, AlertCircle, BarChart3, Briefcase, Building2, Eye, EyeOff, Hotel,
-  KeyRound, Lock, LogIn, LogOut, Mail, ShieldCheck, Sparkles, UserCheck, Users, X,
+  Handshake, KeyRound, Lock, LogIn, LogOut, Mail, ShieldCheck, Sparkles, UserCheck, Users, X,
 } from "lucide-react";
 import { useT } from "../i18n/LanguageContext.jsx";
 import {
@@ -16,6 +16,7 @@ import { ActivitiesTab } from "./portal/ActivitiesTab.jsx";
 import { Dashboard } from "./portal/admin/sections/Dashboard.jsx";
 import { Bookings } from "./portal/admin/sections/Bookings.jsx";
 import { Loyalty }  from "./portal/admin/sections/Loyalty.jsx";
+import { PartnerLoyalty } from "./portal/admin/sections/PartnerLoyalty.jsx";
 import { ToastHost, pushToast } from "./portal/admin/ui.jsx";
 import { PortalThemeProvider, ThemeToggle, usePalette } from "./portal/theme.jsx";
 import { NotificationBell, MessagesQuickButton } from "../components/NotificationBell.jsx";
@@ -77,6 +78,7 @@ function PartnerPortalInner({ onClose }) {
     { id: "corporate",  label: t("portal.tabs.corporate"),  icon: Building2 },
     { id: "agent",      label: t("portal.tabs.agent"),      icon: Briefcase },
     { id: "loyalty",    label: t("portal.tabs.loyalty"),    icon: Sparkles },
+    { id: "partnerLoyalty", label: t("portal.tabs.partnerLoyalty"), icon: Handshake },
     { id: "admin",      label: t("portal.tabs.admin"),      icon: Hotel },
   ];
 
@@ -305,6 +307,7 @@ function PartnerPortalInner({ onClose }) {
           {tab === "corporate"  && <CorporateTab />}
           {tab === "agent"      && <AgentTab />}
           {tab === "loyalty"    && <Loyalty params={loyaltyParams} clearParams={() => setLoyaltyParams(null)} />}
+          {tab === "partnerLoyalty" && <PartnerLoyalty />}
           {tab === "admin"      && <AdminTab section={adminSection} onSectionChange={setAdminSection} params={adminParams} clearParams={() => setAdminParams(null)} onNavigate={navigate} />}
         </div>
       </main>

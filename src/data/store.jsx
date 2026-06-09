@@ -80,6 +80,130 @@ const INITIAL_TIERS = [
   },
 ];
 
+// ─── B2B partner loyalty (corporates + travel agencies) ────────────────────
+// Optional, admin-activated-per-account loyalty mirroring the member tiers
+// above. Two SEPARATE ladders (corporates reward with rate discounts; agencies
+// with commission uplift). Tier qualification is by LIFETIME volume (never
+// resets) — each tier carries a numeric `qualifyMin` (lifetime nights, or
+// revenue when partnerLoyalty.qualifyBy === "revenue") used to auto-compute an
+// account's current tier. Same editable shape as member tiers (minus the
+// member-only meal-plan fields), so the admin can fully CRUD them.
+const INITIAL_CORPORATE_TIERS = [
+  {
+    id: "corp-silver", name: "Silver Partner", nightsLabel: "0–249 lifetime nights",
+    intro: "Entry tier for new corporate accounts.",
+    icon: "Award", color: "#A8A8A8", earnRate: 1, qualifyMin: 0, builtIn: true,
+    benefits: [
+      { id: "cs1", label: "3% off contracted rate", on: true },
+      { id: "cs2", label: "1 point per BHD on stayed bookings", on: true },
+      { id: "cs3", label: "Consolidated monthly invoicing", on: true },
+      { id: "cs4", label: "Dedicated reservations contact", on: false },
+    ],
+  },
+  {
+    id: "corp-gold", name: "Gold Partner", nightsLabel: "250–999 lifetime nights",
+    intro: "For accounts with steady, growing production.",
+    icon: "Crown", color: "#C9A961", earnRate: 1.5, qualifyMin: 250, builtIn: true, featured: true,
+    benefits: [
+      { id: "cg1", label: "5% off contracted rate", on: true },
+      { id: "cg2", label: "1.5 points per BHD on stayed bookings", on: true },
+      { id: "cg3", label: "Guaranteed late check-out to 14:00", on: true },
+      { id: "cg4", label: "Dedicated reservations contact", on: true },
+    ],
+  },
+  {
+    id: "corp-platinum", name: "Platinum Partner", nightsLabel: "1,000+ lifetime nights",
+    intro: "Strategic accounts treated as residents.",
+    icon: "Gem", color: "#D4B97A", earnRate: 2, qualifyMin: 1000, builtIn: true,
+    benefits: [
+      { id: "cp1", label: "8% off contracted rate", on: true },
+      { id: "cp2", label: "2 points per BHD on stayed bookings", on: true },
+      { id: "cp3", label: "Guaranteed availability window", on: true },
+      { id: "cp4", label: "Net-60 payment terms", on: true },
+    ],
+  },
+];
+
+const INITIAL_AGENCY_TIERS = [
+  {
+    id: "agt-silver", name: "Silver Agency", nightsLabel: "0–99 lifetime nights",
+    intro: "Entry tier for new travel-agency partners.",
+    icon: "Award", color: "#A8A8A8", earnRate: 1, qualifyMin: 0, builtIn: true,
+    benefits: [
+      { id: "as1", label: "Standard commission", on: true },
+      { id: "as2", label: "1 point per BHD of stayed production", on: true },
+      { id: "as3", label: "Self-service portal access", on: true },
+    ],
+  },
+  {
+    id: "agt-gold", name: "Gold Agency", nightsLabel: "100–499 lifetime nights",
+    intro: "For agencies delivering consistent production.",
+    icon: "Crown", color: "#C9A961", earnRate: 1.5, qualifyMin: 100, builtIn: true, featured: true,
+    benefits: [
+      { id: "ag1", label: "+1% commission uplift", on: true },
+      { id: "ag2", label: "1.5 points per BHD of stayed production", on: true },
+      { id: "ag3", label: "Priority allocation in high season", on: true },
+    ],
+  },
+  {
+    id: "agt-platinum", name: "Platinum Agency", nightsLabel: "500+ lifetime nights",
+    intro: "Top-producing wholesale & retail partners.",
+    icon: "Gem", color: "#D4B97A", earnRate: 2, qualifyMin: 500, builtIn: true,
+    benefits: [
+      { id: "ap1", label: "+2% commission uplift", on: true },
+      { id: "ap2", label: "2 points per BHD of stayed production", on: true },
+      { id: "ap3", label: "Joint marketing fund", on: true },
+    ],
+  },
+];
+
+// Partner points economy (shared by both B2B ladders). Phase-2-ready:
+// `redeemBhdPerPoints` mirrors the member rate; redemption can be BHD credit on
+// a future booking OR a fixed-denomination third-party gift card (brands added
+// later by the admin). `qualifyBy` switches the tier metric between lifetime
+// nights and lifetime revenue.
+const INITIAL_PARTNER_LOYALTY = {
+  redeemBhdPerPoints: 100,                       // 100 points = BHD 1
+  qualifyBy:          "nights",                  // "nights" | "revenue"
+  giftCard:           { denominations: [20, 50, 100], brands: [] },
+  freeNightAfterPts:  0,                          // reserved (0 = disabled for B2B)
+};
+
+// Tier-CRUD factory — returns the same eight editor callbacks the member tiers
+// use (updateTier / toggleBenefit / add / remove / move / add|update|remove
+// benefit), closed over whichever tier-list setter is passed. The two B2B
+// ladders each get their own instance so the editor logic is written once and
+// can never drift from the proven member behaviour. (Not a hook — pure factory;
+// the setter from useState is stable, so the result is stable when memoised.)
+// Booking statuses that count as "confirmed / stayed" and so award B2B points.
+const ACCRUAL_STATUSES = new Set(["confirmed", "in-house", "checked-out"]);
+
+function makeTierCrud(setTierList) {
+  return {
+    updateTier: (idx, patch) => setTierList(ts => ts.map((t, i) => i === idx ? { ...t, ...patch } : t)),
+    toggleBenefit: (tierIdx, bid) => setTierList(ts => ts.map((t, i) => i !== tierIdx ? t
+      : { ...t, benefits: t.benefits.map(b => (b.id === bid || b.key === bid) ? { ...b, on: !b.on } : b) })),
+    addTier: (tier = {}) => setTierList(ts => {
+      const id = tier.id || `custom-${Date.now()}`;
+      return [...ts, { name: "New tier", earnRate: 1, qualifyMin: 0, builtIn: false, benefits: [], ...tier, id }];
+    }),
+    removeTier: (id) => setTierList(ts => ts.filter(t => t.id !== id)),
+    moveTier: (idx, dir) => setTierList(ts => {
+      const next = [...ts];
+      const target = dir === "up" ? idx - 1 : idx + 1;
+      if (target < 0 || target >= next.length) return ts;
+      [next[idx], next[target]] = [next[target], next[idx]];
+      return next;
+    }),
+    addBenefit: (tierIdx, label = "New benefit") => setTierList(ts => ts.map((t, i) => i !== tierIdx ? t
+      : { ...t, benefits: [...t.benefits, { id: `b-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`, label, on: true }] })),
+    updateBenefit: (tierIdx, bid, patch) => setTierList(ts => ts.map((t, i) => i !== tierIdx ? t
+      : { ...t, benefits: t.benefits.map(b => b.id === bid ? { ...b, ...patch } : b) })),
+    removeBenefit: (tierIdx, bid) => setTierList(ts => ts.map((t, i) => i !== tierIdx ? t
+      : { ...t, benefits: t.benefits.filter(b => b.id !== bid) })),
+  };
+}
+
 // In-memory data store for everything the admin can edit. The marketing site
 // pulls from this, so admin edits propagate live to the homepage. There is
 // NO persistence — refresh resets to defaults (per CLAUDE.md: no localStorage).
@@ -3089,6 +3213,7 @@ export const TOP_TAB_PERMISSION = {
   corporate:  "corporates",
   agent:      "agents",
   loyalty:    "members",
+  partnerLoyalty: "corporates", // B2B loyalty config — same gate as corporate accounts
   admin:      null,             // visibility computed from sub-section perms
 };
 
@@ -4272,6 +4397,10 @@ export function DataProvider({ children }) {
   }, []);
   const [packages,  setPackages]  = useState(INITIAL_PACKAGES.map(p => ({ ...p, active: true })));
   const [tiers,     setTiers]     = useState(INITIAL_TIERS);
+  // B2B partner loyalty — two separate tier ladders + shared points economy.
+  const [corporateTiers, setCorporateTiers] = useState(INITIAL_CORPORATE_TIERS);
+  const [agencyTiers,    setAgencyTiers]    = useState(INITIAL_AGENCY_TIERS);
+  const [partnerLoyalty, setPartnerLoyalty] = useState(INITIAL_PARTNER_LOYALTY);
   const [tax,         setTax]         = useState(INITIAL_TAX);
   const [taxPatterns, setTaxPatterns] = useState(INITIAL_TAX_PATTERNS);
   const [activePatternId, setActivePatternId] = useState("bahrain-standard");
@@ -4713,6 +4842,9 @@ export function DataProvider({ children }) {
       fetchSingleton("site_content")      .then(v => { if (!cancelled && v) setSiteContent(v); }),
       fetchSingleton("loyalty")           .then(v => { if (!cancelled && v) setLoyalty(v); }),
       fetchSingleton("tiers")             .then(v => { if (!cancelled && v) setTiers(v); }),
+      fetchSingleton("corporate_tiers")   .then(v => { if (!cancelled && v) setCorporateTiers(v); }),
+      fetchSingleton("agency_tiers")      .then(v => { if (!cancelled && v) setAgencyTiers(v); }),
+      fetchSingleton("partner_loyalty")   .then(v => { if (!cancelled && v) setPartnerLoyalty(v); }),
       fetchSingleton("tax")               .then(v => { if (!cancelled && v) setTax(v); }),
       fetchSingleton("active_tax_pattern").then(v => { if (!cancelled && v) setActivePatternId(v.id || v); }),
       // Gallery — items are managed via setGalleryItems below; we treat
@@ -4897,6 +5029,9 @@ export function DataProvider({ children }) {
   // hotel_info change doesn't wake up the `tiers` or `tax` subscribers.
   useRealtimeSingleton("hotel_info",         setHotelInfo,         hydrated);
   useRealtimeSingleton("tiers",              setTiers,             hydrated);
+  useRealtimeSingleton("corporate_tiers",    setCorporateTiers,    hydrated);
+  useRealtimeSingleton("agency_tiers",       setAgencyTiers,       hydrated);
+  useRealtimeSingleton("partner_loyalty",    setPartnerLoyalty,    hydrated);
   useRealtimeSingleton("tax",                setTax,               hydrated);
   useRealtimeSingleton("active_tax_pattern", (v) => setActivePatternId(v?.id || v), hydrated);
   useRealtimeSingleton("loyalty",            setLoyalty,           hydrated);
@@ -4926,6 +5061,9 @@ export function DataProvider({ children }) {
   useSingletonPersistence("site_content",       siteContent,       hydrated);
   useSingletonPersistence("loyalty",            loyalty,           hydrated);
   useSingletonPersistence("tiers",              tiers,             hydrated);
+  useSingletonPersistence("corporate_tiers",    corporateTiers,    hydrated);
+  useSingletonPersistence("agency_tiers",       agencyTiers,       hydrated);
+  useSingletonPersistence("partner_loyalty",    partnerLoyalty,    hydrated);
   useSingletonPersistence("tax",                tax,               hydrated);
   // Store the bare string id; the hydration path already handles
   // both { id: "..." } and "..." shapes for backward compat.
@@ -5003,6 +5141,99 @@ export function DataProvider({ children }) {
     if (i !== tierIdx) return t;
     return { ...t, benefits: t.benefits.filter(b => b.id !== benefitId) };
   })), []);
+
+  // ─── B2B partner loyalty actions ─────────────────────────────────────────
+  // Two tier-editor action sets (one per ladder) from the shared factory, plus
+  // per-account activation, the lifetime-volume tier solver, the automatic
+  // points-accrual engine, and a manual admin adjust. Account points/tier fields
+  // ride the existing agreements/agencies slices (no new persistence path).
+  const corporateTierActions = useMemo(() => makeTierCrud(setCorporateTiers), []);
+  const agencyTierActions    = useMemo(() => makeTierCrud(setAgencyTiers), []);
+
+  // Resolve which tier an account currently qualifies for, by LIFETIME volume.
+  const recomputePartnerTier = useCallback((kind, account) => {
+    const ladder = kind === "corporate" ? corporateTiers : agencyTiers;
+    if (!ladder || ladder.length === 0) return null;
+    const volume = partnerLoyalty?.qualifyBy === "revenue"
+      ? Number(account?.lifetimeRevenue || 0)
+      : Number(account?.lifetimeNights || 0);
+    const eligible = ladder.filter(t => Number(t.qualifyMin || 0) <= volume);
+    const chosen = eligible.length
+      ? eligible.reduce((a, b) => (Number(b.qualifyMin || 0) > Number(a.qualifyMin || 0) ? b : a))
+      : ladder.reduce((a, b) => (Number(b.qualifyMin || 0) < Number(a.qualifyMin || 0) ? b : a));
+    return chosen?.id ?? null;
+  }, [corporateTiers, agencyTiers, partnerLoyalty]);
+
+  // Award points for a confirmed/stayed B2B booking — idempotent via the
+  // account's pointsHistory ledger (one "earn" row per booking id), so status
+  // churn or realtime re-delivery can never double-award.
+  const accruePartnerPoints = useCallback((booking) => {
+    if (!booking) return;
+    const kind = booking.source === "corporate" ? "corporate"
+               : booking.source === "agent"     ? "agent" : null;
+    if (!kind) return;
+    const accountId = kind === "corporate" ? booking.accountId : booking.agencyId;
+    if (!accountId) return;
+    const setter = kind === "corporate" ? setAgreements : setAgencies;
+    const ladder = kind === "corporate" ? corporateTiers : agencyTiers;
+    setter(list => list.map(a => {
+      if (a.id !== accountId) return a;
+      if (!a.loyaltyEnabled) return a;                        // admin gate
+      const history = a.pointsHistory || [];
+      if (history.some(h => h.bookingId === booking.id && h.kind === "earn")) return a; // already awarded
+      const curTier  = ladder.find(t => t.id === a.tier) || ladder[0];
+      const earnRate = Number(curTier?.earnRate) || 1;
+      const revenue  = Number(booking.total)  || 0;
+      const nights   = Number(booking.nights) || 0;
+      const earned   = Math.round(revenue * earnRate);
+      const merged = {
+        ...a,
+        points:          (Number(a.points) || 0) + earned,
+        lifetimeNights:  (Number(a.lifetimeNights) || 0) + nights,
+        lifetimeRevenue: (Number(a.lifetimeRevenue) || 0) + revenue,
+        pointsHistory:   [...history, { ts: new Date().toISOString(), bookingId: booking.id, kind: "earn", points: earned, nights, revenue }],
+      };
+      merged.tier = recomputePartnerTier(kind, merged);       // re-evaluate after volume bump
+      return merged;
+    }));
+  }, [corporateTiers, agencyTiers, recomputePartnerTier]);
+
+  // Enable/disable loyalty on a single account. On first enable, initialise the
+  // ledger fields + compute the starting tier; this is the ONLY thing that
+  // writes loyalty fields to an account (off + untouched by default).
+  const setAccountLoyaltyEnabled = useCallback((kind, id, enabled) => {
+    const setter = kind === "corporate" ? setAgreements : setAgencies;
+    setter(list => list.map(a => {
+      if (a.id !== id) return a;
+      const next = { ...a, loyaltyEnabled: enabled };
+      if (enabled) {
+        next.points          = Number(a.points) || 0;
+        next.lifetimeNights  = Number(a.lifetimeNights) || 0;
+        next.lifetimeRevenue = Number(a.lifetimeRevenue) || 0;
+        next.pointsHistory   = a.pointsHistory || [];
+        next.tier            = recomputePartnerTier(kind, next);
+      }
+      return next;
+    }));
+  }, [recomputePartnerTier]);
+  const toggleAccountLoyalty = useCallback((kind, id) => {
+    const list = kind === "corporate" ? agreements : agencies;
+    const cur = list.find(a => a.id === id);
+    setAccountLoyaltyEnabled(kind, id, !(cur?.loyaltyEnabled));
+  }, [agreements, agencies, setAccountLoyaltyEnabled]);
+
+  // Manual admin points adjust (clamps balance ≥ 0; ledgered).
+  const adjustPartnerPoints = useCallback((kind, id, delta, note = "") => {
+    const d = Math.round(Number(delta) || 0);
+    if (!d) return;
+    const setter = kind === "corporate" ? setAgreements : setAgencies;
+    setter(list => list.map(a => {
+      if (a.id !== id) return a;
+      const history = a.pointsHistory || [];
+      const points  = Math.max(0, (Number(a.points) || 0) + d);
+      return { ...a, points, pointsHistory: [...history, { ts: new Date().toISOString(), kind: "adjust", points: d, note }] };
+    }));
+  }, []);
 
   const setCalendarCell = useCallback((roomId, dateISO, patch) => setCalendar(c => {
     const key = `${roomId}|${dateISO}`;
@@ -5857,6 +6088,13 @@ export function DataProvider({ children }) {
     // For authenticated callers this is also fine — they get the same
     // row written + the eventual bulk-sync as a cleanup pass.
     upsertRow("bookings", saved);
+    // Award B2B partner loyalty points if this is a corporate/agency booking
+    // created already in a qualifying status (the corporate drawer auto-
+    // confirms when inventory is free). No-op unless the linked account has
+    // loyalty enabled; idempotent via the account ledger.
+    if ((saved.source === "corporate" || saved.source === "agent") && ACCRUAL_STATUSES.has(saved.status)) {
+      accruePartnerPoints(saved);
+    }
     // Emit notifications using the latest agreements/agencies/members so the
     // recipient resolver matches by accountId / agencyId / email correctly.
     setTimeout(() => {
@@ -5894,7 +6132,7 @@ export function DataProvider({ children }) {
       });
     }
     return saved;
-  }, [agreements, agencies, members, appendNotifications, rooms, templateCopyFor]);
+  }, [agreements, agencies, members, appendNotifications, rooms, templateCopyFor, accruePartnerPoints]);
 
   // Booking update — diff status before/after to emit a status-change
   // notification when the booking transitions (confirmed → in-house, etc.).
@@ -5907,6 +6145,12 @@ export function DataProvider({ children }) {
       return next;
     }));
     if (prev && next && prev.status !== next.status) {
+      // Award B2B partner points when a corporate/agency booking transitions
+      // into a qualifying status (e.g. on-request → confirmed at the front
+      // desk, or → checked-out). Idempotent — never double-awards.
+      if ((next.source === "corporate" || next.source === "agent") && ACCRUAL_STATUSES.has(next.status)) {
+        accruePartnerPoints(next);
+      }
       setTimeout(() => {
         appendNotifications(notifyBookingStatusChange(prev, next, { agreements, agencies, members }));
       }, 0);
@@ -5948,7 +6192,7 @@ export function DataProvider({ children }) {
         });
       }
     }
-  }, [agreements, agencies, members, appendNotifications, rooms, templateCopyFor]);
+  }, [agreements, agencies, members, appendNotifications, rooms, templateCopyFor, accruePartnerPoints]);
   const removeBooking = useCallback((id) => setBookings(bs => bs.filter(b => b.id !== id)), []);
 
   // Invoice CRUD. ID format keeps the YYYY-#### convention used by sample data.
@@ -6109,6 +6353,11 @@ export function DataProvider({ children }) {
     setRooms, updateRoom, addRoom, removeRoom,
     setPackages, upsertPackage, removePackage, togglePackage,
     setTiers, updateTier, toggleBenefit,
+    // B2B partner loyalty (corporates + agencies)
+    corporateTiers, agencyTiers, partnerLoyalty,
+    setCorporateTiers, setAgencyTiers, setPartnerLoyalty,
+    corporateTierActions, agencyTierActions,
+    toggleAccountLoyalty, setAccountLoyaltyEnabled, adjustPartnerPoints, recomputePartnerTier,
     addTier, removeTier, moveTier,
     addBenefit, updateBenefit, removeBenefit,
     setTax, setTaxPatterns, taxPatterns, activePatternId, applyTaxPattern, saveTaxPattern, removeTaxPattern,
@@ -6151,7 +6400,7 @@ export function DataProvider({ children }) {
     setCalendar, setCalendarCell,
     setLoyalty,
     addBooking, updateBooking, removeBooking,
-  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, addRoom, removeRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, releaseGiftCardForBooking, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, templateCopyFor, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, guestAuthSession, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, eventSupplements, upsertEventSupplement, removeEventSupplement, resetEventSupplements, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus]);
+  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, addRoom, removeRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, releaseGiftCardForBooking, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, templateCopyFor, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, guestAuthSession, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, eventSupplements, upsertEventSupplement, removeEventSupplement, resetEventSupplements, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus, corporateTiers, agencyTiers, partnerLoyalty, corporateTierActions, agencyTierActions, toggleAccountLoyalty, setAccountLoyaltyEnabled, adjustPartnerPoints, recomputePartnerTier]);
 
   return <DataStoreContext.Provider value={value}>{children}</DataStoreContext.Provider>;
 }

@@ -7,6 +7,7 @@ import {
   UserPlus, X,
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
+import { PartnerLoyaltyPanel } from "./PartnerLoyaltyPanel.jsx";
 import { useData, legalLine, formatCurrency } from "../../data/store.jsx";
 import { pushToast } from "./admin/ui.jsx";
 import { BookingDocPreviewModal } from "./admin/BookingDocs.jsx";
@@ -247,6 +248,7 @@ export function AgencyWorkspaceDrawer({ agency: initialAgency, onClose, onEditCo
             <Tab id="receipts"   label="Receipts"   count={agentPayments.length} active={tab === "receipts"} onClick={() => setTab("receipts")} p={p} />
             <Tab id="profile"    label="Profile"    count={null} active={tab === "profile"} onClick={() => setTab("profile")} p={p} />
             <Tab id="users"      label="Users"      count={(agency.users?.length || (agency.pocName ? 1 : 0))} active={tab === "users"} onClick={() => setTab("users")} p={p} />
+            <Tab id="loyalty"    label="Loyalty"    count={null} active={tab === "loyalty"} onClick={() => setTab("loyalty")} p={p} />
             <Tab id="statement"  label="Statement"  count={null} active={tab === "statement"} onClick={() => setTab("statement")} p={p} />
           </div>
 
@@ -292,6 +294,9 @@ export function AgencyWorkspaceDrawer({ agency: initialAgency, onClose, onEditCo
           )}
           {tab === "users" && (
             <UsersSection agency={agency} upsertAgency={upsertAgency} p={p} />
+          )}
+          {tab === "loyalty" && (
+            <PartnerLoyaltyPanel kind="agent" accountId={agency.id} />
           )}
           {tab === "statement" && (
             <StatementSection
