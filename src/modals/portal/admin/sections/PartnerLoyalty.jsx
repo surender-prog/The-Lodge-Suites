@@ -127,6 +127,13 @@ export const PartnerLoyalty = () => {
   const actions = kind === "corporate" ? corpActions : agencyActions;
   const qualifyUnit = draftEcon?.qualifyBy === "revenue" ? "BHD" : "nights";
 
+  // Gift-card brand catalogue — edited in the same draft, committed on Save.
+  const brands = draftEcon.giftCard?.brands || [];
+  const patchGiftCard = (patch) => editEcon({ giftCard: { denominations: [20, 50, 100], ...(draftEcon.giftCard || {}), ...patch } });
+  const addBrand = () => patchGiftCard({ brands: [...brands, { id: `brand-${Date.now()}-${Math.random().toString(36).slice(2, 4)}`, name: "New brand", active: true }] });
+  const updateBrand = (id, patch) => patchGiftCard({ brands: brands.map((b) => b.id === id ? { ...b, ...patch } : b) });
+  const removeBrand = (id) => patchGiftCard({ brands: brands.filter((b) => b.id !== id) });
+
   const save = () => {
     setCorporateTiers(draftCorp);
     setAgencyTiers(draftAgency);
@@ -207,7 +214,36 @@ export const PartnerLoyalty = () => {
           </div>
         </div>
         <div style={{ marginTop: 10, fontFamily: "'Manrope', sans-serif", fontSize: "0.76rem", color: p.textMuted, lineHeight: 1.5 }}>
-          Points convert to BHD credit on a future booking, or (coming next) a fixed-value third-party gift card in the denominations above. Gift-card brands (e.g. Lulu, Sharaf DG, City Centre, Centrepoint) and the redemption flow arrive in the next phase.
+          Points convert to BHD credit on a future booking, or a fixed-value third-party gift card in the denominations above — redeemed by staff from each account's Loyalty tab.
+        </div>
+      </Card>
+
+      {/* Gift-card brands (draft — committed on Save) */}
+      <Card title="Gift-card brands" padded>
+        <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.78rem", color: p.textMuted, lineHeight: 1.5, marginBottom: 10 }}>
+          Retail brands a partner can request a fixed-value gift card from. These show when staff issue a card from an account's Loyalty tab, and to partners in their portal.
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {brands.length === 0 && (
+            <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.82rem", color: p.textMuted }}>No brands yet — add Lulu, Sharaf DG, City Centre, Centrepoint…</div>
+          )}
+          {brands.map((b) => (
+            <div key={b.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                type="button" onClick={() => updateBrand(b.id, { active: !b.active })} title={b.active ? "Active — click to disable" : "Disabled — click to enable"}
+                style={{ width: 22, height: 22, flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", border: `1px solid ${b.active ? p.accent : p.border}`, backgroundColor: b.active ? p.accent : "transparent", color: b.active ? p.bgPage : "transparent", cursor: "pointer" }}
+              >
+                <Check size={13} />
+              </button>
+              <div style={{ flex: 1, minWidth: 0, opacity: b.active ? 1 : 0.55 }}>
+                <TextField value={b.name} onChange={(v) => updateBrand(b.id, { name: v })} placeholder="Brand name" />
+              </div>
+              <button type="button" title="Remove brand" onClick={() => removeBrand(b.id)} style={{ color: p.textMuted, padding: 4, cursor: "pointer" }}><Trash2 size={14} /></button>
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <GhostBtn small onClick={addBrand}><Plus size={13} /> Add brand</GhostBtn>
         </div>
       </Card>
 

@@ -816,6 +816,7 @@ function CorporatePortal({ session, setSession, pendingNav, consumePendingNav })
     { id: "invoices",   label: "Invoices",   icon: FileText },
     { id: "receipts",   label: "Receipts",   icon: ReceiptIcon },
     { id: "statement",  label: "Statement",  icon: Wallet },
+    ...(agreement.loyaltyEnabled ? [{ id: "loyalty", label: "Loyalty", icon: Gift }] : []),
     { id: "messages",   label: "Messages",   icon: MessageCircle },
     { id: "profile",    label: "Profile",    icon: UserCircle2 },
   ];
@@ -860,6 +861,7 @@ function CorporatePortal({ session, setSession, pendingNav, consumePendingNav })
       {tab === "invoices"   && <InvoicesList invoices={accInvoices} bookings={accBookings} />}
       {tab === "receipts"   && <ReceiptsList payments={accPayments} bookings={accBookings} />}
       {tab === "statement"  && <StatementView account={agreement} kind="corporate" invoices={accInvoices} payments={accPayments} />}
+      {tab === "loyalty"    && <PartnerLoyaltyPortal kind="corporate" account={agreement} session={session} setTab={setTab} />}
       {tab === "messages"   && <CustomerMessagesTab kind="corporate" account={agreement} session={session} bookings={accBookings} />}
       {tab === "profile"    && <CorporateProfileTab session={session} agreement={agreement} upsertAgreement={upsertAgreement} setSession={setSession} />}
     </PortalLayout>
@@ -982,6 +984,7 @@ function AgentPortal({ session, setSession, pendingNav, consumePendingNav }) {
     { id: "invoices",   label: "Invoices",   icon: FileText },
     { id: "receipts",   label: "Receipts",   icon: ReceiptIcon },
     { id: "statement",  label: "Commission", icon: Coins },
+    ...(agency.loyaltyEnabled ? [{ id: "loyalty", label: "Loyalty", icon: Gift }] : []),
     { id: "messages",   label: "Messages",   icon: MessageCircle },
     { id: "profile",    label: "Profile",    icon: UserCircle2 },
   ];
@@ -1026,6 +1029,7 @@ function AgentPortal({ session, setSession, pendingNav, consumePendingNav }) {
       {tab === "invoices"  && <InvoicesList invoices={accBookingInvoices} bookings={accBookings} />}
       {tab === "receipts"  && <ReceiptsList payments={accPayments} bookings={accBookings} />}
       {tab === "statement" && <StatementView account={agency} kind="agent" invoices={accCommissionInvoices} payments={accPayments} ledger="commission" />}
+      {tab === "loyalty"   && <PartnerLoyaltyPortal kind="agent" account={agency} session={session} setTab={setTab} />}
       {tab === "messages"  && <CustomerMessagesTab kind="agent" account={agency} session={session} bookings={accBookings} />}
       {tab === "profile"   && <AgentProfileTab session={session} agency={agency} upsertAgency={upsertAgency} setSession={setSession} />}
     </PortalLayout>
@@ -1214,6 +1218,162 @@ function CustomerMessagesTab({ kind, account, session, bookings }) {
               : "Send a question to the hotel team…"
           }
         />
+      )}
+    </div>
+  );
+}
+
+// Partner-facing loyalty hub (corporate + travel-agency portals). Read-only
+// display of tier / points / benefits, a redemption catalogue, and a request
+// flow. Redemptions are staff-executed (partners can read their own account
+// row but not write it under scoped RLS), so "Send request" posts a structured
+// message to the account's general thread; staff fulfil it from the admin
+// Loyalty tab. Only mounted when the account has loyalty enabled.
+function PartnerLoyaltyPortal({ kind, account, session, setTab }) {
+  const p = usePalette();
+  const { corporateTiers, agencyTiers, partnerLoyalty, addMessage } = useData();
+
+  const tiers = kind === "corporate" ? corporateTiers : agencyTiers;
+  const tier = tiers.find((t) => t.id === account.tier) || null;
+  const tierColor = tier?.color || p.accent;
+  const points = Number(account.points || 0);
+  const perBhd = Number(partnerLoyalty?.redeemBhdPerPoints) || 100;
+  const redeemable = Math.floor(points / perBhd);
+  const denoms = partnerLoyalty?.giftCard?.denominations || [20, 50, 100];
+  const brands = (partnerLoyalty?.giftCard?.brands || []).filter((b) => b.active);
+  const redemptions = (account.pointsHistory || []).filter((h) => h.kind === "redeem" || h.kind === "giftcard").slice().reverse();
+  const acctName = kind === "corporate" ? account.account : account.name;
+
+  const [reqType, setReqType] = useState("credit");
+  const [reqBrand, setReqBrand] = useState("");
+  const [reqDenom, setReqDenom] = useState(denoms[1] || denoms[0] || 50);
+  const [reqPts, setReqPts] = useState("");
+
+  const lbl = { fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.16em", textTransform: "uppercase", color: p.textMuted, fontWeight: 700, marginBottom: 4 };
+  const fieldStyle = { padding: "8px 10px", backgroundColor: p.bgPanelAlt, border: `1px solid ${p.border}`, color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" };
+  const fmtTsShort = (ts) => { try { return new Date(ts).toLocaleDateString(undefined, { day: "2-digit", month: "short" }); } catch { return ""; } };
+
+  const creditPts = Math.round(Number(reqPts) || 0);
+  const giftCost = Number(reqDenom || 0) * perBhd;
+  const canSend = reqType === "credit" ? (creditPts > 0 && creditPts <= points) : (!!reqBrand && giftCost <= points);
+
+  const sendRequest = () => {
+    let body = null;
+    if (reqType === "credit") {
+      if (!(creditPts > 0 && creditPts <= points)) return;
+      body = `Loyalty redemption request — BHD credit: ${creditPts.toLocaleString()} points (≈ ${fmtBhd(Math.floor(creditPts / perBhd))}) to apply to a future folio.`;
+    } else {
+      const brandName = brands.find((b) => b.id === reqBrand)?.name;
+      if (!brandName || giftCost > points) return;
+      body = `Loyalty redemption request — Gift card: ${brandName} BHD ${reqDenom} (${giftCost.toLocaleString()} points).`;
+    }
+    addMessage({ threadKey: `account:${kind}:${account.id}`, fromType: kind, fromId: account.id, fromName: `${session.displayName} · ${acctName}`, body });
+    setReqPts("");
+    pushToast({ message: "Redemption request sent — our team will confirm shortly." });
+  };
+
+  return (
+    <div>
+      {/* Privilege card */}
+      <div className="p-5 mb-6" style={{ backgroundColor: `${tierColor}10`, border: `1px solid ${tierColor}40`, borderInlineStart: `4px solid ${tierColor}` }}>
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <div style={{ color: tierColor, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.28em", textTransform: "uppercase", fontWeight: 700 }}>
+              {tier?.name || "Partner"} · {kind === "corporate" ? "Corporate" : "Agency"} loyalty
+            </div>
+            <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "2rem", color: p.textPrimary, fontWeight: 500, lineHeight: 1.05, marginTop: 4 }}>
+              {points.toLocaleString()} points
+            </div>
+            <div style={{ color: p.textMuted, fontSize: "0.84rem", marginTop: 4 }}>
+              ≈ {fmtBhd(redeemable)} redeemable · {Number(account.lifetimeNights || 0).toLocaleString()} lifetime nights
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(tier?.benefits || []).filter((b) => b.on).slice(0, 4).map((b) => (
+              <span key={b.id} style={{ color: tierColor, backgroundColor: `${tierColor}1A`, border: `1px solid ${tierColor}`, padding: "4px 10px", fontSize: "0.7rem", fontFamily: "'Manrope', sans-serif", fontWeight: 600 }}>{b.label}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid lg:grid-cols-3 gap-5">
+        {/* Benefits */}
+        <Card title={`${tier?.name || "Tier"} benefits`}>
+          {(tier?.benefits || []).filter((b) => b.on).length === 0 ? (
+            <div style={{ color: p.textMuted, fontSize: "0.84rem" }}>No benefits configured for your tier.</div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {tier.benefits.filter((b) => b.on).map((b) => (
+                <div key={b.id} className="flex items-start gap-2" style={{ fontSize: "0.84rem", color: p.textPrimary, lineHeight: 1.4 }}>
+                  <CheckCircle2 size={14} style={{ color: tierColor, marginTop: 2, flexShrink: 0 }} /> {b.label}
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        {/* Redeem request */}
+        <Card title="Redeem points" className="lg:col-span-2">
+          <div style={{ color: p.textMuted, fontSize: "0.82rem", lineHeight: 1.5, marginBottom: 12 }}>
+            Convert points to BHD credit on a future folio, or a fixed-value gift card. Send a request and our team will confirm and apply it.
+          </div>
+          <div className="flex gap-2 mb-3">
+            {[["credit", "BHD credit"], ["giftcard", "Gift card"]].map(([v, l]) => (
+              <button key={v} type="button" onClick={() => setReqType(v)} style={{ padding: "7px 14px", cursor: "pointer", fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", border: `1px solid ${reqType === v ? p.accent : p.border}`, backgroundColor: reqType === v ? p.accent : "transparent", color: reqType === v ? p.bgPage : p.textMuted }}>{l}</button>
+            ))}
+          </div>
+          {reqType === "credit" ? (
+            <div className="flex items-end gap-3 flex-wrap">
+              <div>
+                <div style={lbl}>Points to redeem</div>
+                <input type="number" value={reqPts} onChange={(e) => setReqPts(e.target.value)} placeholder="e.g. 5000" style={{ ...fieldStyle, width: 150 }} />
+              </div>
+              <div style={{ color: p.textMuted, fontSize: "0.82rem", paddingBottom: 9 }}>≈ {fmtBhd(Math.floor(creditPts / perBhd))} credit</div>
+            </div>
+          ) : (
+            <div className="flex items-end gap-3 flex-wrap">
+              <div>
+                <div style={lbl}>Brand</div>
+                <select value={reqBrand} onChange={(e) => setReqBrand(e.target.value)} style={{ ...fieldStyle, minWidth: 150 }}>
+                  <option value="">Select…</option>
+                  {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <div style={lbl}>Value</div>
+                <select value={reqDenom} onChange={(e) => setReqDenom(Number(e.target.value))} style={fieldStyle}>
+                  {denoms.map((d) => <option key={d} value={d}>BHD {d}</option>)}
+                </select>
+              </div>
+              <div style={{ color: p.textMuted, fontSize: "0.82rem", paddingBottom: 9 }}>{giftCost.toLocaleString()} pts</div>
+            </div>
+          )}
+          {reqType === "giftcard" && brands.length === 0 && (
+            <div style={{ color: p.textMuted, fontSize: "0.78rem", marginTop: 8 }}>No gift-card brands available yet — ask the hotel team.</div>
+          )}
+          <div className="mt-4">
+            <button type="button" onClick={sendRequest} disabled={!canSend} style={{ padding: "10px 20px", cursor: canSend ? "pointer" : "not-allowed", fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", border: `1px solid ${p.accent}`, backgroundColor: p.accent, color: p.bgPage, opacity: canSend ? 1 : 0.5 }}>Send request</button>
+            <button type="button" onClick={() => setTab("messages")} style={{ marginInlineStart: 10, padding: "10px 16px", cursor: "pointer", fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", fontWeight: 600, letterSpacing: "0.14em", textTransform: "uppercase", border: `1px solid ${p.border}`, backgroundColor: "transparent", color: p.textMuted }}>Open messages</button>
+          </div>
+        </Card>
+      </div>
+
+      {/* Redemption history */}
+      {redemptions.length > 0 && (
+        <div className="mt-5">
+          <Card title="Redemption history">
+            <div className="flex flex-col gap-2">
+              {redemptions.map((h, i) => (
+                <div key={i} className="flex items-center justify-between gap-3" style={{ fontSize: "0.84rem", borderBottom: i < redemptions.length - 1 ? `1px solid ${p.border}` : "none", paddingBottom: 8 }}>
+                  <span style={{ color: p.textPrimary }}>
+                    {h.kind === "giftcard" ? `${h.brand || "Gift card"} · BHD ${h.denomination}${h.code ? ` · ${h.code}` : ""}` : `BHD credit${h.bhd ? ` · ${fmtBhd(h.bhd)}` : ""}`}
+                  </span>
+                  <span style={{ color: p.textMuted, whiteSpace: "nowrap" }}>{fmtTsShort(h.ts)} · {Math.abs(Number(h.points || 0)).toLocaleString()} pts</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
       )}
     </div>
   );

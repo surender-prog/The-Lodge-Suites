@@ -5235,6 +5235,75 @@ export function DataProvider({ children }) {
     }));
   }, []);
 
+  // ─── B2B partner loyalty — Phase 2 redemption (staff-executed) ────────────
+  // Partners READ their own account (points/tier) but cannot write it (scoped
+  // RLS), so every point-deducting redemption is performed by staff — from the
+  // admin per-account panel or the booking drawer. Partners request via the
+  // portal (a message); staff fulfils here. All entries land in the existing
+  // pointsHistory ledger (no new table). Each returns false on insufficient
+  // balance so callers can surface a clear error.
+  const redeemPartnerPoints = useCallback((kind, id, points, note = "", meta = {}) => {
+    const pts = Math.max(0, Math.round(Number(points) || 0));
+    if (!pts) return false;
+    const setter = kind === "corporate" ? setAgreements : setAgencies;
+    const perBhd = Number(partnerLoyalty?.redeemBhdPerPoints) || 100;
+    let ok = false;
+    setter(list => list.map(a => {
+      if (a.id !== id) return a;
+      const bal = Number(a.points) || 0;
+      if (pts > bal) return a;                      // insufficient — no-op
+      ok = true;
+      const bhd = Math.floor(pts / perBhd);
+      const history = a.pointsHistory || [];
+      const entry = { id: `rdm-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`, ts: new Date().toISOString(), kind: "redeem", points: -pts, bhd, note, ...meta };
+      return { ...a, points: bal - pts, pointsHistory: [...history, entry] };
+    }));
+    return ok;
+  }, [partnerLoyalty]);
+
+  // Issue a fixed-denomination (20/50/100) third-party gift card against points.
+  const issuePartnerGiftCard = useCallback((kind, id, brandId, denomination, code = "", note = "") => {
+    const denom = Number(denomination) || 0;
+    if (!denom) return false;
+    const setter = kind === "corporate" ? setAgreements : setAgencies;
+    const perBhd = Number(partnerLoyalty?.redeemBhdPerPoints) || 100;
+    const brand = (partnerLoyalty?.giftCard?.brands || []).find(b => b.id === brandId);
+    const cost = denom * perBhd;                    // points required for this card
+    let ok = false;
+    setter(list => list.map(a => {
+      if (a.id !== id) return a;
+      const bal = Number(a.points) || 0;
+      if (cost > bal) return a;                     // insufficient — no-op
+      ok = true;
+      const history = a.pointsHistory || [];
+      const entry = { id: `gc-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`, ts: new Date().toISOString(), kind: "giftcard", points: -cost, denomination: denom, brandId, brand: brand?.name || "Gift card", code: code || "", status: "fulfilled", note };
+      return { ...a, points: bal - cost, pointsHistory: [...history, entry] };
+    }));
+    return ok;
+  }, [partnerLoyalty]);
+
+  // Gift-card brand catalogue (admin-managed on the shared economy singleton).
+  const addPartnerGiftCardBrand = useCallback((name) => {
+    const nm = String(name || "").trim();
+    if (!nm) return;
+    setPartnerLoyalty(l => {
+      const gc = l.giftCard || { denominations: [20, 50, 100], brands: [] };
+      return { ...l, giftCard: { ...gc, brands: [...(gc.brands || []), { id: `brand-${Date.now()}-${Math.random().toString(36).slice(2, 4)}`, name: nm, active: true }] } };
+    });
+  }, []);
+  const updatePartnerGiftCardBrand = useCallback((brandId, patch) => {
+    setPartnerLoyalty(l => {
+      const gc = l.giftCard || { denominations: [20, 50, 100], brands: [] };
+      return { ...l, giftCard: { ...gc, brands: (gc.brands || []).map(b => b.id === brandId ? { ...b, ...patch } : b) } };
+    });
+  }, []);
+  const removePartnerGiftCardBrand = useCallback((brandId) => {
+    setPartnerLoyalty(l => {
+      const gc = l.giftCard || { denominations: [20, 50, 100], brands: [] };
+      return { ...l, giftCard: { ...gc, brands: (gc.brands || []).filter(b => b.id !== brandId) } };
+    });
+  }, []);
+
   const setCalendarCell = useCallback((roomId, dateISO, patch) => setCalendar(c => {
     const key = `${roomId}|${dateISO}`;
     const next = { ...c };
@@ -6358,6 +6427,7 @@ export function DataProvider({ children }) {
     setCorporateTiers, setAgencyTiers, setPartnerLoyalty,
     corporateTierActions, agencyTierActions,
     toggleAccountLoyalty, setAccountLoyaltyEnabled, adjustPartnerPoints, recomputePartnerTier,
+    redeemPartnerPoints, issuePartnerGiftCard, addPartnerGiftCardBrand, updatePartnerGiftCardBrand, removePartnerGiftCardBrand,
     addTier, removeTier, moveTier,
     addBenefit, updateBenefit, removeBenefit,
     setTax, setTaxPatterns, taxPatterns, activePatternId, applyTaxPattern, saveTaxPattern, removeTaxPattern,
@@ -6400,7 +6470,7 @@ export function DataProvider({ children }) {
     setCalendar, setCalendarCell,
     setLoyalty,
     addBooking, updateBooking, removeBooking,
-  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, addRoom, removeRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, releaseGiftCardForBooking, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, templateCopyFor, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, guestAuthSession, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, eventSupplements, upsertEventSupplement, removeEventSupplement, resetEventSupplements, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus, corporateTiers, agencyTiers, partnerLoyalty, corporateTierActions, agencyTierActions, toggleAccountLoyalty, setAccountLoyaltyEnabled, adjustPartnerPoints, recomputePartnerTier]);
+  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, addRoom, removeRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, releaseGiftCardForBooking, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, templateCopyFor, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, guestAuthSession, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, eventSupplements, upsertEventSupplement, removeEventSupplement, resetEventSupplements, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus, corporateTiers, agencyTiers, partnerLoyalty, corporateTierActions, agencyTierActions, toggleAccountLoyalty, setAccountLoyaltyEnabled, adjustPartnerPoints, recomputePartnerTier, redeemPartnerPoints, issuePartnerGiftCard, addPartnerGiftCardBrand, updatePartnerGiftCardBrand, removePartnerGiftCardBrand]);
 
   return <DataStoreContext.Provider value={value}>{children}</DataStoreContext.Provider>;
 }
