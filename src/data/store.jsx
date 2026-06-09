@@ -18,7 +18,7 @@ import {
   fetchAll, fetchSingleton, fetchEntityMap,
   useSlicePersistence, useSingletonPersistence, useObjectSlicePersistence,
   useRealtimeSlice, useRealtimeSingleton, useRealtimeTable, useObjectRealtimeSlice,
-  upsertRow, bulkReplace,
+  upsertRow,
 } from "../lib/dataSync.js";
 
 // Loyalty tiers — fully self-contained shape so the admin can CRUD them.
@@ -4665,28 +4665,22 @@ export function DataProvider({ children }) {
           // eslint-disable-next-line no-console
           console.info(`[admin_users] ${d.length} live row${d.length === 1 ? "" : "s"} loaded from DB (cached for next visit).`);
         } else if (Array.isArray(d) && d.length === 0) {
-          if (hasSupabaseSession()) {
-            // Table is reachable but empty AND we're authenticated as
-            // staff — push the canonical demo seed so every browser
-            // session immediately sees the same login tiles. Fire-and-
-            // forget; the RLS guard on bulkReplace will silently no-op
-            // if the session expired between fetch and write.
-            bulkReplace("admin_users", SAMPLE_ADMIN_USERS).catch(() => {});
-            // eslint-disable-next-line no-console
-            console.info("[admin_users] DB empty + authed — seeding canonical accounts now.");
-          } else {
-            // Anon visitor + empty table = the public login screen will
-            // render the JS seed (Rahul Sharma & co). Apply Supabase
-            // migrations 012 (anon SELECT + realtime publication) and
-            // 015 (canonical seed) to make this flow show the live
-            // owner edits on the demo tiles.
-            // eslint-disable-next-line no-console
-            console.warn(
-              "[admin_users] anon fetch returned 0 rows — demo tiles will fall back to the JS seed. " +
-              "Apply supabase/migrations/012_admin_users_realtime.sql and 015_admin_users_seed.sql " +
-              "to drive the tiles from live DB rows."
-            );
-          }
+          // SAFETY: this branch used to auto-push SAMPLE_ADMIN_USERS into
+          // the DB whenever a *staff session* saw an empty read (a
+          // "self-healing seed"). That was a footgun — a transient empty
+          // read under an authenticated page load could OVERWRITE live
+          // staff accounts and reset their passwords to the bundled demo
+          // seed. We now NEVER write to the database from here. Seeding the
+          // canonical accounts is a deliberate, one-off migration
+          // (supabase/migrations/015_admin_users_seed.sql), not an automatic
+          // side effect of loading the app. The in-memory JS seed still
+          // renders the login tiles locally; the database is left untouched.
+          // eslint-disable-next-line no-console
+          console.warn(
+            "[admin_users] fetch returned 0 rows — rendering the bundled JS seed locally; " +
+            "the database is NOT modified. To drive the tiles from live rows, apply " +
+            "supabase/migrations/012_admin_users_realtime.sql and 015_admin_users_seed.sql."
+          );
         } else if (d === null) {
           // Supabase isn't configured at all — perfectly valid in mock/CI mode.
           // eslint-disable-next-line no-console
