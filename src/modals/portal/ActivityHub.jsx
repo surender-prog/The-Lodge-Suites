@@ -299,8 +299,13 @@ export function ActivityEditor({ activity, onClose, lockedAccount }) {
     addActivity, updateActivity, removeActivity, completeActivity,
     adminUsers, agreements, agencies, prospects,
     upsertAgreement, upsertAgency, addProspect,
+    staffSession,
   } = useData();
   const isNew = !activity?.id;
+
+  // The signed-in operator — new activities default their Owner (sales rep)
+  // to whoever is logging them, instead of an arbitrary first staff record.
+  const me = (staffSession && adminUsers?.find((u) => u.id === staffSession.id)) || null;
 
   const [draft, setDraft] = useState(() => ({
     kind: "call",
@@ -312,8 +317,8 @@ export function ActivityEditor({ activity, onClose, lockedAccount }) {
     completedAt: null, durationMin: 30,
     summary: "", outcome: null,
     nextAction: "", nextActionAt: "",
-    ownerId: adminUsers?.[0]?.id || "",
-    ownerName: adminUsers?.[0]?.name || "",
+    ownerId: me?.id || adminUsers?.[0]?.id || "",
+    ownerName: me?.name || adminUsers?.[0]?.name || "",
     status: "scheduled",
     ...activity,
   }));
@@ -600,7 +605,9 @@ export function ActivityEditor({ activity, onClose, lockedAccount }) {
                   const u = adminUsers?.find((x) => x.id === v);
                   set({ ownerId: v, ownerName: u?.name || "" });
                 }}
-                options={(adminUsers || []).map((u) => ({ value: u.id, label: `${u.name} · ${u.title || u.role}` }))}
+                options={[...(adminUsers || [])]
+                  .sort((a, b) => (a.id === staffSession?.id ? -1 : b.id === staffSession?.id ? 1 : 0))
+                  .map((u) => ({ value: u.id, label: `${u.name} · ${u.title || u.role}${u.id === staffSession?.id ? " (you)" : ""}` }))}
               />
             </FormGroup>
             <FormGroup label="Status" className="sm:col-span-2">
@@ -731,7 +738,15 @@ function SearchableAccountPicker({ p, accounts, value, accountKind, onSelect, on
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [prospectKind, setProspectKind] = useState("agent");
+  // Explicit "+ Add a new …" mode — so creating an account is discoverable
+  // even before the operator types a non-matching name into the search.
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
   const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) { setCreating(false); setNewName(""); }
+  }, [open]);
 
   const selected = accounts.find((a) => a.id === value) || null;
   const ql = query.trim().toLowerCase();
@@ -775,6 +790,46 @@ function SearchableAccountPicker({ p, accounts, value, accountKind, onSelect, on
     setQuery("");
     setOpen(false);
   };
+  const createNamed = () => {
+    const nm = newName.trim();
+    if (!nm) return;
+    onCreate(nm, accountKind === "prospect" ? prospectKind : null);
+    setNewName("");
+    setCreating(false);
+    setQuery("");
+    setOpen(false);
+  };
+
+  // Prospect-type selector shared by both create affordances (typed-name
+  // create and the explicit "+ Add a new …" row).
+  const prospectKindPills = (
+    <div className="flex items-center gap-2 mb-2">
+      <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
+        Prospect type
+      </span>
+      {[
+        { id: "corporate", label: "Corporate" },
+        { id: "agent",     label: "Travel agent" },
+      ].map((k) => {
+        const active = prospectKind === k.id;
+        return (
+          <button
+            key={k.id}
+            type="button"
+            onClick={() => setProspectKind(k.id)}
+            style={{
+              fontFamily: "'Manrope', sans-serif",
+              fontSize: "0.6rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+              padding: "0.2rem 0.55rem",
+              backgroundColor: active ? `${p.accent}1F` : "transparent",
+              border: `1px solid ${active ? p.accent : p.border}`,
+              color: active ? p.accent : p.textMuted, cursor: "pointer",
+            }}
+          >{k.label}</button>
+        );
+      })}
+    </div>
+  );
 
   return (
     <div className="relative" ref={wrapRef}>
@@ -904,34 +959,7 @@ function SearchableAccountPicker({ p, accounts, value, accountKind, onSelect, on
 
           {showCreate && (
             <div className="px-3 py-3" style={{ borderTop: `1px dashed ${p.border}`, backgroundColor: `${p.accent}08` }}>
-              {accountKind === "prospect" && (
-                <div className="flex items-center gap-2 mb-2">
-                  <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>
-                    Prospect type
-                  </span>
-                  {[
-                    { id: "corporate", label: "Corporate" },
-                    { id: "agent",     label: "Travel agent" },
-                  ].map((k) => {
-                    const active = prospectKind === k.id;
-                    return (
-                      <button
-                        key={k.id}
-                        type="button"
-                        onClick={() => setProspectKind(k.id)}
-                        style={{
-                          fontFamily: "'Manrope', sans-serif",
-                          fontSize: "0.6rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
-                          padding: "0.2rem 0.55rem",
-                          backgroundColor: active ? `${p.accent}1F` : "transparent",
-                          border: `1px solid ${active ? p.accent : p.border}`,
-                          color: active ? p.accent : p.textMuted, cursor: "pointer",
-                        }}
-                      >{k.label}</button>
-                    );
-                  })}
-                </div>
-              )}
+              {accountKind === "prospect" && prospectKindPills}
               <button
                 type="button"
                 onClick={create}
@@ -951,6 +979,77 @@ function SearchableAccountPicker({ p, accounts, value, accountKind, onSelect, on
               <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", marginTop: 6, lineHeight: 1.5 }}>
                 Captures the name + a fresh ID right now. Fill in contact details and contract terms later in the {newLabel} section.
               </div>
+            </div>
+          )}
+
+          {/* Always-visible create affordance — so adding a brand-new account
+              doesn't depend on the operator discovering the typed-name flow. */}
+          {!showCreate && (
+            <div className="px-3 py-3" style={{ borderTop: `1px dashed ${p.border}`, backgroundColor: `${p.accent}08` }}>
+              {!creating ? (
+                <button
+                  type="button"
+                  onClick={() => setCreating(true)}
+                  className="w-full text-start px-3 py-2 flex items-center gap-2"
+                  style={{
+                    border: `1px dashed ${p.accent}`,
+                    color: p.accent, backgroundColor: "transparent",
+                    fontFamily: "'Manrope', sans-serif",
+                    fontSize: "0.78rem", fontWeight: 600, cursor: "pointer",
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = `${p.accent}1A`)}
+                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+                >
+                  <Plus size={12} />
+                  <span>Add a new {newLabel.toLowerCase()}</span>
+                </button>
+              ) : (
+                <div>
+                  {accountKind === "prospect" && prospectKindPills}
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center flex-1" style={{ border: `1px solid ${p.accent}`, backgroundColor: p.inputBg }}>
+                      <input
+                        value={newName}
+                        onChange={(e) => setNewName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") createNamed(); }}
+                        placeholder={`New ${newLabel.toLowerCase()} name…`}
+                        autoFocus
+                        className="flex-1 outline-none"
+                        style={{
+                          backgroundColor: "transparent", color: p.textPrimary,
+                          padding: "0.5rem 0.65rem",
+                          fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem",
+                          border: "none", minWidth: 0,
+                        }}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={createNamed}
+                      disabled={!newName.trim()}
+                      style={{
+                        fontFamily: "'Manrope', sans-serif",
+                        fontSize: "0.62rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                        padding: "0.55rem 0.9rem",
+                        backgroundColor: newName.trim() ? p.accent : "transparent",
+                        border: `1px solid ${p.accent}`,
+                        color: newName.trim() ? (p.theme === "light" ? "#FFFFFF" : "#15161A") : p.textMuted,
+                        cursor: newName.trim() ? "pointer" : "not-allowed",
+                        opacity: newName.trim() ? 1 : 0.6,
+                      }}
+                    >Create</button>
+                    <button
+                      type="button"
+                      onClick={() => { setCreating(false); setNewName(""); }}
+                      title="Cancel"
+                      style={{ color: p.textMuted, padding: 6, background: "transparent", border: "none", cursor: "pointer" }}
+                    ><X size={13} /></button>
+                  </div>
+                  <div style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem", marginTop: 6, lineHeight: 1.5 }}>
+                    Captures the name + a fresh ID right now. Fill in contact details and contract terms later in the {newLabel} section.
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
