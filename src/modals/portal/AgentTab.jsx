@@ -529,6 +529,37 @@ export const AgentTab = () => {
       <h3 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "2.2rem", color: p.textPrimary, fontWeight: 500, lineHeight: 1.1 }}>{t("portal.agent.title")}</h3>
       <p style={{ fontFamily: "'Manrope', sans-serif", color: p.textMuted, fontSize: "0.92rem", marginTop: 6 }}>{t("portal.agent.intro")}</p>
 
+      {/* Self-registered agencies awaiting activation — surfaced here so a
+          fresh registration is never buried in the directory. */}
+      {agencies.some((a) => a.status === "pending-approval") && (
+        <div className="mt-6 p-4" style={{ backgroundColor: `${p.warn}10`, border: `1px solid ${p.warn}`, borderInlineStart: `4px solid ${p.warn}` }}>
+          <div style={{ color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.64rem", letterSpacing: "0.24em", textTransform: "uppercase", fontWeight: 700 }}>
+            Pending registrations · review & activate
+          </div>
+          <div className="mt-3 flex flex-col gap-2">
+            {agencies.filter((a) => a.status === "pending-approval").map((a) => (
+              <div key={a.id} className="flex items-center gap-3 flex-wrap" style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem" }}>
+                <div className="flex-1 min-w-0">
+                  <strong style={{ color: p.textPrimary }}>{a.name}</strong>
+                  <span style={{ color: p.textMuted }}> · {a.pocName}{a.pocEmail ? ` · ${a.pocEmail}` : ""}{a.pocPhone ? ` · ${a.pocPhone}` : ""} · {a.id}</span>
+                </div>
+                <button
+                  onClick={() => setWorkspaceFor(a)}
+                  style={{ padding: "0.35rem 0.8rem", border: `1px solid ${p.border}`, color: p.textMuted, backgroundColor: "transparent", fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.16em", textTransform: "uppercase", fontWeight: 700, cursor: "pointer" }}
+                >Review</button>
+                <button
+                  onClick={() => {
+                    upsertAgency({ id: a.id, status: "active", signedOn: a.signedOn || new Date().toISOString().slice(0, 10), startsOn: a.startsOn || new Date().toISOString().slice(0, 10) });
+                    pushToast({ message: `Account activated · ${a.name} — they can now sign in` });
+                  }}
+                  style={{ padding: "0.35rem 0.8rem", border: `1px solid ${p.success}`, color: "#FFFFFF", backgroundColor: p.success, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.16em", textTransform: "uppercase", fontWeight: 700, cursor: "pointer" }}
+                >Activate</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Primary KPIs */}
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-7">
         <KpiTile

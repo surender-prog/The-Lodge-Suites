@@ -4,7 +4,7 @@ import { roomLabel as resolveRoomLabel } from "../lib/rooms.js";
 import {
   notifyBookingCreated, notifyBookingStatusChange,
   notifyInvoiceIssued, notifyInvoiceStatusChange,
-  notifyPaymentReceived,
+  notifyPaymentReceived, notifyPartnerRegistered,
 } from "../utils/notifications.js";
 import { sendTransactionalEmail } from "../utils/email.js";
 import { PACKAGES as INITIAL_PACKAGES } from "./packages.js";
@@ -5330,6 +5330,58 @@ export function DataProvider({ children }) {
   }), []);
   const removeAgency = useCallback((id) => setAgencies(as => as.filter(a => a.id !== id)), []);
 
+  // Public self-registration for corporate accounts / travel agencies from
+  // the portal sign-in screen. Creates a minimal record in status
+  // "pending-approval" carrying the registrant as the primary portal user —
+  // sign-in is gated on that status until an admin activates the account
+  // from the Corporate / Travel Agents workspace. Persists via a direct
+  // per-row insert (mirrors addMember/addBooking — anon clients can't ride
+  // the bulk slice sync; needs the anon-insert policy from migration 027).
+  const registerPartnerAccount = useCallback(({ kind, company, name, email, phone, password }) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const user = {
+      id: `U-REG-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
+      name, email, phone: phone || "", role: "primary", primary: true, password,
+    };
+    let saved;
+    if (kind === "corporate") {
+      const id = `AGR-REG-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+      saved = {
+        id, account: company, industry: "", status: "pending-approval",
+        registeredAt: new Date().toISOString(),
+        signedOn: "", startsOn: "", endsOn: "",
+        paymentTerms: "Net 30", creditLimit: 0,
+        dailyRates: {}, monthlyRates: {}, taxIncluded: false, weekendUpliftPct: 0,
+        inclusions: { wifi: true }, cancellationPolicy: "",
+        pocName: name, pocEmail: email, pocPhone: phone || "",
+        notes: `Self-registered via the website on ${today}. Awaiting activation.`,
+        targetNights: 0, ytdNights: 0, ytdSpend: 0,
+        users: [user],
+      };
+      setAgreements(as => [saved, ...as]);
+      upsertRow("agreements", saved);
+    } else {
+      const id = `AGT-REG-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+      saved = {
+        id, name: company, status: "pending-approval",
+        registeredAt: new Date().toISOString(),
+        signedOn: "", startsOn: "", endsOn: "",
+        commissionPct: 10, marketingFundPct: 0, paymentTerms: "Net 30", creditLimit: 0,
+        dailyNet: {}, monthlyNet: {}, cancellationPolicy: "",
+        pocName: name, pocEmail: email, pocPhone: phone || "", contact: name,
+        notes: `Self-registered via the website on ${today}. Awaiting activation.`,
+        targetBookings: 0, ytdBookings: 0, ytdRevenue: 0, ytdCommission: 0,
+        users: [user],
+      };
+      setAgencies(as => [saved, ...as]);
+      upsertRow("agencies", saved);
+    }
+    setTimeout(() => {
+      appendNotifications(notifyPartnerRegistered(saved, kind));
+    }, 0);
+    return saved;
+  }, [appendNotifications]);
+
   // Email-template CRUD. Built-in templates can be edited or disabled but
   // can't be removed (they reappear on refresh, like built-in tiers).
   const upsertEmailTemplate = useCallback((tpl) => setEmailTemplates(ts => {
@@ -6441,6 +6493,7 @@ export function DataProvider({ children }) {
     setPayments, addPayment, updatePayment,
     setAgreements, upsertAgreement, removeAgreement,
     setAgencies, upsertAgency, removeAgency,
+    registerPartnerAccount,
     expiringContracts,
     setEmailTemplates, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, templateCopyFor,
     setRfps, addRfp, upsertRfp, removeRfp, advanceRfp,
@@ -6475,7 +6528,7 @@ export function DataProvider({ children }) {
     setCalendar, setCalendarCell,
     setLoyalty,
     addBooking, updateBooking, removeBooking,
-  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, addRoom, removeRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, releaseGiftCardForBooking, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, templateCopyFor, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, guestAuthSession, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, eventSupplements, upsertEventSupplement, removeEventSupplement, resetEventSupplements, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus, corporateTiers, agencyTiers, partnerLoyalty, corporateTierActions, agencyTierActions, toggleAccountLoyalty, setAccountLoyaltyEnabled, adjustPartnerPoints, recomputePartnerTier, redeemPartnerPoints, issuePartnerGiftCard, addPartnerGiftCardBrand, updatePartnerGiftCardBrand, removePartnerGiftCardBrand]);
+  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, addRoom, removeRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, releaseGiftCardForBooking, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, templateCopyFor, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, guestAuthSession, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, eventSupplements, upsertEventSupplement, removeEventSupplement, resetEventSupplements, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus, corporateTiers, agencyTiers, partnerLoyalty, corporateTierActions, agencyTierActions, toggleAccountLoyalty, setAccountLoyaltyEnabled, adjustPartnerPoints, recomputePartnerTier, redeemPartnerPoints, issuePartnerGiftCard, addPartnerGiftCardBrand, updatePartnerGiftCardBrand, removePartnerGiftCardBrand, registerPartnerAccount]);
 
   return <DataStoreContext.Provider value={value}>{children}</DataStoreContext.Provider>;
 }

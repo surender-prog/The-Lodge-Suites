@@ -319,9 +319,13 @@ function GuestPortalInner({ onClose }) {
 // members in order. Falls back to corporate POC and agency POC when no
 // users array exists (legacy data).
 // ---------------------------------------------------------------------------
+// Shown when a self-registered partner tries to sign in before an admin has
+// activated the account.
+const PENDING_ACCOUNT_MSG = "Your account is registered but awaiting activation by our team. We'll be in touch shortly — or email front office to fast-track it.";
+
 function LoginPanel({ data, onSignIn }) {
   const p = usePalette();
-  const { agreements, agencies, members, hotelInfo } = data;
+  const { agreements, agencies, members, hotelInfo, registerPartnerAccount } = data;
   // Forgot-password mailto uses the live front-desk email from Property
   // Info, falling back to the historic mailbox if hotelInfo isn't loaded.
   const supportEmail = (hotelInfo && hotelInfo.email) || "frontoffice@thelodgesuites.com";
@@ -329,6 +333,36 @@ function LoginPanel({ data, onSignIn }) {
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState(null);
+
+  // ── Self-service partner registration (corporate / travel agency) ────────
+  // Creates a "pending-approval" account that an admin activates from the
+  // operator portal (Corporate Accounts / Travel Agents). Sign-in stays
+  // blocked until activation.
+  const [view, setView] = useState("signin");        // "signin" | "register" | "registered"
+  const [reg, setReg] = useState({ kind: "corporate", company: "", name: "", email: "", phone: "", password: "" });
+  const [registered, setRegistered] = useState(null);
+  const setRegField = (patch) => { setReg((r) => ({ ...r, ...patch })); setError(null); };
+
+  const submitRegister = (e) => {
+    e?.preventDefault?.();
+    setError(null);
+    const company = reg.company.trim();
+    const nm = reg.name.trim();
+    const em = reg.email.trim().toLowerCase();
+    const pw = reg.password;
+    if (!company || !nm || !em || !pw) { setError("Company name, contact name, email and password are all required."); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { setError("Enter a valid email address."); return; }
+    if (pw.length < 8) { setError("Password must be at least 8 characters."); return; }
+    const taken =
+      agreements.some((a) => (a.users || []).some((u) => (u.email || "").toLowerCase() === em)) ||
+      agencies.some((a) => (a.users || []).some((u) => (u.email || "").toLowerCase() === em)) ||
+      members.some((m) => (m.email || "").toLowerCase() === em);
+    if (taken) { setError("This email is already registered — try signing in instead."); return; }
+    const saved = registerPartnerAccount({ kind: reg.kind, company, name: nm, email: em, phone: reg.phone.trim(), password: pw });
+    setRegistered(saved);
+    setView("registered");
+    pushToast({ message: "Registration received — pending activation" });
+  };
 
   const tryLogin = (e) => {
     e?.preventDefault?.();
@@ -340,6 +374,7 @@ function LoginPanel({ data, onSignIn }) {
     for (const a of agreements) {
       const u = (a.users || []).find((u) => (u.email || "").toLowerCase() === em && u.password === pw);
       if (u) {
+        if (a.status === "pending-approval") { setError(PENDING_ACCOUNT_MSG); return; }
         onSignIn({
           kind: "corporate", accountId: a.id, userId: u.id,
           displayName: u.name, email: u.email, role: u.role,
@@ -353,6 +388,7 @@ function LoginPanel({ data, onSignIn }) {
     for (const a of agencies) {
       const u = (a.users || []).find((u) => (u.email || "").toLowerCase() === em && u.password === pw);
       if (u) {
+        if (a.status === "pending-approval") { setError(PENDING_ACCOUNT_MSG); return; }
         onSignIn({
           kind: "agent", accountId: a.id, userId: u.id,
           displayName: u.name, email: u.email, role: u.role,
@@ -392,6 +428,18 @@ function LoginPanel({ data, onSignIn }) {
     if (!sess) {
       await signOutGuest();
       setError("This account isn't set up for the portal yet. Contact the front office.");
+      return;
+    }
+    // Self-registered partners stay locked out until an admin activates the
+    // account (status leaves "pending-approval"). The DB trigger provisions
+    // their auth identity at registration, so the credential check passes —
+    // the gate lives here on the account status.
+    const acct = sess.kind === "corporate" ? agreements.find((a) => a.id === sess.accountId)
+               : sess.kind === "agent"     ? agencies.find((a) => a.id === sess.accountId)
+               : null;
+    if (acct?.status === "pending-approval") {
+      await signOutGuest();
+      setError(PENDING_ACCOUNT_MSG);
       return;
     }
     onSignIn(sess);
@@ -457,16 +505,21 @@ function LoginPanel({ data, onSignIn }) {
         <div>
           <div className="mb-8">
             <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.28em", textTransform: "uppercase", color: p.accent, fontWeight: 700 }}>
-              Sign in
+              {view === "signin" ? "Sign in" : view === "register" ? "Partner registration" : "Registration received"}
             </div>
             <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "2.4rem", color: p.textPrimary, fontWeight: 500, lineHeight: 1.1, marginTop: 6 }}>
-              Welcome back.
+              {view === "signin" ? "Welcome back." : view === "register" ? "Partner with us." : "Thank you."}
             </h2>
             <p style={{ color: p.textMuted, fontSize: "0.92rem", marginTop: 8, lineHeight: 1.55 }}>
-              Sign in to view your bookings, invoices, receipts and statements. The same form works for corporate accounts, travel agents and LS Privilege members — we'll route you to the right home.
+              {view === "signin"
+                ? "Sign in to view your bookings, invoices, receipts and statements. The same form works for corporate accounts, travel agents and LS Privilege members — we'll route you to the right home."
+                : view === "register"
+                  ? "Register your company or travel agency for the partner portal. Our team reviews every registration — you'll get access as soon as the account is activated."
+                  : "Your registration is in. Our team will review and activate the account; once it's live you can sign in with the email and password you chose."}
             </p>
           </div>
 
+          {view === "signin" && (
           <form onSubmit={onSubmit} className="space-y-4" style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}`, padding: 24 }}>
             {REAL_GUEST_AUTH && (
               <div className="flex gap-2" role="tablist" aria-label="Account type">
@@ -605,7 +658,155 @@ function LoginPanel({ data, onSignIn }) {
                 <>Need help? <a href={`mailto:${supportEmail}?subject=Portal%20sign-in%20help`} style={{ color: p.accent, fontWeight: 700 }}>Email front office →</a></>
               )}
             </div>
+            <div className="text-center pt-3" style={{ borderTop: `1px dashed ${p.border}`, color: p.textMuted, fontSize: "0.78rem" }}>
+              New corporate or travel-agency partner?{" "}
+              <button
+                type="button"
+                onClick={() => { setView("register"); setError(null); setNotice(null); }}
+                style={{ color: p.accent, fontWeight: 700, background: "none", border: "none", cursor: "pointer", padding: 0 }}
+              >
+                Register your company →
+              </button>
+            </div>
           </form>
+          )}
+
+          {/* Partner self-registration — minimal company + primary contact
+              capture. The account lands in "pending-approval" for the admin
+              to review and activate. */}
+          {view === "register" && (
+          <form onSubmit={submitRegister} className="space-y-4" style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}`, padding: 24 }}>
+            <div className="flex gap-2" role="tablist" aria-label="Partner type">
+              {[
+                { key: "corporate", label: "Corporate", icon: Building2 },
+                { key: "agent",     label: "Travel agency", icon: Briefcase },
+              ].map((t) => {
+                const active = reg.kind === t.key;
+                const TIcon = t.icon;
+                return (
+                  <button
+                    key={t.key} type="button" role="tab" aria-selected={active}
+                    onClick={() => setRegField({ kind: t.key })}
+                    className="flex-1 inline-flex items-center justify-center gap-2"
+                    style={{
+                      padding: "0.55rem 0.5rem", fontFamily: "'Manrope', sans-serif",
+                      fontSize: "0.64rem", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase",
+                      cursor: "pointer",
+                      color: active ? (p.theme === "light" ? "#FFFFFF" : "#15161A") : p.textMuted,
+                      backgroundColor: active ? p.accent : "transparent",
+                      border: `1px solid ${active ? p.accent : p.border}`,
+                    }}
+                  ><TIcon size={12} /> {t.label}</button>
+                );
+              })}
+            </div>
+            {[
+              { field: "company", label: reg.kind === "corporate" ? "Company name" : "Agency name", icon: reg.kind === "corporate" ? Building2 : Briefcase, type: "text", placeholder: reg.kind === "corporate" ? "e.g. Gulf Horizons W.L.L." : "e.g. Pearl Route Travel" },
+              { field: "name",    label: "Contact person", icon: User,  type: "text",  placeholder: "Full name" },
+              { field: "email",   label: "Work email",     icon: Mail,  type: "email", placeholder: "you@company.com" },
+              { field: "phone",   label: "Phone (optional)", icon: Phone, type: "tel", placeholder: "+973…" },
+            ].map(({ field, label, icon: FIcon, type, placeholder }) => (
+              <div key={field}>
+                <label style={{ color: p.textMuted, fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700, display: "block", marginBottom: 6 }}>
+                  {label}
+                </label>
+                <div className="flex" style={{ border: `1px solid ${p.border}`, backgroundColor: p.inputBg }}>
+                  <span className="flex items-center px-3" style={{ color: p.textMuted }}><FIcon size={14} /></span>
+                  <input
+                    type={type}
+                    value={reg[field]}
+                    onChange={(e) => setRegField({ [field]: e.target.value })}
+                    placeholder={placeholder}
+                    className="flex-1 outline-none"
+                    style={{
+                      backgroundColor: "transparent", color: p.textPrimary,
+                      padding: "0.7rem 0.5rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.9rem",
+                      border: "none", minWidth: 0,
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+            <div>
+              <label style={{ color: p.textMuted, fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700, display: "block", marginBottom: 6 }}>
+                Choose a password
+              </label>
+              <div className="flex" style={{ border: `1px solid ${p.border}`, backgroundColor: p.inputBg }}>
+                <span className="flex items-center px-3" style={{ color: p.textMuted }}><KeyRound size={14} /></span>
+                <input
+                  type={showPw ? "text" : "password"}
+                  value={reg.password}
+                  onChange={(e) => setRegField({ password: e.target.value })}
+                  placeholder="Min. 8 characters"
+                  className="flex-1 outline-none"
+                  style={{
+                    backgroundColor: "transparent", color: p.textPrimary,
+                    padding: "0.7rem 0.5rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.9rem",
+                    border: "none", minWidth: 0,
+                  }}
+                />
+                <button type="button" onClick={() => setShowPw((s) => !s)} className="flex items-center px-3" style={{ color: p.textMuted, borderInlineStart: `1px solid ${p.border}` }}>
+                  {showPw ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
+            </div>
+            {error && (
+              <div className="flex items-center gap-2 p-3" style={{
+                backgroundColor: `${p.danger}10`, border: `1px solid ${p.danger}40`,
+                color: p.danger, fontSize: "0.84rem",
+              }}>
+                <AlertCircle size={14} /> {error}
+              </div>
+            )}
+            <button
+              type="submit"
+              className="w-full inline-flex items-center justify-center gap-2"
+              style={{
+                backgroundColor: p.accent,
+                color: p.theme === "light" ? "#FFFFFF" : "#15161A",
+                border: `1px solid ${p.accent}`,
+                padding: "0.9rem 1rem",
+                fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem",
+                fontWeight: 700, letterSpacing: "0.25em", textTransform: "uppercase",
+                cursor: "pointer",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = p.accentDeep; e.currentTarget.style.borderColor = p.accentDeep; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = p.accent; e.currentTarget.style.borderColor = p.accent; }}
+            >
+              <UserPlus size={14} /> Submit registration
+            </button>
+            <div className="text-center" style={{ color: p.textMuted, fontSize: "0.78rem", marginTop: 4 }}>
+              Already registered?{" "}
+              <button type="button" onClick={() => { setView("signin"); setError(null); }} style={{ color: p.accent, fontWeight: 700, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+                Sign in →
+              </button>
+            </div>
+          </form>
+          )}
+
+          {view === "registered" && (
+          <div style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}`, padding: 28, textAlign: "center" }}>
+            <CheckCircle2 size={30} style={{ color: p.success, margin: "0 auto" }} />
+            <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.5rem", color: p.textPrimary, marginTop: 10 }}>
+              {registered?.account || registered?.name}
+            </div>
+            <div style={{ color: p.textMuted, fontSize: "0.8rem", marginTop: 2 }}>Reference · {registered?.id}</div>
+            <p style={{ color: p.textMuted, fontSize: "0.88rem", lineHeight: 1.6, marginTop: 14 }}>
+              Your {registered?.account ? "corporate account" : "travel agency"} is registered and <strong style={{ color: p.textPrimary }}>awaiting activation</strong> by our team. We'll be in touch at <strong style={{ color: p.textPrimary }}>{registered?.pocEmail}</strong> — once activated, sign in with that email and your chosen password.
+            </p>
+            <button
+              type="button"
+              onClick={() => setView("signin")}
+              style={{
+                marginTop: 18, padding: "0.7rem 1.4rem",
+                fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", fontWeight: 700,
+                letterSpacing: "0.2em", textTransform: "uppercase",
+                color: p.accent, backgroundColor: "transparent", border: `1px solid ${p.accent}`,
+                cursor: "pointer",
+              }}
+            >← Back to sign in</button>
+          </div>
+          )}
         </div>
     </div>
   );
@@ -808,6 +1009,7 @@ function CorporatePortal({ session, setSession, pendingNav, consumePendingNav })
   );
 
   if (!agreement) return <NoAccount p={p} />;
+  if (agreement.status === "pending-approval") return <PendingAccount p={p} name={agreement.account} />;
 
   const tabs = [
     { id: "dashboard",  label: "Dashboard",  icon: Building2 },
@@ -976,6 +1178,7 @@ function AgentPortal({ session, setSession, pendingNav, consumePendingNav }) {
   );
 
   if (!agency) return <NoAccount p={p} />;
+  if (agency.status === "pending-approval") return <PendingAccount p={p} name={agency.name} />;
 
   const tabs = [
     { id: "dashboard",  label: "Dashboard",  icon: Briefcase },
@@ -4488,6 +4691,22 @@ function NoAccount({ p }) {
       </h2>
       <p style={{ color: p.textMuted, marginTop: 6 }}>
         We couldn't load your account. Please sign out and try again, or contact front office.
+      </p>
+    </div>
+  );
+}
+
+// Self-registered partner whose account hasn't been activated by the admin
+// yet. Defense-in-depth — sign-in is already gated on the same status.
+function PendingAccount({ p, name }) {
+  return (
+    <div className="max-w-2xl mx-auto px-6 py-16 text-center">
+      <CheckCircle2 size={28} style={{ color: p.warn || p.accent, margin: "0 auto" }} />
+      <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.6rem", color: p.textPrimary, marginTop: 12 }}>
+        Account pending activation
+      </h2>
+      <p style={{ color: p.textMuted, marginTop: 6, lineHeight: 1.6 }}>
+        Thanks for registering{name ? ` ${name}` : ""}. Our team is reviewing the account — you'll get access as soon as it's activated. Questions? Contact front office.
       </p>
     </div>
   );

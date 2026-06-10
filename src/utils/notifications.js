@@ -39,6 +39,7 @@ const KINDS = {
   "payment-refunded":  { severity: "warn",    label: "Payment refunded" },
   "member-joined":     { severity: "info",    label: "New LS Privilege member" },
   "member-welcome":    { severity: "success", label: "Welcome to LS Privilege" },
+  "partner-registered": { severity: "warn",   label: "New partner registration" },
 };
 export const NOTIFICATION_KINDS = KINDS;
 
@@ -358,6 +359,23 @@ export function notifyMemberJoined(member) {
     refType: "member", refId: member.id || null,
   }));
   return out;
+}
+
+// Self-service partner registration (corporate account / travel agency)
+// from the public sign-in screen. Staff get a heads-up so they can review
+// and activate the account; the record sits in "pending-approval" until
+// they do.
+export function notifyPartnerRegistered(account, kind) {
+  if (!account) return [];
+  const corporate = kind === "corporate";
+  const name = (corporate ? account.account : account.name) || "Unnamed";
+  const where = corporate ? "Corporate Accounts" : "Travel Agents";
+  return [makeNotification("partner-registered", {
+    title: `New ${corporate ? "corporate" : "travel agency"} registration · ${name}`,
+    body:  `${account.pocName || "A contact"} (${account.pocEmail || "no email"}${account.pocPhone ? ` · ${account.pocPhone}` : ""}) registered via the website. Review and activate from ${where} · ${account.id}.`,
+    recipientType: "staff",
+    refType: corporate ? "agreement" : "agency", refId: account.id || null,
+  })];
 }
 
 // ---------------------------------------------------------------------------

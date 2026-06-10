@@ -214,6 +214,16 @@ export function CorporateWorkspaceDrawer({ agreement: initialAgreement, onClose,
               </div>
             </div>
             <div className="flex flex-col gap-2">
+              {agreement.status === "pending-approval" && (
+                <button
+                  onClick={() => {
+                    upsertAgreement({ id: agreement.id, status: "active", signedOn: agreement.signedOn || new Date().toISOString().slice(0, 10), startsOn: agreement.startsOn || new Date().toISOString().slice(0, 10) });
+                    pushToast({ message: `Account activated · ${agreement.account} — they can now sign in` });
+                  }}
+                  className="inline-flex items-center gap-1.5"
+                  style={{ padding: "0.45rem 0.85rem", backgroundColor: p.success, color: "#FFFFFF", border: `1px solid ${p.success}`, fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}
+                ><Check size={11} /> Activate account</button>
+              )}
               <button onClick={onPreviewContract}
                 className="inline-flex items-center gap-1.5"
                 style={{ padding: "0.45rem 0.85rem", border: `1px solid ${p.accent}`, color: p.accent, backgroundColor: "transparent", fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}
@@ -1184,7 +1194,7 @@ function esc(s) {
 }
 
 function statusColorForContract(p, status) {
-  return ({ active: p.success, draft: p.warn, review: p.warn, suspended: p.danger, expired: p.textDim })[status] || p.textMuted;
+  return ({ active: p.success, draft: p.warn, review: p.warn, "pending-approval": p.warn, suspended: p.danger, expired: p.textDim })[status] || p.textMuted;
 }
 
 // ---------------------------------------------------------------------------
