@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { C } from "./data/tokens.js";
 import { useData } from "./data/store.jsx";
+import { isRecoveryUrl, consumeRecoveryPending, onPasswordRecovery } from "./lib/guestAuth.js";
 import { Header } from "./sections/Header.jsx";
 import { Hero } from "./sections/Hero.jsx";
 import { IntroStrip } from "./sections/IntroStrip.jsx";
@@ -34,6 +35,16 @@ export default function App() {
   const [juffairOpen,  setJuffairOpen]  = useState(false);
   const [pressOpen,    setPressOpen]    = useState(false);
   const [rfpOpen,      setRfpOpen]      = useState(false);
+
+  // Password-recovery deep link: when a guest lands here from a reset-password
+  // email, auto-open the Guest Portal — it detects the recovery session and
+  // shows the set-new-password panel. The latch covers the SDK event firing
+  // before this effect runs; the live subscription covers it firing after.
+  useEffect(() => {
+    if (isRecoveryUrl() || consumeRecoveryPending()) setSignInOpen(true);
+    const off = onPasswordRecovery(() => setSignInOpen(true));
+    return off;
+  }, []);
 
   // When the Owner triggers "Log in as user" inside the Partner Portal, the
   // store sets `impersonation`. We auto-open the Guest Portal and close the

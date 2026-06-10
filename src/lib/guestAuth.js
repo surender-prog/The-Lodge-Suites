@@ -107,6 +107,59 @@ export async function resetGuest(email) {
   }
 }
 
+// Complete a password recovery: set a new password on the (recovery-link)
+// authenticated session. Used by the reset-password panel.
+export async function updateGuestPassword(newPassword) {
+  if (!SUPABASE_CONFIGURED || !supabase) return NOT_CONFIGURED;
+  const pw = newPassword || "";
+  if (pw.length < 8) return { ok: false, error: "Password must be at least 8 characters.", code: "weak_password" };
+  try {
+    const { data, error } = await supabase.auth.updateUser({ password: pw });
+    if (error) return fail(error);
+    return { ok: true, user: data?.user || null };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Password-recovery detection. Reset links round-trip through the URL
+// (?code=… under PKCE, #…type=recovery under implicit); detectSessionInUrl
+// exchanges them on load and the SDK fires PASSWORD_RECOVERY. Because that
+// event can fire BEFORE the portal mounts, a module-level latch remembers it
+// so the portal can pick it up whenever it opens.
+// ---------------------------------------------------------------------------
+let recoveryPending = false;
+if (SUPABASE_CONFIGURED && supabase) {
+  supabase.auth.onAuthStateChange((event) => {
+    if (event === "PASSWORD_RECOVERY") recoveryPending = true;
+  });
+}
+export function consumeRecoveryPending() { return recoveryPending; }
+export function clearRecoveryPending() {
+  recoveryPending = false;
+  // Strip the recovery params so a reload doesn't re-trigger the flow.
+  try {
+    if (typeof window !== "undefined" && (window.location.hash || window.location.search)) {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  } catch { /* non-fatal */ }
+}
+// Fallback for implicit-style links where the type survives in the URL.
+export function isRecoveryUrl() {
+  if (typeof window === "undefined") return false;
+  return /type=recovery/.test(window.location.hash || "") || /type=recovery/.test(window.location.search || "");
+}
+// Live subscription for the same moment (covers the portal-already-open case).
+// Returns an unsubscribe function.
+export function onPasswordRecovery(cb) {
+  if (!SUPABASE_CONFIGURED || !supabase) return () => {};
+  const { data } = supabase.auth.onAuthStateChange((event) => {
+    if (event === "PASSWORD_RECOVERY") cb?.();
+  });
+  return () => data?.subscription?.unsubscribe?.();
+}
+
 // Sign the guest out of Supabase. Best-effort; never throws.
 export async function signOutGuest() {
   if (!SUPABASE_CONFIGURED || !supabase) return { ok: true };

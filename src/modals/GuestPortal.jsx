@@ -28,7 +28,7 @@ import { NotificationBell, MessagesQuickButton } from "../components/Notificatio
 import { MessageThread } from "../components/MessageThread.jsx";
 import { sendTransactionalEmail } from "../utils/email.js";
 import { REAL_GUEST_AUTH } from "../lib/supabase.js";
-import { signInGuestOtp, verifyGuestOtp, signInGuestPassword, resetGuest, signOutGuest, sessionFromClaims } from "../lib/guestAuth.js";
+import { signInGuestOtp, verifyGuestOtp, signInGuestPassword, resetGuest, signOutGuest, sessionFromClaims, updateGuestPassword, isRecoveryUrl, consumeRecoveryPending, clearRecoveryPending, onPasswordRecovery } from "../lib/guestAuth.js";
 
 // ---------------------------------------------------------------------------
 // GuestPortal — self-service portal for the three customer cohorts:
@@ -93,6 +93,17 @@ function GuestPortalInner({ onClose }) {
     if (!REAL_GUEST_AUTH || impersonation) return;
     setSession(guestAuthSession || null);
   }, [guestAuthSession, impersonation]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Password recovery: the user arrived from a reset-password email. The
+  // recovery link signs them in (so guestAuthSession exists), but they must
+  // set a new password FIRST — the reset panel takes priority over the
+  // portals until it completes or is dismissed.
+  const [recovering, setRecovering] = useState(() => REAL_GUEST_AUTH && (isRecoveryUrl() || consumeRecoveryPending()));
+  useEffect(() => {
+    if (!REAL_GUEST_AUTH) return;
+    const off = onPasswordRecovery(() => setRecovering(true));
+    return off;
+  }, []);
 
   // Lock body scroll while the portal owns the viewport
   useEffect(() => {
@@ -288,7 +299,17 @@ function GuestPortalInner({ onClose }) {
             </div>
           </div>
         )}
-        {!session ? (
+        {recovering ? (
+          <ResetPasswordPanel
+            data={data}
+            onDone={async () => {
+              clearRecoveryPending();
+              setRecovering(false);
+              await signOutGuest();
+              setSession(null);
+            }}
+          />
+        ) : !session ? (
           <LoginPanel data={data} onSignIn={setSession} />
         ) : (
           // Catch-all so a crash in any portal shows a readable card and a way
@@ -415,6 +436,9 @@ function LoginPanel({ data, onSignIn }) {
   // ── Real guest auth (Phase 1/2), behind REAL_GUEST_AUTH ──────────────────
   // members → email OTP (request → verify); corporate/agent → email+password.
   const [mode, setMode] = useState("otp");             // "otp"=member | "password"=corp/agent
+  // Members can choose between the one-time email code (default) and a
+  // classic password — both resolve the same auth identity.
+  const [memberMethod, setMemberMethod] = useState("otp"); // "otp" | "password"
   const [otpStage, setOtpStage] = useState("request"); // "request" | "verify"
   const [otpCode, setOtpCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -450,7 +474,8 @@ function LoginPanel({ data, onSignIn }) {
     setError(null); setNotice(null);
     const em = email.trim().toLowerCase();
 
-    if (mode === "password") {                          // corporate / agent
+    // corporate / agent — or a member who picked the password method
+    if (mode === "password" || memberMethod === "password") {
       if (!em || !password) { setError("Enter email and password."); return; }
       setBusy(true);
       const r = await signInGuestPassword(em, password);
@@ -493,9 +518,10 @@ function LoginPanel({ data, onSignIn }) {
   };
 
   // Field-visibility helpers for the flag-on UI.
-  const showPwField  = !REAL_GUEST_AUTH || mode === "password";
-  const showOtpField = REAL_GUEST_AUTH && mode === "otp" && otpStage === "verify";
-  const submitLabel  = !REAL_GUEST_AUTH || mode === "password"
+  const passwordSignIn = mode === "password" || memberMethod === "password";
+  const showPwField  = !REAL_GUEST_AUTH || passwordSignIn;
+  const showOtpField = REAL_GUEST_AUTH && !passwordSignIn && mode === "otp" && otpStage === "verify";
+  const submitLabel  = !REAL_GUEST_AUTH || passwordSignIn
     ? "Sign in"
     : (otpStage === "request" ? "Email me a code" : "Verify code");
 
@@ -531,7 +557,7 @@ function LoginPanel({ data, onSignIn }) {
                   return (
                     <button
                       key={t.key} type="button" role="tab" aria-selected={active}
-                      onClick={() => { setMode(t.key); setError(null); setNotice(null); setOtpStage("request"); setOtpCode(""); }}
+                      onClick={() => { setMode(t.key); setMemberMethod("otp"); setError(null); setNotice(null); setOtpStage("request"); setOtpCode(""); }}
                       className="flex-1"
                       style={{
                         padding: "0.55rem 0.5rem", fontFamily: "'Manrope', sans-serif",
@@ -544,6 +570,25 @@ function LoginPanel({ data, onSignIn }) {
                     >{t.label}</button>
                   );
                 })}
+              </div>
+            )}
+            {REAL_GUEST_AUTH && mode === "otp" && (
+              <div className="text-center" style={{ color: p.textMuted, fontSize: "0.76rem" }}>
+                {memberMethod === "otp" ? (
+                  <>Prefer a password?{" "}
+                    <button type="button" onClick={() => { setMemberMethod("password"); setOtpStage("request"); setOtpCode(""); setError(null); setNotice(null); }}
+                      style={{ color: p.accent, fontWeight: 700, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+                      Sign in with password →
+                    </button>
+                  </>
+                ) : (
+                  <>No password yet?{" "}
+                    <button type="button" onClick={() => { setMemberMethod("otp"); setError(null); setNotice(null); }}
+                      style={{ color: p.accent, fontWeight: 700, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+                      Email me a one-time code →
+                    </button>
+                  </>
+                )}
               </div>
             )}
             <div>
@@ -652,7 +697,7 @@ function LoginPanel({ data, onSignIn }) {
               <LogIn size={14} /> {busy ? "Please wait…" : submitLabel}
             </button>
             <div className="text-center" style={{ color: p.textMuted, fontSize: "0.78rem", marginTop: 4 }}>
-              {REAL_GUEST_AUTH && mode === "password" ? (
+              {REAL_GUEST_AUTH && passwordSignIn ? (
                 <>Forgot password? <button type="button" onClick={handleForgot} style={{ color: p.accent, fontWeight: 700, background: "none", border: "none", cursor: "pointer", padding: 0 }}>Email me a reset link →</button></>
               ) : (
                 <>Need help? <a href={`mailto:${supportEmail}?subject=Portal%20sign-in%20help`} style={{ color: p.accent, fontWeight: 700 }}>Email front office →</a></>
@@ -808,6 +853,127 @@ function LoginPanel({ data, onSignIn }) {
           </div>
           )}
         </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ResetPasswordPanel — completes the forgot-password loop. The reset email's
+// link signs the user in with a recovery session; this panel sets the new
+// password (auth.updateUser) and, for members, mirrors it onto the member
+// record so the migration-022 sync trigger stays consistent. Partner rows are
+// staff-write-only, so for corporate/agent users the auth password is simply
+// the source of truth.
+// ---------------------------------------------------------------------------
+function ResetPasswordPanel({ data, onDone }) {
+  const p = usePalette();
+  const { members, updateMember } = data;
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const submit = async (e) => {
+    e?.preventDefault?.();
+    setError(null);
+    if (pw.length < 8) { setError("Password must be at least 8 characters."); return; }
+    if (pw !== pw2) { setError("Passwords don't match."); return; }
+    setBusy(true);
+    const r = await updateGuestPassword(pw);
+    setBusy(false);
+    if (!r.ok) { setError(r.error); return; }
+    // Members: mirror the new password onto the member record (keeps the
+    // legacy field + the auth sync trigger consistent, and fires the
+    // password-changed security email).
+    const sess = sessionFromClaims(r.user);
+    if (sess?.kind === "member" && sess.accountId && members.some((m) => m.id === sess.accountId)) {
+      updateMember(sess.accountId, { password: pw });
+    }
+    pushToast({ message: "Password updated — sign in with your new password" });
+    await onDone?.();
+  };
+
+  const fieldLabel = { color: p.textMuted, fontSize: "0.62rem", letterSpacing: "0.22em", textTransform: "uppercase", fontFamily: "'Manrope', sans-serif", fontWeight: 700, display: "block", marginBottom: 6 };
+  const fieldWrap = { border: `1px solid ${p.border}`, backgroundColor: p.inputBg };
+  const fieldInput = { backgroundColor: "transparent", color: p.textPrimary, padding: "0.7rem 0.5rem", fontFamily: "'Manrope', sans-serif", fontSize: "0.9rem", border: "none", minWidth: 0 };
+
+  return (
+    <div className="max-w-md mx-auto px-6 md:px-10 py-12">
+      <div className="mb-8">
+        <div style={{ fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.28em", textTransform: "uppercase", color: p.accent, fontWeight: 700 }}>
+          Reset password
+        </div>
+        <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "2.4rem", color: p.textPrimary, fontWeight: 500, lineHeight: 1.1, marginTop: 6 }}>
+          Choose a new password.
+        </h2>
+        <p style={{ color: p.textMuted, fontSize: "0.92rem", marginTop: 8, lineHeight: 1.55 }}>
+          You followed a password-reset link. Set your new password below — you'll use it with your email the next time you sign in.
+        </p>
+      </div>
+      <form onSubmit={submit} className="space-y-4" style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}`, padding: 24 }}>
+        <div>
+          <label style={fieldLabel}>New password</label>
+          <div className="flex" style={fieldWrap}>
+            <span className="flex items-center px-3" style={{ color: p.textMuted }}><KeyRound size={14} /></span>
+            <input
+              type={showPw ? "text" : "password"} autoFocus
+              value={pw}
+              onChange={(e) => { setPw(e.target.value); setError(null); }}
+              placeholder="Min. 8 characters"
+              className="flex-1 outline-none"
+              style={fieldInput}
+            />
+            <button type="button" onClick={() => setShowPw((s) => !s)} className="flex items-center px-3" style={{ color: p.textMuted, borderInlineStart: `1px solid ${p.border}` }}>
+              {showPw ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+          </div>
+        </div>
+        <div>
+          <label style={fieldLabel}>Confirm new password</label>
+          <div className="flex" style={fieldWrap}>
+            <span className="flex items-center px-3" style={{ color: p.textMuted }}><KeyRound size={14} /></span>
+            <input
+              type={showPw ? "text" : "password"}
+              value={pw2}
+              onChange={(e) => { setPw2(e.target.value); setError(null); }}
+              placeholder="Repeat the password"
+              className="flex-1 outline-none"
+              style={fieldInput}
+            />
+          </div>
+        </div>
+        {error && (
+          <div className="flex items-center gap-2 p-3" style={{
+            backgroundColor: `${p.danger}10`, border: `1px solid ${p.danger}40`,
+            color: p.danger, fontSize: "0.84rem",
+          }}>
+            <AlertCircle size={14} /> {error}
+          </div>
+        )}
+        <button
+          type="submit"
+          disabled={busy}
+          className="w-full inline-flex items-center justify-center gap-2"
+          style={{
+            backgroundColor: p.accent,
+            color: p.theme === "light" ? "#FFFFFF" : "#15161A",
+            border: `1px solid ${p.accent}`,
+            padding: "0.9rem 1rem",
+            fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem",
+            fontWeight: 700, letterSpacing: "0.25em", textTransform: "uppercase",
+            cursor: busy ? "wait" : "pointer", opacity: busy ? 0.7 : 1,
+          }}
+        >
+          <KeyRound size={14} /> {busy ? "Please wait…" : "Set new password"}
+        </button>
+        <div className="text-center" style={{ color: p.textMuted, fontSize: "0.78rem", marginTop: 4 }}>
+          Changed your mind?{" "}
+          <button type="button" onClick={() => onDone?.()} style={{ color: p.accent, fontWeight: 700, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+            Back to sign in →
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
