@@ -880,6 +880,21 @@ function ResetPasswordPanel({ data, onDone }) {
   // instead of letting "Set new password" fail cryptically.
   const [stage, setStage] = useState("verifying"); // "verifying" | "ready" | "failed"
   const [stageError, setStageError] = useState(null);
+  // Self-service on the failure card: request a fresh link without leaving
+  // this screen (the new email's link can then be opened on this device).
+  const [resendEmail, setResendEmail] = useState("");
+  const [resendNote, setResendNote] = useState(null);
+  const [resendBusy, setResendBusy] = useState(false);
+  const resend = async () => {
+    const em = resendEmail.trim().toLowerCase();
+    if (!em) { setResendNote({ kind: "error", text: "Enter your email address." }); return; }
+    setResendBusy(true);
+    const r = await resetGuest(em);
+    setResendBusy(false);
+    setResendNote(r.ok
+      ? { kind: "ok", text: `New reset link sent to ${em}. Open the NEWEST email on this device — older links stop working.` }
+      : { kind: "error", text: r.error });
+  };
   useEffect(() => {
     let on = true;
     (async () => {
@@ -947,17 +962,61 @@ function ResetPasswordPanel({ data, onDone }) {
           <p style={{ color: p.textMuted, fontSize: "0.86rem", lineHeight: 1.6, marginTop: 8 }}>
             {stageError || "The reset link is invalid or has expired."}
           </p>
+
+          {/* Request a fresh link without leaving this screen — the new
+              email can then be opened right here on this device. */}
+          <div className="mt-5 text-start">
+            <label style={fieldLabel}>Email a new link to</label>
+            <div className="flex" style={fieldWrap}>
+              <span className="flex items-center px-3" style={{ color: p.textMuted }}><Mail size={14} /></span>
+              <input
+                type="email"
+                value={resendEmail}
+                onChange={(e) => { setResendEmail(e.target.value); setResendNote(null); }}
+                placeholder="you@company.com"
+                className="flex-1 outline-none"
+                style={fieldInput}
+              />
+            </div>
+            {resendNote && (
+              <div className="flex items-center gap-2 p-3 mt-3" style={{
+                backgroundColor: resendNote.kind === "ok" ? `${p.accent}10` : `${p.danger}10`,
+                border: `1px solid ${resendNote.kind === "ok" ? `${p.accent}40` : `${p.danger}40`}`,
+                color: resendNote.kind === "ok" ? p.accent : p.danger, fontSize: "0.82rem", textAlign: "start",
+              }}>
+                {resendNote.kind === "ok" ? <Mail size={14} /> : <AlertCircle size={14} />} {resendNote.text}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={resend}
+              disabled={resendBusy}
+              className="w-full inline-flex items-center justify-center gap-2 mt-3"
+              style={{
+                backgroundColor: p.accent,
+                color: p.theme === "light" ? "#FFFFFF" : "#15161A",
+                border: `1px solid ${p.accent}`,
+                padding: "0.8rem 1rem",
+                fontFamily: "'Manrope', sans-serif", fontSize: "0.68rem",
+                fontWeight: 700, letterSpacing: "0.22em", textTransform: "uppercase",
+                cursor: resendBusy ? "wait" : "pointer", opacity: resendBusy ? 0.7 : 1,
+              }}
+            >
+              <Send size={13} /> {resendBusy ? "Sending…" : "Email me a new link"}
+            </button>
+          </div>
+
           <button
             type="button"
             onClick={() => onDone?.()}
             style={{
-              marginTop: 18, padding: "0.7rem 1.4rem",
-              fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", fontWeight: 700,
-              letterSpacing: "0.2em", textTransform: "uppercase",
-              color: p.accent, backgroundColor: "transparent", border: `1px solid ${p.accent}`,
+              marginTop: 14, padding: "0.6rem 1.2rem",
+              fontFamily: "'Manrope', sans-serif", fontSize: "0.64rem", fontWeight: 700,
+              letterSpacing: "0.18em", textTransform: "uppercase",
+              color: p.textMuted, backgroundColor: "transparent", border: `1px solid ${p.border}`,
               cursor: "pointer",
             }}
-          >← Back to sign in & request a new link</button>
+          >← Back to sign in</button>
         </div>
       )}
 
