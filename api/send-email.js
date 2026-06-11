@@ -14,6 +14,9 @@
 //   kind="vendor-registered"→ maintenance-vendor onboarding confirmation.
 //   kind="custom"           → uses the supplied subject + text verbatim
 //                             (used by the OTA stop-sale composer).
+//   kind="report"           → scheduled/manual operations report — supplied
+//                             subject + rich HTML body (+ text fallback),
+//                             built from live store data by the caller.
 //
 // Fail-soft: every "can't send" path returns 200 { ok:false, reason } so
 // the caller (e.g. registration) never breaks just because email is
@@ -179,6 +182,16 @@ function buildEmail(kind, payload, hotelName) {
     };
   }
 
+  if (kind === "report") {
+    // Scheduled / manual operations report. The caller builds the rich HTML
+    // from live store data (buildReportEmail); text is the plain fallback.
+    return {
+      subject: subject || `Report from ${hotelName}`,
+      text:    text || "This report is best viewed in an HTML-capable email client.",
+      html:    payload.html ? String(payload.html) : undefined,
+    };
+  }
+
   // Generic / custom message.
   return {
     subject: subject || `A message from ${hotelName}`,
@@ -262,6 +275,7 @@ export default async function handler(req, res) {
       replyTo: config.replyTo ? String(config.replyTo) : undefined,
       subject: built.subject,
       text:    built.text,
+      html:    built.html || undefined,
     });
     transporter.close?.();
     return res.status(200).json({ ok: true, kind, messageId: info.messageId, accepted: info.accepted, response: info.response });

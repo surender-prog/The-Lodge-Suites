@@ -7,6 +7,7 @@ import {
 import { usePalette } from "../../theme.jsx";
 import { REPORT_KINDS, REPORT_FREQUENCIES, useData } from "../../../../data/store.jsx";
 import { buildReportEmail } from "../ReportEmail.jsx";
+import { sendTransactionalEmail } from "../../../../utils/email.js";
 import {
   Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast,
   SelectField, Stat, TableShell, Td, Th, TextField,
@@ -646,19 +647,23 @@ function ReportPreviewDrawer({ schedule, autoSend = false, onClose }) {
     return adminUsers.filter((u) => ids.has(u.id));
   }, [adminUsers, data.activities]);
 
+  // Live store slices the report builders read — shared by the on-screen
+  // preview and the real sends (incl. per-rep scoped copies).
+  const reportData = useMemo(() => ({
+    activities: data.activities, bookings: data.bookings, payments: data.payments,
+    invoices: data.invoices, tax: data.tax, agreements: data.agreements,
+    agencies: data.agencies, calendar: data.calendar, adminUsers,
+    // Maintenance digest inputs
+    maintenanceJobs: data.maintenanceJobs, maintenanceVendors: data.maintenanceVendors,
+    roomUnits: data.roomUnits,
+  }), [data.activities, data.bookings, data.payments, data.invoices, data.tax, data.agreements, data.agencies, data.calendar, data.maintenanceJobs, data.maintenanceVendors, data.roomUnits, adminUsers]);
+
   // Build the email — recomputed on every store/scope change so the preview
   // stays live as the operator edits other sections.
   const email = useMemo(() => {
     return buildReportEmail({
       kind: schedule.kind,
-      data: {
-        activities: data.activities, bookings: data.bookings, payments: data.payments,
-        invoices: data.invoices, tax: data.tax, agreements: data.agreements,
-        agencies: data.agencies, calendar: data.calendar, adminUsers,
-        // Maintenance digest inputs
-        maintenanceJobs: data.maintenanceJobs, maintenanceVendors: data.maintenanceVendors,
-        roomUnits: data.roomUnits,
-      },
+      data: reportData,
       scope: {
         ...(scopeOwnerId ? { ownerId: scopeOwnerId } : {}),
         // Default to a 7-day window for the maintenance digest (matches the
@@ -667,7 +672,7 @@ function ReportPreviewDrawer({ schedule, autoSend = false, onClose }) {
       },
       anchor: new Date(),
     });
-  }, [schedule.kind, scopeOwnerId, data.activities, data.bookings, data.payments, data.invoices, data.tax, data.agreements, data.agencies, data.calendar, data.maintenanceJobs, data.maintenanceVendors, data.roomUnits, adminUsers]);
+  }, [schedule.kind, scopeOwnerId, reportData]);
 
   // Push the email HTML into the preview iframe via srcdoc.
   useEffect(() => {
@@ -676,19 +681,56 @@ function ReportPreviewDrawer({ schedule, autoSend = false, onClose }) {
     }
   }, [email.html]);
 
-  const sendNow = (kind = "manual") => {
+  // Real sends through /api/send-email (kind:"report" carries the built
+  // HTML). Base recipients share one email; perSalesRep owners each get
+  // their own scoped copy. The run log records what actually happened.
+  const [sending, setSending] = useState(false);
+
+  const sendNow = async (kind = "manual") => {
+    if (sending) return;
     if (!schedule.id || schedule.id === "PREVIEW") {
       pushToast({ message: "Save the schedule first, then run it", kind: "warn" });
       return;
     }
-    let recipientCount = (schedule.recipients?.length || 0);
-    if (schedule.perSalesRep) recipientCount += ownersWithActivity.length;
+    const base = (schedule.recipients || []).filter((e) => /.+@.+\..+/.test(String(e || "")));
+    const reps = schedule.perSalesRep ? ownersWithActivity.filter((u) => /.+@.+\..+/.test(String(u.email || ""))) : [];
+    if (base.length === 0 && reps.length === 0) {
+      pushToast({ message: "No valid recipients on this schedule", kind: "warn" });
+      return;
+    }
+    setSending(true);
+    let okCount = 0, failCount = 0, lastError = null;
+    if (base.length) {
+      const r = await sendTransactionalEmail({
+        kind: "report", to: base.join(", "),
+        subject: email.subject, html: email.html, text: email.text,
+      });
+      if (r?.ok) okCount += base.length;
+      else { failCount += base.length; lastError = r?.error || r?.reason || null; }
+    }
+    for (const u of reps) {
+      const scoped = buildReportEmail({
+        kind: schedule.kind,
+        data: reportData,
+        scope: { ownerId: u.id, ...(schedule.kind === "maintenance" ? { windowDays: 7 } : {}) },
+        anchor: new Date(),
+      });
+      const r = await sendTransactionalEmail({
+        kind: "report", to: u.email,
+        subject: scoped.subject, html: scoped.html, text: scoped.text,
+      });
+      if (r?.ok) okCount += 1;
+      else { failCount += 1; lastError = r?.error || r?.reason || lastError; }
+    }
+    setSending(false);
+    const status = failCount === 0 ? "sent" : okCount === 0 ? "failed" : "partial";
     appendReportRun(schedule.id, {
       runAt: new Date().toISOString(),
-      status: "sent", recipients: recipientCount, kind,
+      status, recipients: okCount + failCount, kind,
       nextRunAt: computeNextRun(schedule),
     });
-    pushToast({ message: `Report sent · ${recipientCount} recipient${recipientCount === 1 ? "" : "s"}` });
+    if (failCount === 0) pushToast({ message: `Report emailed · ${okCount} recipient${okCount === 1 ? "" : "s"}` });
+    else pushToast({ message: `Report send: ${okCount} delivered · ${failCount} failed${lastError ? ` — ${lastError}` : ""}`, kind: "warn" });
   };
 
   // Auto-fire if the operator clicked "Run now" from the table.
@@ -699,17 +741,28 @@ function ReportPreviewDrawer({ schedule, autoSend = false, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const sendTest = () => {
+  const sendTest = async () => {
+    if (sending) return;
     const e = testEmail.trim().toLowerCase();
     if (!/.+@.+\..+/.test(e)) { pushToast({ message: "Invalid test email", kind: "warn" }); return; }
-    if (schedule.id && schedule.id !== "PREVIEW") {
-      appendReportRun(schedule.id, {
-        runAt: new Date().toISOString(),
-        status: "sent", recipients: 1, kind: "test",
-      });
+    setSending(true);
+    const r = await sendTransactionalEmail({
+      kind: "report", to: e,
+      subject: `[Test] ${email.subject}`, html: email.html, text: email.text,
+    });
+    setSending(false);
+    if (r?.ok) {
+      if (schedule.id && schedule.id !== "PREVIEW") {
+        appendReportRun(schedule.id, {
+          runAt: new Date().toISOString(),
+          status: "sent", recipients: 1, kind: "test",
+        });
+      }
+      pushToast({ message: `Test report emailed to ${e}` });
+      setTestEmail("");
+    } else {
+      pushToast({ message: `Test send failed${r?.error ? ` — ${r.error}` : r?.reason ? ` — ${r.reason}` : ""}`, kind: "warn" });
     }
-    pushToast({ message: `Test sent to ${e}` });
-    setTestEmail("");
   };
 
   const downloadHtml = () => {
@@ -748,7 +801,7 @@ function ReportPreviewDrawer({ schedule, autoSend = false, onClose }) {
           <GhostBtn small onClick={downloadHtml}><Download size={11} /> Download</GhostBtn>
           <GhostBtn small onClick={openInNewTab}><Eye size={11} /> Open in new tab</GhostBtn>
           <div className="flex-1" />
-          <PrimaryBtn small onClick={() => sendNow("manual")}><Send size={11} /> Send now</PrimaryBtn>
+          <PrimaryBtn small onClick={() => sendNow("manual")}><Send size={11} /> {sending ? "Sending…" : "Send now"}</PrimaryBtn>
         </>
       }
     >
