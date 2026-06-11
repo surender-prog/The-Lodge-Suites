@@ -123,12 +123,31 @@ export async function updateGuestPassword(newPassword) {
 }
 
 // ---------------------------------------------------------------------------
-// Password-recovery detection. Reset links round-trip through the URL
-// (?code=… under PKCE, #…type=recovery under implicit); detectSessionInUrl
-// exchanges them on load and the SDK fires PASSWORD_RECOVERY. Because that
-// event can fire BEFORE the portal mounts, a module-level latch remembers it
-// so the portal can pick it up whenever it opens.
+// Password-recovery detection. Reset links land in one of three shapes:
+//   • ?token_hash=…&type=recovery — the cross-browser-safe email template
+//     ({{ .SiteURL }}?token_hash={{ .TokenHash }}&type=recovery); verified
+//     client-side via verifyOtp, works on any browser/device.
+//   • ?code=…                     — the default ConfirmationURL under PKCE;
+//     detectSessionInUrl exchanges it, but ONLY in the browser that requested
+//     the reset (the code_verifier lives in its localStorage).
+//   • #…type=recovery             — legacy implicit-flow hash.
+// detectSessionInUrl strips the URL once it processes it, so the params are
+// snapshotted synchronously at module load. The PASSWORD_RECOVERY event can
+// also fire before the portal mounts — a module-level latch remembers it.
 // ---------------------------------------------------------------------------
+const BOOT_AUTH_PARAMS = (() => {
+  try {
+    if (typeof window === "undefined") return {};
+    const search = new URLSearchParams(window.location.search || "");
+    const hash = new URLSearchParams((window.location.hash || "").replace(/^#/, ""));
+    return {
+      code:      search.get("code")       || hash.get("code")       || null,
+      tokenHash: search.get("token_hash") || hash.get("token_hash") || null,
+      type:      search.get("type")       || hash.get("type")       || null,
+    };
+  } catch { return {}; }
+})();
+
 let recoveryPending = false;
 if (SUPABASE_CONFIGURED && supabase) {
   supabase.auth.onAuthStateChange((event) => {
@@ -145,10 +164,43 @@ export function clearRecoveryPending() {
     }
   } catch { /* non-fatal */ }
 }
-// Fallback for implicit-style links where the type survives in the URL.
+// Did this page load arrive from an auth email link? (?code= counts: this app
+// has no OAuth, so a code landing is always an email-link round trip.)
 export function isRecoveryUrl() {
+  if (BOOT_AUTH_PARAMS.type === "recovery" || BOOT_AUTH_PARAMS.code) return true;
   if (typeof window === "undefined") return false;
   return /type=recovery/.test(window.location.hash || "") || /type=recovery/.test(window.location.search || "");
+}
+
+// Establish the recovery session for the reset-password panel, whatever shape
+// the link took. Returns { ok, user } or { ok:false, error } so the panel can
+// show a clear failure (expired link / opened in a different browser).
+export async function completeRecoveryFromUrl() {
+  if (!SUPABASE_CONFIGURED || !supabase) return NOT_CONFIGURED;
+  try {
+    // (a) token_hash links — verifier-free, works from any browser.
+    if (BOOT_AUTH_PARAMS.tokenHash && BOOT_AUTH_PARAMS.type === "recovery") {
+      const { data, error } = await supabase.auth.verifyOtp({ type: "recovery", token_hash: BOOT_AUTH_PARAMS.tokenHash });
+      if (error) return fail(error);
+      return { ok: true, user: data?.user || null };
+    }
+    // (b) ?code= / implicit-hash links — detectSessionInUrl is (or already
+    // finished) exchanging them; wait briefly for the session to appear.
+    const deadline = Date.now() + 8000;
+    for (;;) {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.user) return { ok: true, user: data.session.user };
+      if (Date.now() > deadline) break;
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    return {
+      ok: false,
+      code: "recovery_incomplete",
+      error: "We couldn't verify this reset link. It may have expired, already been used, or been opened in a different browser than the one that requested it. Request a new link and open it on this device.",
+    };
+  } catch (e) {
+    return fail(e);
+  }
 }
 // Live subscription for the same moment (covers the portal-already-open case).
 // Returns an unsubscribe function.

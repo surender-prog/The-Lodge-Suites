@@ -28,7 +28,7 @@ import { NotificationBell, MessagesQuickButton } from "../components/Notificatio
 import { MessageThread } from "../components/MessageThread.jsx";
 import { sendTransactionalEmail } from "../utils/email.js";
 import { REAL_GUEST_AUTH } from "../lib/supabase.js";
-import { signInGuestOtp, verifyGuestOtp, signInGuestPassword, resetGuest, signOutGuest, sessionFromClaims, updateGuestPassword, isRecoveryUrl, consumeRecoveryPending, clearRecoveryPending, onPasswordRecovery } from "../lib/guestAuth.js";
+import { signInGuestOtp, verifyGuestOtp, signInGuestPassword, resetGuest, signOutGuest, sessionFromClaims, updateGuestPassword, isRecoveryUrl, consumeRecoveryPending, clearRecoveryPending, onPasswordRecovery, completeRecoveryFromUrl } from "../lib/guestAuth.js";
 
 // ---------------------------------------------------------------------------
 // GuestPortal — self-service portal for the three customer cohorts:
@@ -874,6 +874,23 @@ function ResetPasswordPanel({ data, onDone }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
+  // Establish the recovery session from the link before showing the form.
+  // token_hash links verify directly (any browser); ?code= links depend on
+  // the SDK's exchange — if neither yields a session we show a clear failure
+  // instead of letting "Set new password" fail cryptically.
+  const [stage, setStage] = useState("verifying"); // "verifying" | "ready" | "failed"
+  const [stageError, setStageError] = useState(null);
+  useEffect(() => {
+    let on = true;
+    (async () => {
+      const r = await completeRecoveryFromUrl();
+      if (!on) return;
+      if (r.ok) { setStage("ready"); }
+      else { setStageError(r.error); setStage("failed"); }
+    })();
+    return () => { on = false; };
+  }, []);
+
   const submit = async (e) => {
     e?.preventDefault?.();
     setError(null);
@@ -911,6 +928,40 @@ function ResetPasswordPanel({ data, onDone }) {
           You followed a password-reset link. Set your new password below — you'll use it with your email the next time you sign in.
         </p>
       </div>
+      {stage === "verifying" && (
+        <div style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}`, padding: 28, textAlign: "center" }}>
+          <KeyRound size={26} style={{ color: p.accent, margin: "0 auto" }} />
+          <div style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.92rem", fontWeight: 600, marginTop: 12 }}>
+            Verifying your reset link…
+          </div>
+          <div style={{ color: p.textMuted, fontSize: "0.82rem", marginTop: 6 }}>One moment.</div>
+        </div>
+      )}
+
+      {stage === "failed" && (
+        <div style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}`, padding: 28, textAlign: "center" }}>
+          <AlertCircle size={26} style={{ color: p.danger, margin: "0 auto" }} />
+          <div style={{ color: p.textPrimary, fontFamily: "'Manrope', sans-serif", fontSize: "0.95rem", fontWeight: 600, marginTop: 12 }}>
+            This link couldn't be verified
+          </div>
+          <p style={{ color: p.textMuted, fontSize: "0.86rem", lineHeight: 1.6, marginTop: 8 }}>
+            {stageError || "The reset link is invalid or has expired."}
+          </p>
+          <button
+            type="button"
+            onClick={() => onDone?.()}
+            style={{
+              marginTop: 18, padding: "0.7rem 1.4rem",
+              fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", fontWeight: 700,
+              letterSpacing: "0.2em", textTransform: "uppercase",
+              color: p.accent, backgroundColor: "transparent", border: `1px solid ${p.accent}`,
+              cursor: "pointer",
+            }}
+          >← Back to sign in & request a new link</button>
+        </div>
+      )}
+
+      {stage === "ready" && (
       <form onSubmit={submit} className="space-y-4" style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}`, padding: 24 }}>
         <div>
           <label style={fieldLabel}>New password</label>
@@ -974,6 +1025,7 @@ function ResetPasswordPanel({ data, onDone }) {
           </button>
         </div>
       </form>
+      )}
     </div>
   );
 }
