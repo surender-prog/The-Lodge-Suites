@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
 import { PartnerLoyaltyPanel } from "./PartnerLoyaltyPanel.jsx";
+import { ConfirmDeleteModal } from "./ConfirmDeleteModal.jsx";
 import { useData, legalLine, formatCurrency } from "../../data/store.jsx";
 import { pushToast } from "./admin/ui.jsx";
 import { BookingDocPreviewModal } from "./admin/BookingDocs.jsx";
@@ -83,13 +84,14 @@ const dot = (base) => ({ width: 7, height: 7, borderRadius: 999, backgroundColor
 
 export function AgencyWorkspaceDrawer({ agency: initialAgency, onClose, onEditContract, onPreviewContract }) {
   const p = usePalette();
-  const { agencies, bookings, invoices, payments, rooms, tax, extras, activities, hotelInfo, upsertAgency } = useData();
+  const { agencies, bookings, invoices, payments, rooms, tax, extras, activities, hotelInfo, upsertAgency, removeAgency } = useData();
   const HOTEL = hotelInfo || FALLBACK_HOTEL;
 
   // Live agency reading from store so user / password changes flow back.
   const agency = agencies.find((a) => a.id === initialAgency.id) || initialAgency;
 
   const [tab, setTab] = useState("overview");
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [bookingPreview, setBookingPreview] = useState(null);
   const [stmtFrom, setStmtFrom] = useState(startOfYearISO());
   const [stmtTo,   setStmtTo]   = useState(todayISO());
@@ -238,6 +240,12 @@ export function AgencyWorkspaceDrawer({ agency: initialAgency, onClose, onEditCo
                 onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = p.accentDeep; e.currentTarget.style.borderColor = p.accentDeep; }}
                 onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = p.accent; e.currentTarget.style.borderColor = p.accent; }}
               ><Edit2 size={11} /> Manage contract</button>
+              <button onClick={() => setConfirmDelete(true)}
+                className="inline-flex items-center gap-1.5"
+                style={{ padding: "0.45rem 0.85rem", border: `1px solid ${p.border}`, color: p.danger, backgroundColor: "transparent", fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = p.danger; e.currentTarget.style.backgroundColor = `${p.danger}10`; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = p.border; e.currentTarget.style.backgroundColor = "transparent"; }}
+              ><Trash2 size={11} /> Delete agency</button>
             </div>
           </div>
 
@@ -331,6 +339,23 @@ export function AgencyWorkspaceDrawer({ agency: initialAgency, onClose, onEditCo
           onClose={() => setBookingPreview(null)}
         />
       )}
+
+      <ConfirmDeleteModal
+        open={confirmDelete}
+        title="Delete travel agency"
+        confirmWord={agency.name}
+        lines={[
+          `Permanently delete ${agency.name} (${agency.id}).`,
+          "This removes the agency, its net-rate matrix, all its portal users and their sign-in logins. Any bookings or invoices already raised stay on record but will no longer be linked to an agency.",
+        ]}
+        onConfirm={() => {
+          removeAgency(agency.id);
+          pushToast({ message: `Deleted · ${agency.name}` });
+          setConfirmDelete(false);
+          onClose?.();
+        }}
+        onClose={() => setConfirmDelete(false)}
+      />
     </div>
   );
 }

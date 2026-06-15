@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
 import { PartnerLoyaltyPanel } from "./PartnerLoyaltyPanel.jsx";
+import { ConfirmDeleteModal } from "./ConfirmDeleteModal.jsx";
 import { useData, legalLine, formatCurrency } from "../../data/store.jsx";
 import { pushToast } from "./admin/ui.jsx";
 import { BookingDocPreviewModal, downloadBookingDoc, emailBookingDoc } from "./admin/BookingDocs.jsx";
@@ -82,7 +83,7 @@ const dot = (base) => ({ width: 7, height: 7, borderRadius: 999, backgroundColor
 
 export function CorporateWorkspaceDrawer({ agreement: initialAgreement, onClose, onEditContract, onPreviewContract }) {
   const p = usePalette();
-  const { agreements, bookings, invoices, payments, rooms, tax, extras, activities, hotelInfo, upsertAgreement } = useData();
+  const { agreements, bookings, invoices, payments, rooms, tax, extras, activities, hotelInfo, upsertAgreement, removeAgreement } = useData();
   const HOTEL = hotelInfo || FALLBACK_HOTEL;
 
   // Always read the latest agreement from the store so user / password
@@ -90,6 +91,7 @@ export function CorporateWorkspaceDrawer({ agreement: initialAgreement, onClose,
   const agreement = agreements.find((a) => a.id === initialAgreement.id) || initialAgreement;
 
   const [tab, setTab] = useState("overview");
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [bookingPreview, setBookingPreview] = useState(null); // { booking, kind }
   const [stmtFrom, setStmtFrom] = useState(startOfYearISO());
   const [stmtTo,   setStmtTo]   = useState(todayISO());
@@ -236,6 +238,12 @@ export function CorporateWorkspaceDrawer({ agreement: initialAgreement, onClose,
                 onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = p.accentDeep; e.currentTarget.style.borderColor = p.accentDeep; }}
                 onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = p.accent; e.currentTarget.style.borderColor = p.accent; }}
               ><Edit2 size={11} /> Manage contract</button>
+              <button onClick={() => setConfirmDelete(true)}
+                className="inline-flex items-center gap-1.5"
+                style={{ padding: "0.45rem 0.85rem", border: `1px solid ${p.border}`, color: p.danger, backgroundColor: "transparent", fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = p.danger; e.currentTarget.style.backgroundColor = `${p.danger}10`; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = p.border; e.currentTarget.style.backgroundColor = "transparent"; }}
+              ><Trash2 size={11} /> Delete account</button>
             </div>
           </div>
 
@@ -329,6 +337,23 @@ export function CorporateWorkspaceDrawer({ agreement: initialAgreement, onClose,
           onClose={() => setBookingPreview(null)}
         />
       )}
+
+      <ConfirmDeleteModal
+        open={confirmDelete}
+        title="Delete corporate account"
+        confirmWord={agreement.account}
+        lines={[
+          `Permanently delete ${agreement.account} (${agreement.id}).`,
+          "This removes the contract, its rate matrix, all its portal users and their sign-in logins. Any bookings or invoices already raised stay on record but will no longer be linked to an account.",
+        ]}
+        onConfirm={() => {
+          removeAgreement(agreement.id);
+          pushToast({ message: `Deleted · ${agreement.account}` });
+          setConfirmDelete(false);
+          onClose?.();
+        }}
+        onClose={() => setConfirmDelete(false)}
+      />
     </div>
   );
 }
