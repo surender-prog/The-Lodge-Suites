@@ -28,7 +28,7 @@ import { NotificationBell, MessagesQuickButton } from "../components/Notificatio
 import { MessageThread } from "../components/MessageThread.jsx";
 import { sendTransactionalEmail } from "../utils/email.js";
 import { REAL_GUEST_AUTH } from "../lib/supabase.js";
-import { signInGuestOtp, verifyGuestOtp, signInGuestPassword, resetGuest, signOutGuest, sessionFromClaims, updateGuestPassword, isRecoveryUrl, consumeRecoveryPending, clearRecoveryPending, onPasswordRecovery, completeRecoveryFromUrl } from "../lib/guestAuth.js";
+import { signInGuestOtp, verifyGuestOtp, signInGuestPassword, resetGuest, signOutGuest, sessionFromClaims, updateGuestPassword, isRecoveryUrl, consumeRecoveryPending, clearRecoveryPending, onPasswordRecovery, completeRecoveryFromUrl, partnerEmailAvailable } from "../lib/guestAuth.js";
 
 // ---------------------------------------------------------------------------
 // GuestPortal — self-service portal for the three customer cohorts:
@@ -364,9 +364,12 @@ function LoginPanel({ data, onSignIn }) {
   const [registered, setRegistered] = useState(null);
   const setRegField = (patch) => { setReg((r) => ({ ...r, ...patch })); setError(null); };
 
-  const submitRegister = (e) => {
+  const [registering, setRegistering] = useState(false);
+  const EMAIL_TAKEN_MSG = "This email is already registered to an account here. Please sign in instead — or ask the front office to remove the old account first if it's no longer used.";
+  const submitRegister = async (e) => {
     e?.preventDefault?.();
     setError(null);
+    if (registering) return;
     const company = reg.company.trim();
     const nm = reg.name.trim();
     const em = reg.email.trim().toLowerCase();
@@ -374,11 +377,18 @@ function LoginPanel({ data, onSignIn }) {
     if (!company || !nm || !em || !pw) { setError("Company name, contact name, email and password are all required."); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { setError("Enter a valid email address."); return; }
     if (pw.length < 8) { setError("Password must be at least 8 characters."); return; }
-    const taken =
+    // Local check (works in seed/dev + when the lists are loaded).
+    const takenLocal =
       agreements.some((a) => (a.users || []).some((u) => (u.email || "").toLowerCase() === em)) ||
       agencies.some((a) => (a.users || []).some((u) => (u.email || "").toLowerCase() === em)) ||
       members.some((m) => (m.email || "").toLowerCase() === em);
-    if (taken) { setError("This email is already registered — try signing in instead."); return; }
+    if (takenLocal) { setError(EMAIL_TAKEN_MSG); return; }
+    // Server check — anonymous visitors can't read those lists, so the
+    // collision (and the silent DB-insert rejection) only shows up here.
+    setRegistering(true);
+    const available = await partnerEmailAvailable(em);
+    setRegistering(false);
+    if (!available) { setError(EMAIL_TAKEN_MSG); return; }
     const saved = registerPartnerAccount({ kind: reg.kind, company, name: nm, email: em, phone: reg.phone.trim(), password: pw });
     setRegistered(saved);
     setView("registered");
@@ -805,6 +815,7 @@ function LoginPanel({ data, onSignIn }) {
             )}
             <button
               type="submit"
+              disabled={registering}
               className="w-full inline-flex items-center justify-center gap-2"
               style={{
                 backgroundColor: p.accent,
@@ -813,12 +824,12 @@ function LoginPanel({ data, onSignIn }) {
                 padding: "0.9rem 1rem",
                 fontFamily: "'Manrope', sans-serif", fontSize: "0.7rem",
                 fontWeight: 700, letterSpacing: "0.25em", textTransform: "uppercase",
-                cursor: "pointer",
+                cursor: registering ? "wait" : "pointer", opacity: registering ? 0.7 : 1,
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = p.accentDeep; e.currentTarget.style.borderColor = p.accentDeep; }}
+              onMouseEnter={(e) => { if (!registering) { e.currentTarget.style.backgroundColor = p.accentDeep; e.currentTarget.style.borderColor = p.accentDeep; } }}
               onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = p.accent; e.currentTarget.style.borderColor = p.accent; }}
             >
-              <UserPlus size={14} /> Submit registration
+              <UserPlus size={14} /> {registering ? "Checking…" : "Submit registration"}
             </button>
             <div className="text-center" style={{ color: p.textMuted, fontSize: "0.78rem", marginTop: 4 }}>
               Already registered?{" "}

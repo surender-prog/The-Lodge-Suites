@@ -1500,9 +1500,24 @@ function PasswordPanel({ user, onSetPassword, onGenerateTemp, onSendReset, p }) 
   );
 }
 
+// Who already owns an email across accounts/members/staff, or null if free.
+function emailOwnerLabel(em, { agreements = [], agencies = [], members = [], adminUsers = [] }) {
+  const lc = String(em || "").toLowerCase();
+  if (!lc.includes("@")) return null;
+  const a1 = agreements.find((a) => (a.users || []).some((u) => (u.email || "").toLowerCase() === lc));
+  if (a1) return `corporate account "${a1.account}"`;
+  const a2 = agencies.find((a) => (a.users || []).some((u) => (u.email || "").toLowerCase() === lc));
+  if (a2) return `travel agency "${a2.name}"`;
+  if (members.some((m) => (m.email || "").toLowerCase() === lc)) return "an LS Privilege member";
+  if (adminUsers.some((u) => (u.email || "").toLowerCase() === lc)) return "a staff account";
+  return null;
+}
+
 function AddUserForm({ onCancel, onAdd, p }) {
+  const { agreements, agencies, members, adminUsers } = useData();
   const [draft, setDraft] = useState({ name: "", email: "", phone: "", role: "reservations", sendInvite: true });
   const valid = draft.name.trim() && draft.email.includes("@");
+  const inUse = emailOwnerLabel(draft.email, { agreements, agencies, members, adminUsers });
 
   return (
     <div>
@@ -1518,6 +1533,11 @@ function AddUserForm({ onCancel, onAdd, p }) {
         </FieldLbl>
         <FieldLbl label="Email *" p={p}>
           <Inp type="email" value={draft.email} onChange={(v) => setDraft({ ...draft, email: v })} placeholder="email@agency.com" p={p} />
+          {inUse && (
+            <div style={{ marginTop: 5, color: p.warn, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", lineHeight: 1.45 }}>
+              ⚠ Already used by {inUse}. One email = one login — adding it here will move that login to this agency.
+            </div>
+          )}
         </FieldLbl>
         <FieldLbl label="Phone" p={p}>
           <Inp value={draft.phone} onChange={(v) => setDraft({ ...draft, phone: v })} placeholder="+973…" p={p} />

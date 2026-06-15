@@ -122,6 +122,23 @@ export async function updateGuestPassword(newPassword) {
   }
 }
 
+// Public partner registration: is this email free to register a brand-new
+// corporate/agency account? Calls the migration-027 RPC (granted to anon) —
+// needed because an anonymous visitor can't read agreements/agencies/members
+// to check locally. Fail-OPEN: if the check can't run (seed/dev, RPC error)
+// we don't block; the DB insert's RLS guard is the real enforcement.
+// Returns true = available, false = already registered.
+export async function partnerEmailAvailable(email) {
+  if (!SUPABASE_CONFIGURED || !supabase) return true;
+  const em = (email || "").trim().toLowerCase();
+  if (!em) return true;
+  try {
+    const { data, error } = await supabase.rpc("partner_registration_email_available", { p_data: { users: [{ email: em }] } });
+    if (error) return true;
+    return data !== false;
+  } catch { return true; }
+}
+
 // ---------------------------------------------------------------------------
 // Password-recovery detection. Reset links land in one of three shapes:
 //   • ?token_hash=…&type=recovery — the cross-browser-safe email template
