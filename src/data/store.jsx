@@ -979,6 +979,50 @@ const FOM_EMAIL  = "fom@thelodgesuites.com";
 // separated; the server normalises + validates this before sending.
 const BOOKING_BCC = "gm@thelodgesuites.com, frontoffice@thelodgesuites.com, fom@thelodgesuites.com";
 
+// Merge a comma-separated email string with extra addresses, de-duplicated
+// case-insensitively and order-preserving. Returns a comma-separated string the
+// server can normalise/validate. Empty/blank entries are dropped.
+function mergeEmailList(existing, additions = []) {
+  const seen = new Set();
+  const out = [];
+  const push = (raw) => {
+    const e = String(raw || "").trim();
+    if (!e) return;
+    const k = e.toLowerCase();
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push(e);
+  };
+  String(existing || "").split(",").forEach(push);
+  (additions || []).forEach(push);
+  return out.join(", ");
+}
+
+// Resolve the partner (travel-agency / corporate) contact emails for a booking
+// so the booking PARTNER is copied on its confirmation + status mails — not just
+// the guest. Agent bookings link to their agency via `agencyId`, corporate
+// bookings to their account via `accountId`. Returns the account's portal-user
+// emails (deduped, case-insensitive); empty when the booking isn't a B2B
+// booking or the account can't be resolved.
+function partnerContactEmails(bk, { agencies = [], agreements = [] }) {
+  if (!bk) return [];
+  let acct = null;
+  if (bk.source === "agent")          acct = agencies.find((a) => a.id === bk.agencyId);
+  else if (bk.source === "corporate") acct = agreements.find((a) => a.id === bk.accountId);
+  if (!acct) return [];
+  const seen = new Set();
+  const out = [];
+  for (const u of acct.users || []) {
+    const e = (u.email || "").trim();
+    if (!e) continue;
+    const k = e.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(e);
+  }
+  return out;
+}
+
 const SAMPLE_EMAIL_TEMPLATES = [
   // ---------- Booking ---------------------------------------------------------
   {
@@ -6091,12 +6135,21 @@ export function DataProvider({ children }) {
     setTimeout(() => {
       appendNotifications(notifyBookingCreated(saved, { agreements, agencies, members }));
     }, 0);
-    // Fire the real guest confirmation email (fire-and-forget). Sends only
-    // when the booking carries a guest email; the body adapts to the status
-    // (confirmed → "confirmed", on-request → "received, pending"). The suite
-    // label is resolved here where we have the rooms list; the server fills
-    // in the rest. A slow/unconfigured mailer never blocks the booking.
-    if (saved.email) {
+    // Fire the real confirmation email (fire-and-forget). The body adapts to
+    // the status (confirmed → "confirmed", on-request → "received, pending").
+    // The suite label is resolved here where we have the rooms list; the server
+    // fills in the rest. A slow/unconfigured mailer never blocks the booking.
+    //
+    // Recipient resolution copies the booking PARTNER, not just the guest:
+    //   • Agent / corporate bookings CC the agency's / company's portal
+    //     contacts so the booker is always notified.
+    //   • Agent bookings frequently carry NO guest email (the agency books on
+    //     behalf), so when there's no guest email the partner contact becomes
+    //     the primary recipient — otherwise the booking would send no mail at
+    //     all. We only skip entirely when there is no addressable contact.
+    const partnerEmails = partnerContactEmails(saved, { agencies, agreements });
+    const primaryTo = saved.email || partnerEmails[0] || "";
+    if (primaryTo) {
       const room = rooms.find((r) => r.id === saved.roomId);
       const status = saved.status || "confirmed";
       // Both confirmed AND on-request new bookings resolve their internal
@@ -6107,9 +6160,12 @@ export function DataProvider({ children }) {
       // copied even if the template were edited to clear its BCC.
       const copy = templateCopyFor("booking.confirmed");
       if (!copy.bcc) copy.bcc = BOOKING_BCC;
+      // CC every partner contact that isn't already the primary recipient.
+      const extraCc = partnerEmails.filter((e) => e.toLowerCase() !== primaryTo.toLowerCase());
+      if (extraCc.length) copy.cc = mergeEmailList(copy.cc, extraCc);
       sendTransactionalEmail({
         kind: "booking-new",
-        to: saved.email,
+        to: primaryTo,
         name: saved.guest,
         bookingId: saved.id,
         suite: room ? resolveRoomLabel(room) : (saved.roomId || undefined),
@@ -6145,11 +6201,15 @@ export function DataProvider({ children }) {
       setTimeout(() => {
         appendNotifications(notifyBookingStatusChange(prev, next, { agreements, agencies, members }));
       }, 0);
-      // Real guest email on the status transition (fire-and-forget). Sends
-      // only when the booking has a guest email; the body's closing line is
-      // tailored per status (confirmed / cancelled / rejected / in-house /
-      // checkout) server-side.
-      if (next.email) {
+      // Real email on the status transition (fire-and-forget). The body's
+      // closing line is tailored per status (confirmed / cancelled / rejected /
+      // in-house / checkout) server-side. Recipient resolution mirrors
+      // addBooking: the booking PARTNER (agency/company) is copied, and on a
+      // partner booking with no guest email the partner contact is the primary
+      // recipient so status changes still reach the booker.
+      const partnerEmails = partnerContactEmails(next, { agencies, agreements });
+      const primaryTo = next.email || partnerEmails[0] || "";
+      if (primaryTo) {
         const room = rooms.find((r) => r.id === next.roomId);
         // Map the new status → its lifecycle template event so the internal
         // copy-list (cc/bcc) is carried onto the send. Event names must match
@@ -6169,9 +6229,11 @@ export function DataProvider({ children }) {
         const event = EVENT_BY_STATUS[String(next.status || "").toLowerCase()] || "booking.confirmed";
         const copy = templateCopyFor(event, ["booking.confirmed"]);
         if (!copy.bcc) copy.bcc = BOOKING_BCC;
+        const extraCc = partnerEmails.filter((e) => e.toLowerCase() !== primaryTo.toLowerCase());
+        if (extraCc.length) copy.cc = mergeEmailList(copy.cc, extraCc);
         sendTransactionalEmail({
           kind: "booking-status",
-          to: next.email,
+          to: primaryTo,
           name: next.guest,
           bookingId: next.id,
           suite: room ? resolveRoomLabel(room) : (next.roomId || undefined),
