@@ -998,22 +998,38 @@ function mergeEmailList(existing, additions = []) {
   return out.join(", ");
 }
 
-// Resolve the partner (travel-agency / corporate) contact emails for a booking
-// so the booking PARTNER is copied on its confirmation + status mails — not just
-// the guest. Agent bookings link to their agency via `agencyId`, corporate
-// bookings to their account via `accountId`. Returns the account's portal-user
-// emails (deduped, case-insensitive); empty when the booking isn't a B2B
-// booking or the account can't be resolved.
-function partnerContactEmails(bk, { agencies = [], agreements = [] }) {
+// Resolve every party (besides the guest) who should be COPIED on a booking's
+// confirmation + status mails, so a booking placed on someone else's behalf is
+// always shared with the person who made it — and the booking PARTNER is kept
+// in the loop. Returns deduped (case-insensitive) emails; the call site puts the
+// guest in `to` and these on `cc` (or promotes the first to `to` when there's
+// no guest email, e.g. an agency booking with no guest address).
+//   • bookedByEmail — the logged-in user who placed the booking on behalf of
+//     the guest (member / corporate / agent / direct self-service). When a user
+//     books for themselves this equals the guest email and de-dupes away.
+//   • agent  → the agency's portal contacts   (linked via agencyId)
+//   • corporate → the company's portal contacts (linked via accountId)
+//   • member → the member's own email          (linked via memberId)
+function bookingCopyEmails(bk, { agencies = [], agreements = [], members = [] }) {
   if (!bk) return [];
-  let acct = null;
-  if (bk.source === "agent")          acct = agencies.find((a) => a.id === bk.agencyId);
-  else if (bk.source === "corporate") acct = agreements.find((a) => a.id === bk.accountId);
-  if (!acct) return [];
+  const acc = [];
+  // The specific person who placed the booking on behalf of the guest.
+  if (bk.bookedByEmail) acc.push(bk.bookedByEmail);
+  // The partner account's portal contacts, so the whole booking desk is copied.
+  if (bk.source === "agent") {
+    const a = agencies.find((x) => x.id === bk.agencyId);
+    if (a) (a.users || []).forEach((u) => u.email && acc.push(u.email));
+  } else if (bk.source === "corporate") {
+    const a = agreements.find((x) => x.id === bk.accountId);
+    if (a) (a.users || []).forEach((u) => u.email && acc.push(u.email));
+  } else if (bk.source === "member") {
+    const m = members.find((x) => x.id === bk.memberId);
+    if (m && m.email) acc.push(m.email);
+  }
   const seen = new Set();
   const out = [];
-  for (const u of acct.users || []) {
-    const e = (u.email || "").trim();
+  for (const raw of acc) {
+    const e = String(raw || "").trim();
     if (!e) continue;
     const k = e.toLowerCase();
     if (seen.has(k)) continue;
@@ -6147,7 +6163,7 @@ export function DataProvider({ children }) {
     //     behalf), so when there's no guest email the partner contact becomes
     //     the primary recipient — otherwise the booking would send no mail at
     //     all. We only skip entirely when there is no addressable contact.
-    const partnerEmails = partnerContactEmails(saved, { agencies, agreements });
+    const partnerEmails = bookingCopyEmails(saved, { agencies, agreements, members });
     const primaryTo = saved.email || partnerEmails[0] || "";
     if (primaryTo) {
       const room = rooms.find((r) => r.id === saved.roomId);
@@ -6207,7 +6223,7 @@ export function DataProvider({ children }) {
       // addBooking: the booking PARTNER (agency/company) is copied, and on a
       // partner booking with no guest email the partner contact is the primary
       // recipient so status changes still reach the booker.
-      const partnerEmails = partnerContactEmails(next, { agencies, agreements });
+      const partnerEmails = bookingCopyEmails(next, { agencies, agreements, members });
       const primaryTo = next.email || partnerEmails[0] || "";
       if (primaryTo) {
         const room = rooms.find((r) => r.id === next.roomId);
