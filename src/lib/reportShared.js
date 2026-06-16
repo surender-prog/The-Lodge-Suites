@@ -41,6 +41,25 @@ export function applyTaxes(net, tax, nights = 1) {
   return { gross: +(net + totalTax).toFixed(3), totalTax: +totalTax.toFixed(3), lines };
 }
 
+// Approximate inverse: given a gross amount and the current tax config, work
+// back the net. Used by the invoice/folio breakdown + the PDF document builder.
+// Compound rates introduce a multiplicative interaction — we solve iteratively
+// (tax is monotone in net) after removing fixed per-stay/per-night components.
+export function inverseApplyTaxes(gross, tax, nights = 1) {
+  if (!tax?.components || tax.components.length === 0) return gross;
+  const fixed = tax.components
+    .filter(c => c.type === "fixed")
+    .reduce((s, c) => s + c.amount * (c.chargePer === "stay" ? 1 : nights), 0);
+  const grossLessFixed = gross - fixed;
+  let lo = 0, hi = grossLessFixed;
+  for (let i = 0; i < 30; i++) {
+    const mid = (lo + hi) / 2;
+    const probe = applyTaxes(mid, { components: tax.components.filter(c => c.type === "percentage") });
+    if (probe.gross > grossLessFixed) hi = mid; else lo = mid;
+  }
+  return +((lo + hi) / 2).toFixed(3);
+}
+
 // ─── Sales activities ────────────────────────────────────────────────────
 // Sales follow-up activities tied to a corporate, agent, or prospect record.
 // Captures every touchpoint: field visits, tele-calls, scheduled meetings,

@@ -2,7 +2,9 @@ import React from "react";
 import { Download, FileText, Mail, Printer, Receipt, X } from "lucide-react";
 import { usePalette } from "../theme.jsx";
 import { applyTaxes, inverseApplyTaxes, legalLine, summarizeTax, useData, formatCurrency, getCurrentCurrency } from "../../../data/store.jsx";
+import { buildFolio } from "../../../lib/folio.js";
 import { roomLabel as resolveRoomLabel } from "../../../lib/rooms.js";
+import { pushToast } from "./ui.jsx";
 import { useT } from "../../../i18n/LanguageContext.jsx";
 
 // ---------------------------------------------------------------------------
@@ -50,60 +52,8 @@ const SOURCE_LABEL = {
 // component split using the active tax config so the document tax line items
 // match what the guest actually paid.
 // ---------------------------------------------------------------------------
-function buildFolio(booking, tax, rooms, extras) {
-  const room = rooms?.find((r) => r.id === booking.roomId);
-  const nights = booking.nights || 0;
-  // When commission was deducted at booking, `booking.total` records the
-  // NET obligation (gross − commissionDeducted). The folio surfaces both
-  // figures so the gross/tax math still reconciles; the agent's bill is
-  // shown net at the bottom.
-  const commissionCut = booking.commissionDeducted
-    ? Number(booking.commissionDeductedAmount ?? booking.comm ?? 0)
-    : 0;
-  const netTotal = booking.total || 0;
-  const gross    = netTotal + commissionCut;
-  // inverseApplyTaxes returns the NET as a plain NUMBER — it solves for the net
-  // such that net + tax(net) === gross. Earlier this code treated the result as
-  // an object ({ net, components }), so `net` silently fell back to `gross` and
-  // the tax breakdown came out empty (Subtotal === Total, no line items). Use
-  // the number, then derive the per-tax lines from a forward applyTaxes() pass
-  // on that net so the folio always reconciles back to the gross total.
-  const netNum = inverseApplyTaxes(gross, tax || { components: [] }, nights);
-  const net    = (typeof netNum === "number" && Number.isFinite(netNum)) ? netNum : gross;
-  const built  = applyTaxes(net, tax || { components: [] }, nights);
-  // Map applyTaxes()'s `lines` into the { label, amount, type, rate } shape the
-  // folio table and the printable/PDF document both render.
-  const taxComponents = (built.lines || []).map((l) => ({
-    label:  l.name,
-    amount: l.taxAmount,
-    type:   l.type,
-    rate:   l.rate,
-  }));
-
-  // Weekday/weekend split — bookings created on the new pricing model stamp
-  // these four fields; legacy records are missing them and the folio falls
-  // back to the single-line "Suite charge" row.
-  const weekdayNights = Number(booking.weekdayNights) || 0;
-  const weekendNights = Number(booking.weekendNights) || 0;
-  const rateWeekday   = Number(booking.rateWeekday)   || 0;
-  const rateWeekend   = Number(booking.rateWeekend)   || 0;
-  const mixedNights   = weekdayNights > 0 && weekendNights > 0;
-
-  return {
-    room,
-    nights,
-    rate:        booking.rate || 0,
-    netRoom:     net,
-    extras:      [], // line items — bookings as stored don't carry per-extra entries; left empty
-    components:  taxComponents,
-    gross,
-    netTotal,
-    commissionCut,
-    paid:        booking.paid || 0,
-    balance:     netTotal - (booking.paid || 0),
-    weekdayNights, weekendNights, rateWeekday, rateWeekend, mixedNights,
-  };
-}
+// buildFolio now lives in src/lib/folio.js (pure, React-free) so the store +
+// PDF builder share the exact same line-item / tax math. Imported above.
 
 // ---------------------------------------------------------------------------
 // React preview view — invoice OR receipt depending on `kind`.
@@ -803,7 +753,16 @@ export function BookingDocPreviewModal({ booking, kind, tax, rooms, extras, onCl
           </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
-          <ToolbarBtn icon={Mail}     label="Email"    onClick={() => emailBookingDoc(booking, kind, hotel)} p={p} />
+          <ToolbarBtn icon={Mail}     label="Email PDF" onClick={async () => {
+            if (kind === "invoice" || kind === "receipt") {
+              const r = await data.sendBookingDocPdf(booking, kind);
+              pushToast(r
+                ? { message: `${kind === "receipt" ? "Receipt" : "Invoice"} PDF emailed to ${booking.email || "the customer"}` }
+                : { message: "No email on file for this booking — add one in the booking first.", kind: "warn" });
+            } else {
+              emailBookingDoc(booking, kind, hotel);
+            }
+          }} p={p} />
           <ToolbarBtn icon={Download} label="Download" onClick={() => downloadBookingDoc(booking, kind, { tax, rooms, hotel })} p={p} primary />
           <ToolbarBtn icon={Printer}  label="Print"    onClick={() => printBookingDoc(booking, kind, { tax, rooms, hotel })} p={p} />
           <button onClick={onClose}

@@ -192,6 +192,31 @@ function buildEmail(kind, payload, hotelName) {
     };
   }
 
+  if (kind === "invoice" || kind === "receipt") {
+    // Cover note for an attached invoice / receipt PDF. The PDF itself carries
+    // the full branded document; this body is the short accompanying message.
+    const isReceipt = kind === "receipt";
+    const ref  = String(payload.docNo || payload.bookingId || "").trim();
+    const amt  = payload.amountLabel ? String(payload.amountLabel) : "";
+    const lead = isReceipt
+      ? "Thank you for your payment. Your receipt is attached as a PDF."
+      : "Please find your invoice attached as a PDF.";
+    const textFallback = [
+      `Dear ${who},`, "", lead,
+      ref ? `Reference: ${ref}` : null,
+      amt ? `Amount: ${amt}` : null,
+      "", "For any queries, simply reply to this email.", "",
+      "Kind regards,", "Accounts Team", hotelName,
+    ].filter((l) => l !== null).join("\n");
+    return {
+      subject: subject || (isReceipt
+        ? `${hotelName} · Payment receipt${ref ? " · " + ref : ""}`
+        : `${hotelName} · Invoice${ref ? " · " + ref : ""}`),
+      text: text || textFallback,
+      html: payload.html ? String(payload.html) : undefined,
+    };
+  }
+
   // Generic / custom message.
   return {
     subject: subject || `A message from ${hotelName}`,
@@ -257,6 +282,21 @@ export default async function handler(req, res) {
   const ccList  = toAddrList(body.cc);
   const bccList = toAddrList(body.bcc);
 
+  // Attachments — the client sends [{ filename, contentBase64, contentType? }].
+  // Decode base64 → Buffer for nodemailer. Capped defensively so a malformed
+  // payload can't blow the function's memory; anything invalid is skipped.
+  const attachments = (Array.isArray(body.attachments) ? body.attachments : [])
+    .map((a) => {
+      const b64 = String(a?.contentBase64 || "").trim();
+      const filename = String(a?.filename || "document.pdf").replace(/[^A-Za-z0-9._-]/g, "") || "document.pdf";
+      if (!b64 || b64.length > 12_000_000) return null; // ~9 MB decoded ceiling
+      try {
+        return { filename, content: Buffer.from(b64, "base64"), contentType: a?.contentType || "application/pdf" };
+      } catch { return null; }
+    })
+    .filter(Boolean)
+    .slice(0, 5);
+
   let transporter;
   try {
     transporter = nodemailer.createTransport(transportOptionsFor({
@@ -276,6 +316,7 @@ export default async function handler(req, res) {
       subject: built.subject,
       text:    built.text,
       html:    built.html || undefined,
+      attachments: attachments.length ? attachments : undefined,
     });
     transporter.close?.();
     return res.status(200).json({ ok: true, kind, messageId: info.messageId, accepted: info.accepted, response: info.response });

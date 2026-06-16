@@ -12,10 +12,11 @@ import {
 // importing this (client-only) module. Re-exported so existing imports of
 // applyTaxes / ACTIVITY_KINDS / etc. from the store keep working unchanged.
 import {
-  applyTaxes, effectiveActivityStatus, ACTIVITY_KINDS, MAINTENANCE_CATEGORIES,
+  applyTaxes, inverseApplyTaxes, effectiveActivityStatus, ACTIVITY_KINDS, MAINTENANCE_CATEGORIES,
 } from "../lib/reportShared.js";
-export { applyTaxes, effectiveActivityStatus, ACTIVITY_KINDS, MAINTENANCE_CATEGORIES };
+export { applyTaxes, inverseApplyTaxes, effectiveActivityStatus, ACTIVITY_KINDS, MAINTENANCE_CATEGORIES };
 import { sendTransactionalEmail } from "../utils/email.js";
+import { emailBookingDocPdf } from "../lib/docEmail.js";
 import { PACKAGES as INITIAL_PACKAGES } from "./packages.js";
 import { supabase, SUPABASE_CONFIGURED, hasSupabaseSession, REAL_GUEST_AUTH } from "../lib/supabase.js";
 import { sessionFromClaims } from "../lib/guestAuth.js";
@@ -627,26 +628,8 @@ export function totalEventSupplement(eventSupplements, { checkIn, checkOut, scop
   return total;
 }
 
-// Approximate inverse: given a gross amount and the current tax config, work
-// back the net. Used by the invoice detail to display a plausible breakdown.
-// Compound rates introduce a multiplicative interaction — we handle the common
-// case (one compound rate) accurately and fall back to a linearised estimate
-// otherwise. Good enough for ledger display, not for invoicing math.
-export function inverseApplyTaxes(gross, tax, nights = 1) {
-  if (!tax?.components || tax.components.length === 0) return gross;
-  const fixed = tax.components
-    .filter(c => c.type === "fixed")
-    .reduce((s, c) => s + c.amount * (c.chargePer === "stay" ? 1 : nights), 0);
-  const grossLessFixed = gross - fixed;
-  // Iterative solve: walk down from grossLessFixed, since tax is monotone in net.
-  let lo = 0, hi = grossLessFixed;
-  for (let i = 0; i < 30; i++) {
-    const mid = (lo + hi) / 2;
-    const probe = applyTaxes(mid, { components: tax.components.filter(c => c.type === "percentage") });
-    if (probe.gross > grossLessFixed) hi = mid; else lo = mid;
-  }
-  return +((lo + hi) / 2).toFixed(3);
-}
+// (inverseApplyTaxes now lives in src/lib/reportShared.js and is re-exported
+// above, so the PDF document builder can share the exact same folio math.)
 
 // Bookings seed — intentionally EMPTY. The property runs on live bookings
 // only; demo reservations were removed so a fresh / empty environment starts
@@ -6265,6 +6248,21 @@ export function DataProvider({ children }) {
   const removeBooking = useCallback((id) => setBookings(bs => bs.filter(b => b.id !== id)), []);
 
   // Invoice CRUD. ID format keeps the YYYY-#### convention used by sample data.
+  // Resolve who an invoice's PDF documents should reach: the booking guest (or
+  // the invoice's own clientEmail), with the partner account's portal contacts
+  // CC'd. Returns an empty primaryTo for void/cancelled bookings (so nothing is
+  // auto-sent) or standalone invoices with no booking + no clientEmail.
+  const resolveInvoiceRecipients = useCallback((inv) => {
+    if (!inv) return { booking: null, primaryTo: "", cc: undefined };
+    const booking = (inv.bookingId && inv.bookingId !== "—") ? bookings.find(b => b.id === inv.bookingId) : null;
+    const VOID = new Set(["cancelled", "canceled", "void", "rejected", "sold-out", "soldout", "no-show", "noshow"]);
+    if (booking && VOID.has(String(booking.status || "").toLowerCase())) return { booking, primaryTo: "", cc: undefined };
+    const partnerEmails = booking ? bookingCopyEmails(booking, { agencies, agreements, members }) : [];
+    const primaryTo = (booking?.email || inv.clientEmail || partnerEmails[0] || "").trim();
+    const extraCc = partnerEmails.filter(e => e.toLowerCase() !== primaryTo.toLowerCase());
+    return { booking, primaryTo, cc: extraCc.length ? extraCc.join(", ") : undefined };
+  }, [bookings, agencies, agreements, members]);
+
   const addInvoice = useCallback((invoice) => {
     let saved;
     setInvoices(ivs => {
@@ -6276,7 +6274,17 @@ export function DataProvider({ children }) {
     setTimeout(() => {
       appendNotifications(notifyInvoiceIssued(saved, { agreements, agencies, members, bookings }));
     }, 0);
-  }, [agreements, agencies, members, bookings, appendNotifications]);
+    // Auto-email the invoice PDF to the customer. Booking invoices only — the
+    // PDF builder needs the booking, so gift-card / standalone invoices skip.
+    // Fire-and-forget; a void booking or missing recipient is a silent no-op.
+    setTimeout(() => {
+      const { booking, primaryTo, cc } = resolveInvoiceRecipients(saved);
+      const amount = saved.amount ?? booking?.total ?? 0;
+      if (booking && primaryTo && amount > 0) {
+        emailBookingDocPdf("invoice", { booking, invoice: saved, tax, rooms, hotel: hotelInfo, currency: "BHD", to: primaryTo, cc });
+      }
+    }, 0);
+  }, [agreements, agencies, members, bookings, appendNotifications, resolveInvoiceRecipients, tax, rooms, hotelInfo]);
   // Invoice update — diff status to emit paid / overdue / cancelled events.
   const updateInvoice = useCallback((id, patch) => {
     let prev = null, next = null;
@@ -6290,9 +6298,37 @@ export function DataProvider({ children }) {
       setTimeout(() => {
         appendNotifications(notifyInvoiceStatusChange(prev, next, { agreements, agencies, members, bookings }));
       }, 0);
+      // Paid-in-full → auto-email a PAYMENT RECEIPT PDF to the customer (the
+      // operator chose "receipt only when fully settled"). Fire-and-forget;
+      // booking invoices only, missing recipient is a no-op.
+      if (String(next.status || "").toLowerCase() === "paid") {
+        setTimeout(() => {
+          const { booking, primaryTo, cc } = resolveInvoiceRecipients(next);
+          if (booking && primaryTo) {
+            emailBookingDocPdf("receipt", { booking, invoice: next, tax, rooms, hotel: hotelInfo, currency: "BHD", to: primaryTo, cc });
+          }
+        }, 0);
+      }
     }
-  }, [agreements, agencies, members, bookings, appendNotifications]);
+  }, [agreements, agencies, members, bookings, appendNotifications, resolveInvoiceRecipients, tax, rooms, hotelInfo]);
   const removeInvoice = useCallback((id) => setInvoices(ivs => ivs.filter(i => i.id !== id)), []);
+
+  // Manual "Email invoice/receipt (PDF)" — builds the branded PDF and emails it
+  // to the booking's customer (partner contacts CC'd, Accounts BCC'd). Returns
+  // the send promise so the caller can toast. `invoice` is optional context for
+  // the document header (invoice no. / amount). Resolves null when there's no
+  // recipient on file.
+  const sendBookingDocPdf = useCallback((booking, kind, invoice) => {
+    if (!booking) return Promise.resolve(null);
+    const partnerEmails = bookingCopyEmails(booking, { agencies, agreements, members });
+    const primaryTo = (booking.email || partnerEmails[0] || "").trim();
+    if (!primaryTo) return Promise.resolve(null);
+    const cc = partnerEmails.filter(e => e.toLowerCase() !== primaryTo.toLowerCase());
+    return emailBookingDocPdf(kind, {
+      booking, invoice, tax, rooms, hotel: hotelInfo, currency: "BHD",
+      to: primaryTo, cc: cc.length ? cc.join(", ") : undefined,
+    });
+  }, [agencies, agreements, members, tax, rooms, hotelInfo]);
 
   // Extras CRUD.
   const upsertExtra = useCallback((extra) => setExtras(es => {
@@ -6432,7 +6468,7 @@ export function DataProvider({ children }) {
     addBenefit, updateBenefit, removeBenefit,
     setTax, setTaxPatterns, taxPatterns, activePatternId, applyTaxPattern, saveTaxPattern, removeTaxPattern,
     setBookings,
-    setInvoices, addInvoice, updateInvoice, removeInvoice,
+    setInvoices, addInvoice, updateInvoice, removeInvoice, sendBookingDocPdf,
     setPayments, addPayment, updatePayment,
     setAgreements, upsertAgreement, removeAgreement,
     setAgencies, upsertAgency, removeAgency,
@@ -6471,7 +6507,7 @@ export function DataProvider({ children }) {
     setCalendar, setCalendarCell,
     setLoyalty,
     addBooking, updateBooking, removeBooking,
-  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, addRoom, removeRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, releaseGiftCardForBooking, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, templateCopyFor, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, guestAuthSession, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, eventSupplements, upsertEventSupplement, removeEventSupplement, resetEventSupplements, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus, corporateTiers, agencyTiers, partnerLoyalty, corporateTierActions, agencyTierActions, toggleAccountLoyalty, setAccountLoyaltyEnabled, adjustPartnerPoints, recomputePartnerTier, redeemPartnerPoints, issuePartnerGiftCard, addPartnerGiftCardBrand, updatePartnerGiftCardBrand, removePartnerGiftCardBrand, registerPartnerAccount]);
+  }), [rooms, packages, tiers, tax, taxPatterns, activePatternId, bookings, invoices, payments, agreements, agencies, members, giftCards, extras, calendar, loyalty, emailTemplates, rfps, channels, adminUsers, prospects, activities, reportSchedules, maintenanceVendors, maintenanceJobs, updateRoom, addRoom, removeRoom, upsertPackage, removePackage, togglePackage, updateTier, toggleBenefit, addTier, removeTier, moveTier, addBenefit, updateBenefit, removeBenefit, setCalendarCell, upsertAgreement, removeAgreement, upsertAgency, removeAgency, expiringContracts, addMember, updateMember, removeMember, addGiftCard, issueGiftCard, updateGiftCard, removeGiftCard, redeemGiftCard, releaseGiftCardForBooking, giftCardTiers, updateGiftCardTiers, resetGiftCardTiers, addBooking, updateBooking, removeBooking, applyTaxPattern, saveTaxPattern, removeTaxPattern, addInvoice, updateInvoice, removeInvoice, sendBookingDocPdf, addPayment, updatePayment, upsertExtra, removeExtra, toggleExtra, upsertEmailTemplate, removeEmailTemplate, toggleEmailTemplate, duplicateEmailTemplate, templateCopyFor, addRfp, upsertRfp, removeRfp, advanceRfp, upsertChannel, removeChannel, toggleChannelStatus, appendChannelSyncEvent, addAdminUser, updateAdminUser, removeAdminUser, toggleAdminUserStatus, setAdminUserPassword, testingPlanAssignments, assignTestingPlan, updateTestingPhase, updateTestingFeedback, removeTestingPlanAssignment, auditLogs, appendAuditLog, clearAuditLogs, impersonation, startImpersonation, endImpersonation, staffSession, signInStaff, signOutStaff, guestAuthSession, staffImpersonation, startStaffImpersonation, endStaffImpersonation, hotelInfo, updateHotelInfo, resetHotelInfo, eventSupplements, upsertEventSupplement, removeEventSupplement, resetEventSupplements, smtpConfig, updateSmtpConfig, resetSmtpConfig, siteContent, setSiteText, setSiteImage, resetSiteContent, setGalleryItems, addGalleryItem, updateGalleryItem, removeGalleryItem, moveGalleryItem, resetGallery, notifications, appendNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications, messages, addMessage, markThreadRead, addProspect, updateProspect, removeProspect, setProspectStatus, addActivity, updateActivity, removeActivity, completeActivity, addReportSchedule, updateReportSchedule, removeReportSchedule, toggleReportSchedule, appendReportRun, addMaintenanceVendor, updateMaintenanceVendor, removeMaintenanceVendor, toggleMaintenanceVendor, addMaintenanceJob, updateMaintenanceJob, removeMaintenanceJob, appendMaintenanceEvent, transitionMaintenanceJob, roomUnits, addRoomUnit, addRoomUnits, updateRoomUnit, removeRoomUnit, setRoomUnitStatus, corporateTiers, agencyTiers, partnerLoyalty, corporateTierActions, agencyTierActions, toggleAccountLoyalty, setAccountLoyaltyEnabled, adjustPartnerPoints, recomputePartnerTier, redeemPartnerPoints, issuePartnerGiftCard, addPartnerGiftCardBrand, updatePartnerGiftCardBrand, removePartnerGiftCardBrand, registerPartnerAccount]);
 
   return <DataStoreContext.Provider value={value}>{children}</DataStoreContext.Provider>;
 }

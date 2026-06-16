@@ -20,6 +20,7 @@
     "@capacitor/ios": "^8.4.0",
     "@capacitor/preferences": "^8.0.1",
     "@supabase/supabase-js": "^2.105.4",
+    "jspdf": "^4.2.1",
     "lucide-react": "^0.456.0",
     "nodemailer": "^8.0.10",
     "qrcode": "^1.5.4",
