@@ -369,18 +369,24 @@ const StaffAccessBody = () => {
 // the impersonation session that App.jsx watches to auto-open the Guest
 // Portal pre-authenticated as the chosen user.
 // ---------------------------------------------------------------------------
-function ImpersonateDrawer({ owner, onClose }) {
+export function ImpersonateDrawer({ owner, onClose }) {
   const p = usePalette();
   const {
     agreements, agencies, members, adminUsers, staffSession, staffImpersonation,
-    startImpersonation, startStaffImpersonation,
+    impersonation, startImpersonation, startStaffImpersonation,
   } = useData();
-  const [tab, setTab]   = useState("staff");
+  // Default to a guest tab — any operator can use those; the Staff tab is
+  // Owner-only and sits last.
+  const [tab, setTab]   = useState("member");
   const [search, setSearch] = useState("");
-  // The actor must be an Owner, AND must be running their own session (not
-  // already inside an impersonation) — otherwise nesting impersonations would
-  // make the audit trail meaningless.
+  // Staff-on-staff impersonation stays Owner-only (it swaps the operator's
+  // permissions — far more sensitive). Guest impersonation (corporate / agent
+  // / member) is available to ANY signed-in operator, since they're only
+  // viewing a partner/member portal that they already administer. Both require
+  // running your OWN session — nesting impersonations would make the audit
+  // trail meaningless.
   const isOwner = (staffSession?.role || owner?.role) === "owner" && !staffImpersonation;
+  const canGuest = !!staffSession && !staffImpersonation && !impersonation;
 
   // Build candidate lists per kind. Each candidate carries enough metadata
   // to construct a valid Guest Portal / staff session.
@@ -454,14 +460,22 @@ function ImpersonateDrawer({ owner, onClose }) {
     return [c.displayName, c.email, c.subtitle, c.accountId].filter(Boolean).join(" ").toLowerCase().includes(q);
   });
 
+  // `by` actor for the audit trail — the live operator (fall back to the
+  // owner prop the section passes in).
+  const actor = {
+    id:   staffSession?.id   || owner?.id,
+    name: staffSession?.name || owner?.name,
+    role: staffSession?.role || owner?.role,
+  };
+
   const goImpersonate = (target) => {
-    if (!isOwner) {
-      pushToast({ message: "Only the Owner can impersonate other users.", kind: "warn" });
-      return;
-    }
-    // Staff branch — call the staff-specific action that swaps `staffSession`
-    // and surfaces the Partner Portal banner.
+    // Staff branch — Owner-only. Swaps `staffSession` to that teammate's
+    // permissions and surfaces the Partner Portal banner.
     if (target.kind === "staff") {
+      if (!isOwner) {
+        pushToast({ message: "Only the Owner can log in as another staff member.", kind: "warn" });
+        return;
+      }
       if (target._disabled) {
         pushToast({ message: "Suspended accounts can't be impersonated. Reactivate first.", kind: "warn" });
         return;
@@ -477,8 +491,13 @@ function ImpersonateDrawer({ owner, onClose }) {
       return;
     }
     // Guest branch — open the Guest Portal pre-authenticated as the target.
+    // Available to any operator; blocked only while already impersonating.
+    if (!canGuest) {
+      pushToast({ message: "End the current impersonation before starting another.", kind: "warn" });
+      return;
+    }
     if (!confirm(`Log in as ${target.displayName} (${target.email})? Every action you take will be logged to the audit trail.`)) return;
-    startImpersonation(target, { id: owner.id, name: owner.name, role: owner.role });
+    startImpersonation(target, actor);
     pushToast({ message: `Now signed in as ${target.displayName}` });
     onClose?.();
   };
@@ -501,14 +520,15 @@ function ImpersonateDrawer({ owner, onClose }) {
         </>
       }
     >
-      {/* Permission gate */}
-      {!isOwner && (
+      {/* Staff impersonation is Owner-only — shown only on the Staff tab when
+          the operator isn't an Owner. Guest tabs stay fully usable. */}
+      {tab === "staff" && !isOwner && (
         <div className="p-4 mb-5" style={{
           backgroundColor: `${p.danger}10`, border: `1px solid ${p.danger}40`,
           borderInlineStart: `3px solid ${p.danger}`,
           color: p.danger, fontSize: "0.86rem",
         }}>
-          <strong>Restricted.</strong> Only an Owner can log in as another user. Ask an Owner to grant you the role first.
+          <strong>Owner only.</strong> Logging in as another <em>staff</em> member swaps operator permissions, so it's reserved for Owners. You can still log in as any corporate, travel-agent, or LS Privilege account from the other tabs.
         </div>
       )}
 
@@ -551,7 +571,7 @@ function ImpersonateDrawer({ owner, onClose }) {
           </div>
         )}
         {filtered.map((c) => {
-          const enabled = isOwner && !c._disabled;
+          const enabled = (c.kind === "staff" ? isOwner : canGuest) && !c._disabled;
           return (
             <button
               key={`${c.kind}:${c.accountId}:${c.userId || "poc"}`}

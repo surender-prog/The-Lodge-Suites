@@ -17,6 +17,7 @@ import { Dashboard } from "./portal/admin/sections/Dashboard.jsx";
 import { Bookings } from "./portal/admin/sections/Bookings.jsx";
 import { Loyalty }  from "./portal/admin/sections/Loyalty.jsx";
 import { PartnerLoyalty } from "./portal/admin/sections/PartnerLoyalty.jsx";
+import { ImpersonateDrawer } from "./portal/admin/sections/StaffAccess.jsx";
 import { ToastHost, pushToast } from "./portal/admin/ui.jsx";
 import { PortalThemeProvider, ThemeToggle, usePalette } from "./portal/theme.jsx";
 import { NotificationBell, MessagesQuickButton } from "../components/NotificationBell.jsx";
@@ -41,6 +42,8 @@ function PartnerPortalInner({ onClose }) {
   // inside Admin) deep-link to a specific booking by id.
   const [bookingsParams, setBookingsParams] = useState(null);
   const [loyaltyParams, setLoyaltyParams] = useState(null);
+  // Global "Log in as" picker — reachable from the header by any operator.
+  const [impersonateOpen, setImpersonateOpen] = useState(false);
 
   // Lock scroll on the body while the portal owns the viewport.
   useEffect(() => {
@@ -193,6 +196,26 @@ function PartnerPortalInner({ onClose }) {
               }
             }}
           />
+          {!staffImpersonation && (
+            <button
+              onClick={() => setImpersonateOpen(true)}
+              title="Log in as a member, travel agent or corporate account"
+              aria-label="Log in as another account"
+              className="flex items-center gap-2 flex-shrink-0"
+              style={{
+                fontFamily: "'Manrope', sans-serif",
+                fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700,
+                color: p.accent,
+                padding: "0.45rem 0.7rem", border: `1px solid ${p.accent}`,
+                backgroundColor: "transparent", cursor: "pointer",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = p.bgHover; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+            >
+              <UserCheck size={14} />
+              <span className="hidden md:inline" style={{ paddingInlineEnd: "0.4rem" }}>Log in as</span>
+            </button>
+          )}
           <ThemeToggle />
           <button
             onClick={() => { signOutStaff(); pushToast({ message: "Signed out" }); }}
@@ -311,6 +334,12 @@ function PartnerPortalInner({ onClose }) {
           {tab === "admin"      && <AdminTab section={adminSection} onSectionChange={setAdminSection} params={adminParams} clearParams={() => setAdminParams(null)} onNavigate={navigate} />}
         </div>
       </main>
+
+      {/* Global "Log in as" picker — any operator can open their members /
+          travel agents / corporates here; staff-on-staff stays Owner-only. */}
+      {impersonateOpen && (
+        <ImpersonateDrawer owner={staffSession} onClose={() => setImpersonateOpen(false)} />
+      )}
 
       {/* Toasts shared across every tab (admin sections + others) */}
       <ToastHost />

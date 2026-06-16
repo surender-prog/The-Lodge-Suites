@@ -8,6 +8,7 @@ import { MealPlanSupplementMatrix, ensurePlanList, resolveDefaultPlan } from "..
 import { Icon } from "../../../../components/Icon.jsx";
 import { Card, Drawer, FileUpload, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "../ui.jsx";
 import { WalletCardDrawer } from "./WalletCard.jsx";
+import { ImpersonateButton } from "../../ImpersonateButton.jsx";
 import { roomLabel } from "../../../../lib/rooms.js";
 
 const TIER_ICON = { silver: Award, gold: Crown, platinum: Gem };
@@ -1175,6 +1176,7 @@ function EditMemberDrawer({ member, onClose }) {
       fullPage
       footer={
         <>
+          <ImpersonateButton kind="member" account={member} />
           <GhostBtn onClick={remove} small danger><Trash2 size={11} /> Remove member</GhostBtn>
           <div className="flex-1" />
           <GhostBtn onClick={onClose} small>Cancel</GhostBtn>

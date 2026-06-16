@@ -9,6 +9,7 @@ import {
 import { usePalette } from "./theme.jsx";
 import { PartnerLoyaltyPanel } from "./PartnerLoyaltyPanel.jsx";
 import { ConfirmDeleteModal } from "./ConfirmDeleteModal.jsx";
+import { ImpersonateButton } from "./ImpersonateButton.jsx";
 import { useData, legalLine, formatCurrency } from "../../data/store.jsx";
 import { pushToast } from "./admin/ui.jsx";
 import { BookingDocPreviewModal, downloadBookingDoc, emailBookingDoc } from "./admin/BookingDocs.jsx";
@@ -238,6 +239,7 @@ export function CorporateWorkspaceDrawer({ agreement: initialAgreement, onClose,
                 onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = p.accentDeep; e.currentTarget.style.borderColor = p.accentDeep; }}
                 onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = p.accent; e.currentTarget.style.borderColor = p.accent; }}
               ><Edit2 size={11} /> Manage contract</button>
+              <ImpersonateButton kind="corporate" account={agreement} />
               <button onClick={() => setConfirmDelete(true)}
                 className="inline-flex items-center gap-1.5"
                 style={{ padding: "0.45rem 0.85rem", border: `1px solid ${p.border}`, color: p.danger, backgroundColor: "transparent", fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}
