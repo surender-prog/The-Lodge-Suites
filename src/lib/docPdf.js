@@ -44,14 +44,28 @@ function suiteLabel(folio, booking) {
 
 // buildDocPdf — returns { base64, filename, title }.
 //   kind: "invoice" | "receipt"
-//   opts: { booking, invoice?, tax, rooms, hotel, currency, paymentMethod?, paidOn? }
-export function buildDocPdf(kind, { booking, invoice, tax, rooms, hotel, currency = "BHD", paymentMethod, paidOn } = {}) {
-  if (!booking) return null;
+//   opts: { booking?, invoice?, tax, rooms, hotel, currency, paymentMethod?,
+//           paidOn?, billedToName?, billedToEmail? }
+// Renders from a BOOKING (folio-based) when one is supplied, otherwise from a
+// STANDALONE invoice (corporate/agency commission or ad-hoc charge — flat
+// amount + description, no stay/folio). Returns null when neither is present.
+export function buildDocPdf(kind, { booking, invoice, tax, rooms, hotel, currency = "BHD", paymentMethod, paidOn, billedToName, billedToEmail } = {}) {
+  if (!booking && !invoice) return null;
   const H = { ...HOTEL_FALLBACK, ...(hotel || {}) };
-  const folio = buildFolio(booking, tax, rooms);
+  const folio = booking ? buildFolio(booking, tax, rooms) : null;
   const isReceipt = kind === "receipt";
-  const docNo = (invoice && invoice.id) || booking.id;
-  const title = isReceipt ? "PAYMENT RECEIPT" : "TAX INVOICE";
+  const docNo = (invoice && invoice.id) || (booking && booking.id) || "—";
+  const isCommission = !!(invoice && invoice.kind === "commission");
+  const title = isReceipt
+    ? (isCommission ? "REMITTANCE ADVICE" : "PAYMENT RECEIPT")
+    : (isCommission ? "COMMISSION INVOICE" : (booking ? "TAX INVOICE" : "INVOICE"));
+  // Normalised billed-to + amounts — from the booking folio, or the invoice.
+  const toName  = billedToName  || (booking && booking.guest) || (invoice && invoice.clientName) || "Customer";
+  const toEmail = billedToEmail || (booking && booking.email) || (invoice && invoice.clientEmail) || "";
+  const invAmount   = Number(invoice?.amount || 0);
+  const amountTotal = booking ? folio.gross : invAmount;
+  const amountPaid  = isReceipt ? amountTotal : (booking ? folio.paid : Number(invoice?.paid || 0));
+  const amountBal   = isReceipt ? 0 : (booking ? folio.balance : invAmount - Number(invoice?.paid || 0));
 
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const PW = 210, M = 18, RIGHT = PW - M;
@@ -88,20 +102,30 @@ export function buildDocPdf(kind, { booking, invoice, tax, rooms, hotel, currenc
   // ── Bill-to + stay summary ────────────────────────────────────────────────
   doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...MUTED);
   doc.text("BILLED TO", M, y);
-  doc.text("STAY", M + 95, y);
+  doc.text(booking ? "STAY" : "REFERENCE", M + 95, y);
   doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(...INK);
-  doc.text(safe(booking.guest || invoice?.clientName || "Guest"), M, y + 5.5);
+  doc.text(safe(toName), M, y + 5.5);
   doc.setFontSize(9); doc.setTextColor(...MUTED);
-  if (booking.email || invoice?.clientEmail) doc.text(safe(booking.email || invoice.clientEmail), M, y + 10.5);
+  if (toEmail) doc.text(safe(toEmail), M, y + 10.5);
 
   doc.setFontSize(9); doc.setTextColor(...INK);
-  const stay = [
+  let netDays = null;
+  try {
+    if (invoice?.issued && invoice?.due) {
+      netDays = Math.round((new Date(invoice.due).getTime() - new Date(invoice.issued).getTime()) / 86400000);
+    }
+  } catch { netDays = null; }
+  const summary = (booking ? [
     `Booking ${safe(booking.id)}`,
     `${fmtDate(booking.checkIn)} – ${fmtDate(booking.checkOut)}`,
     `${folio.nights} night(s) · ${suiteLabel(folio, booking)}`,
-  ];
+  ] : [
+    invoice?.clientType === "agent" ? "Travel agent" : invoice?.clientType === "corporate" ? "Corporate account" : "Account",
+    (netDays != null && netDays > 0) ? `Payment terms: Net ${netDays}` : null,
+    isCommission ? "Commission statement" : null,
+  ]).filter(Boolean);
   let sy = y + 5.5;
-  stay.forEach((line) => { doc.text(line, M + 95, sy); sy += 5; });
+  summary.forEach((line) => { doc.text(line, M + 95, sy); sy += 5; });
   y = Math.max(y + 12, sy) + 6;
 
   // ── Line-item table ───────────────────────────────────────────────────────
@@ -124,25 +148,31 @@ export function buildDocPdf(kind, { booking, invoice, tax, rooms, hotel, currenc
   };
 
   tableHead();
-  // Accommodation (net of tax)
-  if (folio.mixedNights) {
-    row(`Accommodation · weekday`, folio.weekdayNights * folio.rateWeekday, { sub: `${folio.weekdayNights} night(s) @ ${money(folio.rateWeekday, currency)}` });
-    row(`Accommodation · weekend`, folio.weekendNights * folio.rateWeekend, { sub: `${folio.weekendNights} night(s) @ ${money(folio.rateWeekend, currency)}` });
+  if (booking) {
+    // Accommodation (net of tax)
+    if (folio.mixedNights) {
+      row(`Accommodation · weekday`, folio.weekdayNights * folio.rateWeekday, { sub: `${folio.weekdayNights} night(s) @ ${money(folio.rateWeekday, currency)}` });
+      row(`Accommodation · weekend`, folio.weekendNights * folio.rateWeekend, { sub: `${folio.weekendNights} night(s) @ ${money(folio.rateWeekend, currency)}` });
+    } else {
+      row(`Accommodation · ${suiteLabel(folio, booking)}`, folio.netRoom, { sub: `${folio.nights} night(s) @ ${money(folio.rate || (folio.nights ? folio.netRoom / folio.nights : 0), currency)} (net)` });
+    }
+    (folio.components || []).forEach((c) => row(c.label + (c.type === "percentage" && c.rate ? ` (${c.rate}%)` : ""), c.amount, { color: MUTED }));
+    y += 2;
+    row("Subtotal", folio.gross, { bold: true });
+    if (folio.commissionCut > 0) {
+      row("Less travel-agent commission", -folio.commissionCut, { color: MUTED });
+      row("Net payable", folio.netTotal, { bold: true });
+    }
   } else {
-    row(`Accommodation · ${suiteLabel(folio, booking)}`, folio.netRoom, { sub: `${folio.nights} night(s) @ ${money(folio.rate || (folio.nights ? folio.netRoom / folio.nights : 0), currency)} (net)` });
+    // Standalone invoice — a single flat charge line from the description.
+    row(safe(invoice?.description) || (isCommission ? "Travel-agent commission" : "Charges"), invAmount);
+    y += 2;
+    row("Subtotal", invAmount, { bold: true });
   }
-  // Tax components
-  (folio.components || []).forEach((c) => row(c.label + (c.type === "percentage" && c.rate ? ` (${c.rate}%)` : ""), c.amount, { color: MUTED }));
 
   // ── Totals ────────────────────────────────────────────────────────────────
-  y += 2;
-  row("Subtotal", folio.gross, { bold: true });
-  if (folio.commissionCut > 0) {
-    row("Less travel-agent commission", -folio.commissionCut, { color: MUTED });
-    row("Net payable", folio.netTotal, { bold: true });
-  }
-  const paidAmount = isReceipt ? folio.netTotal : folio.paid;
-  const balance    = isReceipt ? 0 : folio.balance;
+  const paidAmount = amountPaid;
+  const balance    = amountBal;
   row("Amount paid", paidAmount, { color: GREEN });
   row("Balance due", balance, { bold: true, color: balance > 0 ? INK : GREEN });
 

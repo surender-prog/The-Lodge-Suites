@@ -6248,18 +6248,39 @@ export function DataProvider({ children }) {
   const removeBooking = useCallback((id) => setBookings(bs => bs.filter(b => b.id !== id)), []);
 
   // Invoice CRUD. ID format keeps the YYYY-#### convention used by sample data.
-  // Resolve who an invoice's PDF documents should reach: the booking guest (or
-  // the invoice's own clientEmail), with the partner account's portal contacts
-  // CC'd. Returns an empty primaryTo for void/cancelled bookings (so nothing is
-  // auto-sent) or standalone invoices with no booking + no clientEmail.
+  // Resolve who an invoice's PDF documents should reach + the partner contacts
+  // to CC. Two cases:
+  //   • Booking invoice → the booking guest (or invoice clientEmail), partner
+  //     account contacts CC'd. Void/cancelled bookings return no recipient.
+  //   • Standalone corporate/agency invoice (no booking — e.g. an agent
+  //     commission invoice on Net-30 terms) → match the account by name and use
+  //     its portal contacts. Member/gift-card standalone invoices are NOT
+  //     auto-emailed here (they have their own flow).
   const resolveInvoiceRecipients = useCallback((inv) => {
     if (!inv) return { booking: null, primaryTo: "", cc: undefined };
     const booking = (inv.bookingId && inv.bookingId !== "—") ? bookings.find(b => b.id === inv.bookingId) : null;
     const VOID = new Set(["cancelled", "canceled", "void", "rejected", "sold-out", "soldout", "no-show", "noshow"]);
     if (booking && VOID.has(String(booking.status || "").toLowerCase())) return { booking, primaryTo: "", cc: undefined };
-    const partnerEmails = booking ? bookingCopyEmails(booking, { agencies, agreements, members }) : [];
-    const primaryTo = (booking?.email || inv.clientEmail || partnerEmails[0] || "").trim();
-    const extraCc = partnerEmails.filter(e => e.toLowerCase() !== primaryTo.toLowerCase());
+
+    // Collect candidate contact emails (deduped, case-insensitive).
+    const dedupe = (arr) => {
+      const seen = new Set(); const out = [];
+      for (const raw of arr) { const e = String(raw || "").trim(); if (!e) continue; const k = e.toLowerCase(); if (seen.has(k)) continue; seen.add(k); out.push(e); }
+      return out;
+    };
+    let contacts = [];
+    if (booking) {
+      contacts = bookingCopyEmails(booking, { agencies, agreements, members });
+    } else {
+      // Standalone — resolve the account by name, agent/corporate only.
+      const nm = String(inv.clientName || "").trim().toLowerCase();
+      let acct = null;
+      if (inv.clientType === "agent")          acct = agencies.find(a => String(a.name || "").trim().toLowerCase() === nm);
+      else if (inv.clientType === "corporate") acct = agreements.find(a => String(a.account || "").trim().toLowerCase() === nm);
+      if (acct) contacts = dedupe([...(acct.users || []).map(u => u.email), acct.pocEmail]);
+    }
+    const primaryTo = (booking?.email || inv.clientEmail || contacts[0] || "").trim();
+    const extraCc = dedupe(contacts).filter(e => e.toLowerCase() !== primaryTo.toLowerCase());
     return { booking, primaryTo, cc: extraCc.length ? extraCc.join(", ") : undefined };
   }, [bookings, agencies, agreements, members]);
 
@@ -6274,13 +6295,14 @@ export function DataProvider({ children }) {
     setTimeout(() => {
       appendNotifications(notifyInvoiceIssued(saved, { agreements, agencies, members, bookings }));
     }, 0);
-    // Auto-email the invoice PDF to the customer. Booking invoices only — the
-    // PDF builder needs the booking, so gift-card / standalone invoices skip.
-    // Fire-and-forget; a void booking or missing recipient is a silent no-op.
+    // Auto-email the invoice PDF to the customer — booking invoices AND
+    // standalone corporate/agency invoices (resolved by account name).
+    // Fire-and-forget; a void booking, no resolvable recipient, or a zero-value
+    // invoice is a silent no-op.
     setTimeout(() => {
       const { booking, primaryTo, cc } = resolveInvoiceRecipients(saved);
       const amount = saved.amount ?? booking?.total ?? 0;
-      if (booking && primaryTo && amount > 0) {
+      if (primaryTo && amount > 0) {
         emailBookingDocPdf("invoice", { booking, invoice: saved, tax, rooms, hotel: hotelInfo, currency: "BHD", to: primaryTo, cc });
       }
     }, 0);
@@ -6299,12 +6321,13 @@ export function DataProvider({ children }) {
         appendNotifications(notifyInvoiceStatusChange(prev, next, { agreements, agencies, members, bookings }));
       }, 0);
       // Paid-in-full → auto-email a PAYMENT RECEIPT PDF to the customer (the
-      // operator chose "receipt only when fully settled"). Fire-and-forget;
-      // booking invoices only, missing recipient is a no-op.
+      // operator chose "receipt only when fully settled"). Covers booking AND
+      // standalone corporate/agency invoices — corporate terms mean the payment
+      // often lands weeks later, and this fires whenever it's marked paid.
       if (String(next.status || "").toLowerCase() === "paid") {
         setTimeout(() => {
           const { booking, primaryTo, cc } = resolveInvoiceRecipients(next);
-          if (booking && primaryTo) {
+          if (primaryTo) {
             emailBookingDocPdf("receipt", { booking, invoice: next, tax, rooms, hotel: hotelInfo, currency: "BHD", to: primaryTo, cc });
           }
         }, 0);

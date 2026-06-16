@@ -18,27 +18,32 @@ const money = (n, cur) => `${cur || "BHD"} ${Number(n || 0).toFixed(3)}`;
 export function emailBookingDocPdf(kind, opts = {}) {
   const { booking, invoice, tax, rooms, hotel, currency = "BHD", to, cc, bcc, paymentMethod, paidOn } = opts;
   const recipient = (to || "").trim();
-  if (!booking || !recipient) return Promise.resolve(null);
+  // Either a booking (folio doc) OR a standalone invoice (corporate/agency
+  // commission / ad-hoc charge) is enough to render — but we always need a
+  // recipient.
+  if ((!booking && !invoice) || !recipient) return Promise.resolve(null);
 
   let pdf;
   try {
-    pdf = buildDocPdf(kind, { booking, invoice, tax, rooms, hotel, currency, paymentMethod, paidOn });
+    pdf = buildDocPdf(kind, { booking, invoice, tax, rooms, hotel, currency, paymentMethod, paidOn, billedToEmail: recipient });
   } catch (_) {
     pdf = null;
   }
   if (!pdf || !pdf.base64) return Promise.resolve(null);
 
   const isReceipt = kind === "receipt";
-  const amount = isReceipt ? (booking.total || 0) : (invoice?.amount ?? booking.total ?? 0);
+  const amount = isReceipt
+    ? (booking?.total ?? invoice?.amount ?? 0)
+    : (invoice?.amount ?? booking?.total ?? 0);
 
   return sendTransactionalEmail({
     kind: isReceipt ? "receipt" : "invoice",
     to: recipient,
     cc: cc || undefined,
     bcc: bcc || DOC_BCC,
-    name: booking.guest || invoice?.clientName || "Guest",
-    docNo: (invoice && invoice.id) || booking.id,
-    bookingId: booking.id,
+    name: booking?.guest || invoice?.clientName || "Customer",
+    docNo: (invoice && invoice.id) || booking?.id,
+    bookingId: booking?.id,
     amountLabel: money(amount, currency),
     attachments: [{ filename: pdf.filename, contentBase64: pdf.base64, contentType: "application/pdf" }],
   });
