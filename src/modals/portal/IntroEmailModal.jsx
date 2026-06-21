@@ -115,7 +115,17 @@ export function IntroEmailModal({ activity, onClose }) {
     setSending(false);
     const ok = !!(result && result.ok);
     if (!ok) {
-      pushToast({ message: result?.reason || result?.error || "Could not send — check SMTP config.", kind: "warn" });
+      // Distinguish the failure modes so the message is actionable: a null
+      // result means the network/endpoint never returned JSON (e.g. running
+      // against a local dev server with no /api routes); `skipped` means the
+      // server short-circuited on config; `error` means the SMTP server itself
+      // rejected the message.
+      let message;
+      if (result === null)            message = "Couldn't reach the email service. Intro emails only send from the live deploy — your local preview can't reach the mail server.";
+      else if (result.skipped)        message = `Email not sent · ${result.reason || "outbound disabled"}.`;
+      else if (result.error)          message = `Send failed · ${result.error}`;
+      else                            message = "Couldn't send — check SMTP config in admin.";
+      pushToast({ message, kind: "warn" });
       return;
     }
     // Optionally persist the typed recipient back to the account record so the
