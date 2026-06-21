@@ -16,6 +16,13 @@
 // of the doc still render correctly.
 
 import { jsPDF } from "jspdf";
+import { TRANSLATIONS } from "../i18n/translations.js";
+
+// Translation map for packages / loyalty — single source of truth used by the
+// public website. We read this directly so the PDF text matches whatever's on
+// thelodgesuites.com. translations.js is a pure data module (no React), safe
+// to import from this lib.
+const T_PACKAGES = (TRANSLATIONS && TRANSLATIONS.en && TRANSLATIONS.en.packages) || {};
 
 const INK     = [21, 22, 26];     // C.ink — primary text
 const GOLD    = [201, 169, 97];   // C.gold — brand accent
@@ -398,14 +405,55 @@ function packageHeadline(pkg, currency = "BHD") {
   };
 }
 
+// The live PACKAGES array only carries id + roomPricing + minNights/maxNights;
+// the customer-facing title, nights label and inclusions live in the i18n
+// `packages.{id}.{title|nights|inclusions}` block. Helpers below read from
+// that block first, with sensible fallbacks so a brand-new package id (not
+// yet translated) still prints something useful.
+function packageTitle(pkg) {
+  const t = T_PACKAGES[pkg?.id];
+  if (t && t.title) return t.title;
+  // Humanise the id ("breakfast-included" → "Breakfast Included").
+  return String(pkg?.id || "Offer")
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+function packageInclusions(pkg) {
+  const t = T_PACKAGES[pkg?.id];
+  if (t && Array.isArray(t.inclusions) && t.inclusions.length) return t.inclusions;
+  if (Array.isArray(pkg?.includes)) return pkg.includes; // legacy fallback
+  return [];
+}
+function packageNightsLabel(pkg) {
+  const t = T_PACKAGES[pkg?.id];
+  if (t && t.nights) return t.nights;
+  const min = pkg?.minNights || 1, max = pkg?.maxNights || 0;
+  if (max && max > min) return `${min}–${max} nights`;
+  return `${min}+ night${min === 1 ? "" : "s"}`;
+}
+
+// Tier benefit labels — the LIVE INITIAL_TIERS shape stores benefits as
+// { id, label, on } (id is just "s1"/"g3"/... — opaque, NOT the i18n key).
+// Read `label` first, then a `key` lookup for older data, then humanise the
+// id as a last-ditch fallback so unknown rows still print something readable.
+function benefitLabel(b) {
+  if (!b) return "";
+  if (b.label && String(b.label).trim()) return String(b.label).trim();
+  if (b.key && BENEFIT_LABELS[b.key]) return BENEFIT_LABELS[b.key];
+  return friendlyBenefitLabel(b.key || b.id);
+}
+
 function renderPage3(doc, H, packages, tiers, loyalty, giftCardTiers, currency) {
   let y = pageHeader(doc, H, "PROGRAMS & OFFERS");
 
-  // STAY OFFERS — top 4 active packages, 2x2 cards
+  // STAY OFFERS — top 4 active packages, 2x2 cards. Titles, inclusions and
+  // nights labels come from i18n (packageTitle/packageInclusions/...). The
+  // card is taller now so it has room for three captioned inclusions plus the
+  // savings line — matches the website's package cards more closely.
   y = sectionLabel(doc, y, "STAY OFFERS");
   const offers = (packages || []).filter((p) => p && p.active !== false).slice(0, 4);
   const CARD_W = (RIGHT - M - 5) / 2;
-  const CARD_H = 32;
+  const CARD_H = 42;
   offers.forEach((pkg, i) => {
     const col = i % 2, row = Math.floor(i / 2);
     const x = M + col * (CARD_W + 5);
@@ -413,23 +461,26 @@ function renderPage3(doc, H, packages, tiers, loyalty, giftCardTiers, currency) 
     doc.setDrawColor(...HAIR); doc.setLineWidth(0.3);
     doc.rect(x, cy, CARD_W, CARD_H);
     doc.setFillColor(...GOLD); doc.rect(x, cy, 2, CARD_H, "F");
-    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...INK);
-    doc.text(safe(pkg.label || pkg.id), x + 5, cy + 5.5);
+    // Title (serif for that brochure feel)
+    doc.setFont("times", "bold"); doc.setFontSize(11); doc.setTextColor(...INK);
+    doc.text(packageTitle(pkg), x + 5, cy + 5.8);
+    // Price + savings line
     const head = packageHeadline(pkg, currency);
     doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...GOLD_D);
-    doc.text(`From ${head.from}${head.saving ? "  ·  " + head.saving : ""}`, x + 5, cy + 10.5);
-    const incs = (Array.isArray(pkg.includes) ? pkg.includes : []).slice(0, 2);
+    doc.text(`From ${head.from}${head.saving ? "  ·  " + head.saving : ""}`, x + 5, cy + 11);
+    // Inclusions — first three bullets (matches the website card)
+    const incs = packageInclusions(pkg).slice(0, 3);
     doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...INK);
-    let iy = cy + 16;
+    let iy = cy + 17;
     incs.forEach((inc) => {
       doc.setFillColor(...GREEN); doc.circle(x + 6.4, iy - 1.4, 0.7, "F");
       const wrap = doc.splitTextToSize(safe(inc), CARD_W - 11);
       doc.text(wrap[0], x + 9, iy);
-      iy += 4;
+      iy += 4.2;
     });
-    const nights = `${pkg.minNights || 1}${pkg.maxNights && pkg.maxNights > pkg.minNights ? `–${pkg.maxNights}` : "+"} night${(pkg.maxNights || pkg.minNights) === 1 ? "" : "s"}`;
+    // Nights label (uses i18n "From 1 night" / "2 nights minimum" / "7+ nights")
     doc.setFont("helvetica", "italic"); doc.setFontSize(7); doc.setTextColor(...MUTED);
-    doc.text(nights, x + CARD_W - 3, cy + CARD_H - 2.5, { align: "right" });
+    doc.text(packageNightsLabel(pkg), x + CARD_W - 3, cy + CARD_H - 2.5, { align: "right" });
   });
   if (offers.length === 0) {
     doc.setFont("helvetica", "italic"); doc.setFontSize(9); doc.setTextColor(...MUTED);
@@ -458,7 +509,10 @@ function renderPage3(doc, H, packages, tiers, loyalty, giftCardTiers, currency) 
     doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(...INK);
     enabled.forEach((b) => {
       doc.setFillColor(...GREEN); doc.circle(x + 3.4, by - 1.2, 0.7, "F");
-      const label = friendlyBenefitLabel(b.key || b.id);
+      // Live INITIAL_TIERS shape stores the readable benefit on b.label; the
+      // benefitLabel() helper falls through key/id only if a row is missing
+      // its label (e.g. an admin-added row before someone names it).
+      const label = benefitLabel(b);
       const wrap = doc.splitTextToSize(label, TIER_W - 7);
       doc.text(wrap[0], x + 5.6, by);
       by += 4.2;
