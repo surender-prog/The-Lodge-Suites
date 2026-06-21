@@ -263,6 +263,19 @@ export function ActivityCard({ activity, onEdit, onComplete, showAccount = false
           <span className="inline-flex items-center gap-1.5">
             <Users size={11} />
             {activity.contactName}
+            {activity.contactPosition && <span style={{ color: p.textMuted }}> · {activity.contactPosition}</span>}
+          </span>
+        )}
+        {activity.contactEmail && (
+          <span className="inline-flex items-center gap-1.5">
+            <Mail size={11} />
+            {activity.contactEmail}
+          </span>
+        )}
+        {activity.contactPhone && (
+          <span className="inline-flex items-center gap-1.5">
+            <Phone size={11} />
+            {activity.contactPhone}
           </span>
         )}
         {activity.location && (
@@ -338,7 +351,7 @@ export function ActivityEditor({ activity, onClose, lockedAccount }) {
     accountKind: lockedAccount?.kind || "corporate",
     accountId:   lockedAccount?.id   || "",
     accountName: lockedAccount?.name || "",
-    subject: "", contactName: "", location: "",
+    subject: "", contactName: "", contactPosition: "", contactPhone: "", contactEmail: "", location: "",
     scheduledAt: new Date().toISOString().slice(0, 16),
     completedAt: null, durationMin: 30,
     summary: "", outcome: null,
@@ -673,7 +686,16 @@ export function ActivityEditor({ activity, onClose, lockedAccount }) {
             <FormGroup label="Contact (the person we met / called)">
               <TextField value={draft.contactName} onChange={(v) => set({ contactName: v })} placeholder="e.g. Yusuf Al-Khalifa" />
             </FormGroup>
-            <FormGroup label={draft.kind === "visit" ? "Location *" : "Location"}>
+            <FormGroup label="Position / Title">
+              <TextField value={draft.contactPosition} onChange={(v) => set({ contactPosition: v })} placeholder="e.g. Procurement Manager" />
+            </FormGroup>
+            <FormGroup label="Contact email">
+              <TextField type="email" value={draft.contactEmail} onChange={(v) => set({ contactEmail: v })} placeholder="e.g. y.khalifa@company.com" />
+            </FormGroup>
+            <FormGroup label="Contact phone">
+              <TextField value={draft.contactPhone} onChange={(v) => set({ contactPhone: v })} placeholder="e.g. +973 3300 1122" />
+            </FormGroup>
+            <FormGroup label={draft.kind === "visit" ? "Location *" : "Location"} className="sm:col-span-2">
               <TextField value={draft.location} onChange={(v) => set({ location: v })} placeholder={draft.kind === "visit" ? "Client's office address" : "Optional"} />
             </FormGroup>
           </div>

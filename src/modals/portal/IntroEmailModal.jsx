@@ -3,6 +3,7 @@ import { Mail, Paperclip, Send, X } from "lucide-react";
 import { usePalette } from "./theme.jsx";
 import { useData } from "../../data/store.jsx";
 import { Drawer, FormGroup, GhostBtn, PrimaryBtn, TextField, pushToast } from "./admin/ui.jsx";
+import { CheckSquare, Square } from "lucide-react";
 import { buildIntroEmail } from "../../lib/introEmailTemplate.js";
 import { buildFactSheetPdf } from "../../lib/factSheetPdf.js";
 import { sendTransactionalEmail } from "../../utils/email.js";
@@ -42,6 +43,7 @@ export function IntroEmailModal({ activity, onClose }) {
   const p = usePalette();
   const {
     agreements, agencies, rooms, hotelInfo, staffSession, adminUsers, addActivity,
+    upsertAgreement, upsertAgency,
   } = useData();
 
   const owner = useMemo(() => {
@@ -51,12 +53,17 @@ export function IntroEmailModal({ activity, onClose }) {
   }, [staffSession, adminUsers, activity?.ownerId]);
 
   // Pre-fill from the templater + account; operator can edit anything below.
+  // The activity's OWN contactEmail / contactName win when the operator
+  // captured them on the touch — that's literally the person they just spoke
+  // to, more accurate than the account's generic primary contact.
   const initial = useMemo(() => {
-    const contact = resolveContact(activity, agreements, agencies);
-    const act = { ...activity, contactName: contact.name || activity?.contactName };
+    const fallback = resolveContact(activity, agreements, agencies);
+    const name = (activity?.contactName || "").trim() || fallback.name;
+    const email = (activity?.contactEmail || "").trim() || fallback.email;
+    const act = { ...activity, contactName: name };
     const built = buildIntroEmail({ activity: act, hotel: hotelInfo, owner });
     return {
-      to: contact.email || "",
+      to: email || "",
       cc: "",
       bcc: hotelInfo?.emailSales || "",
       subject: built.subject,
@@ -67,6 +74,12 @@ export function IntroEmailModal({ activity, onClose }) {
 
   const [draft, setDraft] = useState(initial);
   const [sending, setSending] = useState(false);
+  // Default ON when the resolver had no email — sending will then save the
+  // operator's typed recipient back to the account so the very next intro
+  // pre-fills automatically (the literal "auto-pickup from contact field"
+  // ask). Off when an email was already on the account so we don't quietly
+  // overwrite an existing primary contact.
+  const [saveBack, setSaveBack] = useState(!initial.to);
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
 
   const account = useMemo(() => {
@@ -105,6 +118,24 @@ export function IntroEmailModal({ activity, onClose }) {
       pushToast({ message: result?.reason || result?.error || "Could not send — check SMTP config.", kind: "warn" });
       return;
     }
+    // Optionally persist the typed recipient back to the account record so the
+    // next intro for the same account pre-fills automatically. We only fill
+    // pocEmail/pocName when they're empty — never overwrite an existing
+    // primary contact silently — and only when the operator left the toggle on.
+    const typedEmail = draft.to.trim();
+    if (saveBack && account && typedEmail) {
+      const sameEmail = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+      const patch = {};
+      if (!account.pocEmail) patch.pocEmail = typedEmail;
+      if (!account.pocName && (activity.contactName || "").trim()) patch.pocName = activity.contactName.trim();
+      if (!account.pocPhone && (activity.contactPhone || "").trim()) patch.pocPhone = activity.contactPhone.trim();
+      if (Object.keys(patch).length > 0 && !sameEmail(account.pocEmail, typedEmail)) {
+        const next = { ...account, ...patch };
+        if (activity.accountKind === "corporate") upsertAgreement(next);
+        else if (activity.accountKind === "agent") upsertAgency(next);
+      }
+    }
+
     // Log the send under the account's profile so progress is tracked.
     addActivity({
       kind: "email",
@@ -167,9 +198,27 @@ export function IntroEmailModal({ activity, onClose }) {
       <FormGroup label="To">
         <TextField value={draft.to} onChange={(v) => set({ to: v })} placeholder="contact@company.com" />
       </FormGroup>
+      {/* Save-back checkbox — when the typed To isn't on the account yet, offer
+          to write it back so the next intro pre-fills automatically. The whole
+          row only renders for partner accounts (corporate / agent). */}
+      {account && draft.to.trim() && !(/.+@.+\..+/.test(account.pocEmail || "") && account.pocEmail.toLowerCase() === draft.to.trim().toLowerCase()) && (
+        <button
+          type="button"
+          onClick={() => setSaveBack((v) => !v)}
+          className="inline-flex items-center gap-2 mt-2"
+          style={{
+            color: saveBack ? p.accent : p.textMuted,
+            fontSize: "0.78rem", fontFamily: "'Manrope', sans-serif",
+            background: "transparent", border: "none", cursor: "pointer", padding: 0,
+          }}
+        >
+          {saveBack ? <CheckSquare size={14} /> : <Square size={14} />}
+          Also save this email as the primary contact for <strong style={{ color: p.textPrimary, marginInlineStart: 4 }}>{account.account || account.name}</strong>
+        </button>
+      )}
       <div className="grid grid-cols-2 gap-4 mt-4">
-        <FormGroup label="CC (optional)">
-          <TextField value={draft.cc} onChange={(v) => set({ cc: v })} placeholder="another@company.com" />
+        <FormGroup label="CC (comma-separate to add multiple)">
+          <TextField value={draft.cc} onChange={(v) => set({ cc: v })} placeholder="e.g. booker@company.com, manager@company.com" />
         </FormGroup>
         <FormGroup label="BCC (internal copy)">
           <TextField value={draft.bcc} onChange={(v) => set({ bcc: v })} placeholder="sales@thelodgesuites.com" />
@@ -210,13 +259,17 @@ export function IntroEmailModal({ activity, onClose }) {
         The Fact Sheet is built fresh from your live property info (suites, rates, amenities, contact) every time you open this modal.
       </div>
 
-      {/* Tiny safety hint when no recipient could be resolved */}
+      {/* Empty-state hint when no recipient could be auto-resolved. */}
       {!draft.to && (
         <div className="mt-4 p-3" style={{
           backgroundColor: `${p.warn}10`, border: `1px solid ${p.warn}40`, color: p.warn, fontSize: "0.78rem",
         }}>
-          No primary contact email is on file for {account ? (account.account || account.name) : "this account"}.
-          Type the recipient above, or add their email under the account's <strong>Users</strong> tab so it pre-fills next time.
+          No primary contact email is on file for{" "}
+          <strong style={{ color: p.textPrimary }}>
+            {account ? (account.account || account.name) : "this account"}
+          </strong>.
+          Type the recipient above — the toggle below will save it back to the account so this field pre-fills automatically on every future intro to{" "}
+          {account ? (account.account || account.name) : "them"}.
         </div>
       )}
     </Drawer>
