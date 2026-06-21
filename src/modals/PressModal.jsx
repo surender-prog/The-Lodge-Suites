@@ -10,11 +10,12 @@ import { EditorialPage, PageSection } from "./EditorialPage.jsx";
 import { pushToast } from "./portal/admin/ui.jsx";
 import {
   buildLogoPackZip, previewLogoPackHtml,
-  buildFactSheetHtml,
   buildPhotoSelectionZip,
   buildBrandGuideHtml,
   openHtmlInNewTab, downloadHtml, downloadBlob,
 } from "../utils/pressKit.js";
+import { buildFactSheetPdf } from "../lib/factSheetPdf.js";
+import { DEFAULT_GALLERY_ITEMS } from "../data/gallery.js";
 
 // ---------------------------------------------------------------------------
 // Press — editorial page that the Footer "Press" link opens. Contains:
@@ -91,13 +92,13 @@ const ASSETS = [
     id: "factsheet",
     icon: FileText,
     title: "Property fact sheet",
-    size: "HTML · 1 page · print-ready",
-    hint: "One-pager with property facts, suite-type breakdown, signature amenities, distribution, and press contact.",
-    preview: () => openHtmlInNewTab(buildFactSheetHtml(), { print: false }),
-    download: () => {
-      downloadHtml(buildFactSheetHtml(), "the-lodge-suites-fact-sheet.html");
-      pushToast({ message: "Fact sheet downloaded · open in a browser and use Print → Save as PDF for the PDF version" });
-    },
+    size: "PDF · 3 pages · property photos included",
+    hint: "Branded deck with hero photo, suite-type rates, gallery strip, meeting room, stay offers, LS Privilege tiers, and gift cards — rebuilt fresh from the live property data on every download.",
+    // Preview and download are intercepted in PressModal's handlers so they
+    // can access live data (rooms / packages / tiers / loyalty / gift-card
+    // tiers) via useData and render the brand-aligned PDF.
+    preview: null,
+    download: null,
     canPreview: true,
   },
   {
@@ -126,7 +127,33 @@ const ASSETS = [
 ];
 
 export const PressModal = ({ open, onClose }) => {
-  const { hotelInfo } = useData();
+  const {
+    hotelInfo, rooms, packages, tiers, loyalty, giftCardTiers, siteContent,
+  } = useData();
+
+  // Build the Fact Sheet PDF on demand from live admin data — same builder
+  // used by the sales intro-email flow, so the public press kit and the
+  // operator's sales email always carry an identical, current document.
+  const buildLiveFactSheet = () => buildFactSheetPdf({
+    hotel: hotelInfo,
+    rooms,
+    packages,
+    tiers,
+    loyalty,
+    giftCardTiers,
+    gallery: (siteContent && siteContent.galleryItems) || DEFAULT_GALLERY_ITEMS,
+    currency: "BHD",
+  });
+
+  // Decode a base64-encoded PDF payload into a Blob so we can either download
+  // it (anchor with [download]) or open it in a new tab (object-URL). Used
+  // exclusively for the fact-sheet PDF.
+  const pdfBlobFrom = (base64) => {
+    const bin = atob(base64);
+    const buf = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    return new Blob([buf], { type: "application/pdf" });
+  };
   // Press relations contact card is rendered from the live hotelInfo so an
   // admin edit in Property Info propagates to this page. Hardcoded strings
   // remain as fallbacks for the rare case where hotelInfo isn't loaded.
@@ -142,8 +169,27 @@ export const PressModal = ({ open, onClose }) => {
   const [busyId, setBusyId] = useState(null);
   const [photoProgress, setPhotoProgress] = useState(null);
 
-  const handlePreview = (asset) => {
+  const handlePreview = async (asset) => {
     if (busyId) return;
+    // Fact sheet preview: build the PDF on the fly and open it in a new tab
+    // via object-URL — keeps the user on the press page and lets them save /
+    // print from the browser's native PDF viewer.
+    if (asset.id === "factsheet") {
+      setBusyId(asset.id);
+      try {
+        const { base64 } = await buildLiveFactSheet();
+        const url = URL.createObjectURL(pdfBlobFrom(base64));
+        const w = window.open(url, "_blank", "noopener,noreferrer");
+        if (!w) pushToast({ message: "Pop-up blocked — allow pop-ups for this site to preview.", kind: "warn" });
+        // Release the object URL once the new tab has had time to grab it.
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      } catch (_) {
+        pushToast({ message: `Couldn't generate the fact sheet preview. Try again or email ${pressEmail}.`, kind: "warn" });
+      } finally {
+        setBusyId(null);
+      }
+      return;
+    }
     asset.preview?.();
   };
 
@@ -158,6 +204,13 @@ export const PressModal = ({ open, onClose }) => {
         const blob = await buildPhotoSelectionZip(setPhotoProgress);
         downloadBlob(blob, "the-lodge-suites-press-photography.zip");
         pushToast({ message: "Press photography ZIP downloaded · contact sheet included" });
+      } else if (asset.id === "factsheet") {
+        // Build the 3-page Fact Sheet PDF from live data (suites, packages,
+        // loyalty, gift cards, gallery photos) and download as PDF — no more
+        // HTML-and-print-to-PDF detour.
+        const { base64, filename } = await buildLiveFactSheet();
+        downloadBlob(pdfBlobFrom(base64), filename || "the-lodge-suites-fact-sheet.pdf");
+        pushToast({ message: "Fact sheet downloaded · 3-page PDF with property photos" });
       } else {
         await asset.download();
       }
@@ -394,7 +447,7 @@ export const PressModal = ({ open, onClose }) => {
         <div className="mt-6 p-4 flex items-start gap-3" style={{ backgroundColor: C.cream, border: `1px solid rgba(0,0,0,0.08)`, borderInlineStart: `3px solid ${C.goldDeep}` }}>
           <FileText size={14} style={{ color: C.goldDeep, marginTop: 3, flexShrink: 0 }} />
           <div style={{ color: C.textDim, fontFamily: "'Manrope', sans-serif", fontSize: "0.84rem", lineHeight: 1.6 }}>
-            <strong style={{ color: C.bgDeep }}>Need a PDF?</strong> The fact sheet and brand guide download as print-optimised HTML. Open them in any browser and use <em>Print → Save as PDF</em> — the page-break and margin styles are already baked in for A4 output.
+            <strong style={{ color: C.bgDeep }}>Need a PDF?</strong> The property fact sheet now downloads as a 3-page branded PDF with property photos. The brand guide is print-optimised HTML — open it in any browser and use <em>Print → Save as PDF</em> for the PDF version.
           </div>
         </div>
       </PageSection>
