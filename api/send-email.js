@@ -217,6 +217,18 @@ function buildEmail(kind, payload, hotelName) {
     };
   }
 
+  if (kind === "intro") {
+    // Sales introduction email — the client already composed the full subject,
+    // text and HTML body (see src/lib/introEmailTemplate.js) and attached a
+    // Fact Sheet PDF. The server just passes them through; no fallback body so
+    // an empty payload fails loudly rather than silently sending boilerplate.
+    return {
+      subject: subject || `Introduction from ${hotelName}`,
+      text:    text || "",
+      html:    payload.html ? String(payload.html) : undefined,
+    };
+  }
+
   // Generic / custom message.
   return {
     subject: subject || `A message from ${hotelName}`,

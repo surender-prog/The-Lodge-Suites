@@ -10,6 +10,7 @@ import {
   effectiveActivityStatus, useData,
 } from "../../data/store.jsx";
 import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "./admin/ui.jsx";
+import { IntroEmailModal } from "./IntroEmailModal.jsx";
 
 // ---------------------------------------------------------------------------
 // ActivityHub — shared sales-activity log + editor used by both the global
@@ -148,6 +149,13 @@ export function ActivityCard({ activity, onEdit, onComplete, showAccount = false
   const eff = activity.effective || effectiveActivityStatus(activity);
   const isOpen = eff === "scheduled" || eff === "overdue";
   const outcome = activity.outcome ? OUTCOME_BY_ID[activity.outcome] : null;
+  // "Send intro email" appears for contact-type activities against partner
+  // accounts. Hidden for internal tasks / notes and for direct-guest activities
+  // where there's no corporate / agency record to send a partnership pitch to.
+  const introKinds = new Set(["call", "email", "visit", "meeting"]);
+  const isPartner = activity.accountKind === "corporate" || activity.accountKind === "agent";
+  const canIntro = isPartner && introKinds.has(activity.kind) && !activity.meta?.introEmail;
+  const [introOpen, setIntroOpen] = useState(false);
 
   return (
     <div
@@ -178,6 +186,21 @@ export function ActivityCard({ activity, onEdit, onComplete, showAccount = false
           )}
         </div>
         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+          {canIntro && (
+            <button
+              onClick={() => setIntroOpen(true)}
+              title={`Send introductory email to ${activity.accountName}`}
+              className="inline-flex items-center gap-1"
+              style={{
+                color: p.accent, fontSize: "0.6rem",
+                letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                padding: "0.3rem 0.55rem", border: `1px solid ${p.accent}`,
+                background: "transparent", cursor: "pointer",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = `${p.accent}1A`; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+            ><Mail size={11} /> Send intro</button>
+          )}
           {isOpen && onComplete && (
             <button
               onClick={() => onComplete(activity)}
@@ -205,6 +228,9 @@ export function ActivityCard({ activity, onEdit, onComplete, showAccount = false
           ><Edit2 size={11} /></button>
         </div>
       </div>
+      {introOpen && (
+        <IntroEmailModal activity={activity} onClose={() => setIntroOpen(false)} />
+      )}
 
       {/* Subject + account name */}
       <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.1rem", color: p.textPrimary, fontWeight: 500, lineHeight: 1.25 }}>
