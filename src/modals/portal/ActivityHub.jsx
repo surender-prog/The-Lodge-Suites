@@ -11,6 +11,9 @@ import {
 } from "../../data/store.jsx";
 import { Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast, SelectField, Stat, TableShell, Td, Th, TextField } from "./admin/ui.jsx";
 import { IntroEmailModal } from "./IntroEmailModal.jsx";
+import { CorporateWorkspaceDrawer } from "./CorporateWorkspace.jsx";
+import { AgencyWorkspaceDrawer } from "./AgencyWorkspace.jsx";
+import { ContractEditor } from "./ContractEditor.jsx";
 
 // ---------------------------------------------------------------------------
 // ActivityHub — shared sales-activity log + editor used by both the global
@@ -343,11 +346,41 @@ export function ActivityEditor({ activity, onClose, lockedAccount }) {
   const p = usePalette();
   const {
     addActivity, updateActivity, removeActivity, completeActivity,
-    adminUsers, agreements, agencies, prospects,
+    adminUsers, agreements, agencies, prospects, activities,
     upsertAgreement, upsertAgency, addProspect,
     staffSession,
   } = useData();
   const isNew = !activity?.id;
+
+  // Side-drawers reachable from this editor — resend the intro email, open
+  // the linked partner workspace, or jump straight into the contract editor
+  // for that account. Each renders as a sibling drawer so this editor stays
+  // mounted underneath.
+  const [resendActivity, setResendActivity] = useState(null);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [contractEditing, setContractEditing] = useState(null);
+
+  // Resolve the linked partner record (corporate agreement or travel agency)
+  // so the "Open account workspace" / "Create contract" affordances know what
+  // to load. Null when the activity is against a prospect or unlinked.
+  const linkedAccount = useMemo(() => {
+    if (!activity?.accountId) return null;
+    if (activity.accountKind === "corporate") return agreements.find((a) => a.id === activity.accountId) || null;
+    if (activity.accountKind === "agent")     return agencies.find((a) => a.id === activity.accountId) || null;
+    return null;
+  }, [activity?.accountId, activity?.accountKind, agreements, agencies]);
+
+  // Did an intro email get sent FOR or AS this activity? Two cases:
+  //   (a) This activity IS the email-log entry → activity.meta.introEmail
+  //   (b) Another activity references this one as its trigger → look in
+  //       activities for one whose meta.refActivityId points here.
+  // We surface ONE banner either way, with the timestamp + recipient.
+  const introEmailLog = useMemo(() => {
+    if (!activity) return null;
+    if (activity.meta?.introEmail) return activity;
+    if (!activity.id) return null;
+    return (activities || []).find((a) => a?.meta?.introEmail && a?.meta?.refActivityId === activity.id) || null;
+  }, [activity, activities]);
 
   // The signed-in operator — new activities default their Owner (sales rep)
   // to whoever is logging them, instead of an arbitrary first staff record.
@@ -532,12 +565,92 @@ export function ActivityEditor({ activity, onClose, lockedAccount }) {
                 padding: "2px 7px", border: `1px solid ${OUTCOME_BY_ID[draft.outcome].color}`,
               }}>{OUTCOME_BY_ID[draft.outcome].label}</span>
             )}
+            {introEmailLog && (
+              <span style={{
+                color: "#FFFFFF", backgroundColor: p.success,
+                fontSize: "0.62rem", fontWeight: 700, letterSpacing: "0.16em",
+                padding: "3px 8px", textTransform: "uppercase",
+              }}>✓ Intro email actioned</span>
+            )}
           </div>
           <div style={{ color: p.textMuted, fontSize: "0.74rem", marginTop: 6 }}>
             {kindMeta.hint}
           </div>
         </div>
       </div>
+
+      {/* Workflow actions — visible once an account is linked. Two affordances:
+          resend the intro email (or send a fresh one if none was sent yet) and
+          open the partner's workspace / contract editor for next-step onboarding. */}
+      {linkedAccount && (activity?.accountKind === "corporate" || activity?.accountKind === "agent") && (
+        <div className="p-4 mb-5" style={{ backgroundColor: p.bgPanel, border: `1px solid ${p.border}` }}>
+          <div style={{ color: p.accent, fontSize: "0.66rem", letterSpacing: "0.28em", textTransform: "uppercase", fontWeight: 700, marginBottom: 10 }}>
+            Workflow · next steps
+          </div>
+          {introEmailLog && (
+            <div className="mb-3 p-3" style={{
+              backgroundColor: `${p.success}10`, border: `1px solid ${p.success}40`,
+              borderInlineStart: `3px solid ${p.success}`, color: p.textPrimary, fontSize: "0.82rem",
+            }}>
+              <strong>Intro email sent</strong>
+              {introEmailLog.meta?.recipient ? <> to <strong>{introEmailLog.meta.recipient}</strong></> : null}
+              {introEmailLog.completedAt ? <> · {fmtDateTime(introEmailLog.completedAt)}</> : null}
+              {introEmailLog === activity ? null : <> · logged as a separate activity entry on this account</>}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setResendActivity({
+                ...activity,
+                // The IntroEmailModal pre-fills To from activity.contactEmail,
+                // then falls back to the account's primary user. When resending
+                // from the email-log entry we re-use whatever was recorded.
+                contactEmail: introEmailLog?.meta?.recipient || activity.contactEmail || "",
+              })}
+              className="inline-flex items-center gap-1.5"
+              style={{
+                padding: "0.5rem 0.9rem", border: `1px solid ${p.accent}`, color: p.accent,
+                backgroundColor: "transparent", fontFamily: "'Manrope', sans-serif",
+                fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, cursor: "pointer",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = p.bgHover; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+            >
+              <Mail size={12} /> {introEmailLog ? "Resend intro email" : "Send intro email"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setWorkspaceOpen(true)}
+              className="inline-flex items-center gap-1.5"
+              style={{
+                padding: "0.5rem 0.9rem", border: `1px solid ${p.border}`, color: p.textPrimary,
+                backgroundColor: "transparent", fontFamily: "'Manrope', sans-serif",
+                fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, cursor: "pointer",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = p.accent; e.currentTarget.style.color = p.accent; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = p.border; e.currentTarget.style.color = p.textPrimary; }}
+            >
+              <FileText size={12} /> Open account workspace
+            </button>
+            <button
+              type="button"
+              onClick={() => setContractEditing({ ...linkedAccount })}
+              className="inline-flex items-center gap-1.5"
+              style={{
+                padding: "0.5rem 0.9rem", backgroundColor: p.accent,
+                color: p.theme === "light" ? "#FFFFFF" : "#15161A",
+                border: `1px solid ${p.accent}`, fontFamily: "'Manrope', sans-serif",
+                fontSize: "0.66rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700, cursor: "pointer",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = p.accentDeep || p.accent; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = p.accent; }}
+            >
+              <Edit2 size={12} /> {linkedAccount.signedOn ? "Manage contract" : "Create contract"}
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Kind + account */}
@@ -778,6 +891,44 @@ export function ActivityEditor({ activity, onClose, lockedAccount }) {
           </div>
         </div>
       </div>
+
+      {/* Sibling modals — rendered inside the Drawer body so they pick up the
+          editor's z-index but live as siblings of the form (not children of a
+          clickable wrapper), so internal clicks don't bubble into edits. */}
+      {resendActivity && (
+        <IntroEmailModal activity={resendActivity} onClose={() => setResendActivity(null)} />
+      )}
+      {workspaceOpen && linkedAccount && activity?.accountKind === "corporate" && (
+        <CorporateWorkspaceDrawer
+          agreement={linkedAccount}
+          onClose={() => setWorkspaceOpen(false)}
+          onEditContract={() => { setWorkspaceOpen(false); setContractEditing({ ...linkedAccount }); }}
+          onPreviewContract={() => { /* preview link emitted by workspace — no-op here */ }}
+        />
+      )}
+      {workspaceOpen && linkedAccount && activity?.accountKind === "agent" && (
+        <AgencyWorkspaceDrawer
+          agency={linkedAccount}
+          onClose={() => setWorkspaceOpen(false)}
+          onEditContract={() => { setWorkspaceOpen(false); setContractEditing({ ...linkedAccount }); }}
+          onPreviewContract={() => { /* preview link emitted by workspace — no-op here */ }}
+        />
+      )}
+      {contractEditing && (
+        <ContractEditor
+          open={true}
+          onClose={() => setContractEditing(null)}
+          contract={contractEditing}
+          kind={activity?.accountKind === "agent" ? "agent" : "corporate"}
+          onSave={(c) => {
+            if (activity?.accountKind === "agent") upsertAgency(c);
+            else upsertAgreement(c);
+            setContractEditing(null);
+            pushToast({ message: `Contract saved · ${c.account || c.name}` });
+          }}
+          onRemove={() => { /* removal flows live in the workspace itself */ }}
+        />
+      )}
     </Drawer>
   );
 }
