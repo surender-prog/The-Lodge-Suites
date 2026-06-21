@@ -1,46 +1,63 @@
-// factSheetPdf.js — branded multi-page Fact Sheet PDF for sales intro emails.
+// factSheetPdf.js — branded multi-page Fact Sheet PDF for sales intro emails
+// AND the public press kit. Built dynamically from live hotel info + rooms +
+// packages + loyalty tiers + gift-card tiers so as the operator edits data,
+// the next generated sheet picks the changes up — no manual upload, no stale
+// figures.
 //
-// Built dynamically from live hotel info + rooms + packages + loyalty tiers +
-// gift-card tiers, so as the operator edits property data in admin, the next
-// generated sheet picks the changes up — no manual upload, no stale figures.
-// Renders with vector jsPDF (no rasterisation, ~10 KB without images, ~500 KB
-// with the gallery) and matches the charcoal + gold brand palette.
-//
-// Layout (3 pages):
-//   1  The Property        — hero, intro blurb, suite types & rates
-//   2  Experience & Spaces — gallery strip, amenities, meeting room, policies
-//   3  Programs & Offers   — stay offers, LS Privilege, gift cards, partner pkg
+// Layout (3 pages, photo-heavy):
+//   1  The Property        — hero, intro, suite rates table, SIGNATURE SUITES strip
+//   2  Experience & Spaces — 6-photo mosaic (lobby/kitchen/bedroom/pool/gym/play),
+//                            amenities, meeting room, policies + contact
+//   3  Programs & Offers   — stay offers, LS Privilege tiers, gift cards, partner
 //
 // The builder is ASYNC because property photos are fetched from /public/images/
-// at runtime (no CORS, same-origin) and inlined as base64. If any image fails
-// (offline build, unknown host) it's skipped silently — the rest of the doc
-// still renders correctly.
+// at runtime (same-origin; no CORS) and inlined as base64. If any image fails
+// (offline build, unknown host) it's skipped silently and the textual sections
+// of the doc still render correctly.
 
 import { jsPDF } from "jspdf";
 
-// Image paths are referenced as literals (not via the React-coupled IMG
-// catalog in src/data/images.js) so this lib stays a pure module with no
-// React dep. Operator-customised gallery imagery flows in via `gallery` —
-// these are only the fall-back when nothing is configured.
-const HERO_FALLBACK = "/images/exterior-day.jpg";
-const FALLBACK_GALLERY = [
-  "/images/lobby-main.jpg",
-  "/images/suite-living-kitchen.jpg",
-  "/images/suite-bedroom-chandelier.jpg",
-  "/images/pool-day.jpg",
-];
-
-const INK   = [21, 22, 26];     // C.ink
-const GOLD  = [201, 169, 97];   // C.gold
-const MUTED = [122, 116, 100];
-const HAIR  = [220, 215, 200];
-const GREEN = [22, 163, 74];
-const PAPER = [245, 241, 232];  // C.cream
+const INK     = [21, 22, 26];     // C.ink — primary text
+const GOLD    = [201, 169, 97];   // C.gold — brand accent
+const GOLD_D  = [165, 134, 71];   // deeper gold for headlines
+const MUTED   = [122, 116, 100];  // secondary text
+const HAIR    = [220, 215, 200];  // hairline rules
+const GREEN   = [22, 163, 74];    // positive markers (offer inclusions)
+const CREAM   = [251, 247, 236];  // partner-benefits callout fill
 
 const PW = 210, PH = 297, M = 18, RIGHT = PW - M;
 
-const safe = (s) => (s == null ? "" : String(s));
+const safe  = (s) => (s == null ? "" : String(s));
 const money = (n, code = "BHD") => `${code} ${Number(n || 0).toFixed(3)}`;
+
+// Property photos — referenced as literal paths so this lib stays a pure JS
+// module with no React dep. Operator-customised gallery imagery flows in via
+// the `gallery` argument; these are only the fallback.
+const HERO_FALLBACK = "/images/exterior-day.jpg";
+
+// Signature-suites photo strip on page 1, one photo per room id when we have
+// a known mapping. Unmatched rooms fall back to the studio image so the strip
+// is always full.
+const SUITE_PHOTOS = {
+  "studio":     "/images/suite-studio-open-plan.jpg",
+  "one-bed":    "/images/suite-bedroom-chandelier.jpg",
+  "two-bed":    "/images/suite-living-kitchen.jpg",
+  "three-bed":  "/images/presidential-living.jpg",
+};
+const SUITE_PHOTO_FALLBACK = "/images/suite-studio-open-plan.jpg";
+
+// Page-2 lifestyle mosaic — 6 captioned tiles, 3 across × 2 down. Order is
+// curated for narrative flow: arrive (lobby) → in-suite (kitchen, bedroom) →
+// amenities (pool, gym, play). Captions render in italic gold uppercase below
+// each tile.
+const MOSAIC_TILES = [
+  { url: "/images/lobby-main.jpg",                caption: "Lobby & arrival" },
+  { url: "/images/suite-kitchen-bright.jpg",      caption: "Suite kitchenette" },
+  { url: "/images/suite-bedroom-chandelier.jpg",  caption: "Master bedroom" },
+  { url: "/images/pool-day.jpg",                  caption: "Rooftop pool" },
+  { url: "/images/gym.jpg",                       caption: "24/7 gym" },
+  { url: "/images/kids-playroom.jpg",             caption: "Kids' play area" },
+];
 
 const HOTEL_FALLBACK = {
   name: "The Lodge Suites",
@@ -65,7 +82,7 @@ const DEFAULT_AMENITIES = [
   "Soundproofed windows for restful stays",
   "Daily housekeeping · 24/7 reception",
   "On-site parking · 24/7 front office",
-  "Walking distance to Juffair restaurants & retail",
+  "Walking distance to Juffair retail & dining",
   "Rooftop pool, gym & spa amenities",
 ];
 
@@ -112,34 +129,48 @@ async function loadImageAsBase64(url, timeoutMs = 5000) {
   } catch { return null; }
 }
 
-// Resolve a curated 4-image gallery from siteContent.galleryItems (operator
-// edits) or the curated fallback at the top of this file. We always cap at 4
-// thumbs so the page 2 layout stays balanced.
+// Curated 4-image gallery fallback when the operator hasn't customised
+// siteContent.galleryItems. The lifestyle mosaic (6 tiles) is independent —
+// this fallback only matters if the consumer passes a custom gallery through.
+const GALLERY_FALLBACK = [
+  "/images/lobby-main.jpg",
+  "/images/suite-living-kitchen.jpg",
+  "/images/suite-bedroom-chandelier.jpg",
+  "/images/pool-day.jpg",
+];
+
+// Resolve a 4-image gallery from siteContent.galleryItems (operator edits) or
+// the curated fallback. Used by callers that want a custom set; kept around
+// even though the mosaic now has its own fixed 6-tile layout for editorial
+// integrity.
 function resolveGalleryUrls(gallery) {
   const list = Array.isArray(gallery) && gallery.length
     ? gallery.map((g) => g && g.src).filter(Boolean)
-    : FALLBACK_GALLERY;
+    : GALLERY_FALLBACK;
   return list.slice(0, 4);
 }
 
 // ---------------------------------------------------------------------------
-// Page-1 helpers — header / suite table / footer
+// Header / footer / section labels — shared chrome.
 // ---------------------------------------------------------------------------
 function pageHeader(doc, H, label) {
   let y = 18;
-  doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.setTextColor(...INK);
+  // Hotel name in a serif face for the luxury-deck feel; jsPDF's built-in
+  // "times" is the closest match to the brand's Cormorant Garamond without
+  // shipping a custom font file in the bundle.
+  doc.setFont("times", "bold"); doc.setFontSize(22); doc.setTextColor(...INK);
   doc.text(safe(H.name), M, y);
   if (label) {
-    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...GOLD);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...GOLD_D);
     doc.text(label, RIGHT, y, { align: "right" });
     if (H.tagline) {
-      doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...MUTED);
+      doc.setFont("helvetica", "italic"); doc.setFontSize(8.2); doc.setTextColor(...MUTED);
       doc.text(safe(H.tagline), RIGHT, y + 5, { align: "right" });
     }
   }
-  doc.setFont("helvetica", "italic"); doc.setFontSize(9); doc.setTextColor(...MUTED);
-  doc.text(safe(H.legal || ""), M, y + 6);
-  y += 11;
+  doc.setFont("times", "italic"); doc.setFontSize(9); doc.setTextColor(...MUTED);
+  doc.text(safe(H.legal || ""), M, y + 6.5);
+  y += 12;
   doc.setDrawColor(...GOLD); doc.setLineWidth(0.6); doc.line(M, y, RIGHT, y);
   return y + 7;
 }
@@ -148,43 +179,63 @@ function pageFooter(doc, H, pageNum, totalPages) {
   const FY = 285;
   doc.setDrawColor(...GOLD); doc.setLineWidth(0.4); doc.line(M, FY, RIGHT, FY);
   doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(...MUTED);
-  const left = `${safe(H.legal || H.name)} · ${safe(H.website || "")}`;
-  const center = `Page ${pageNum} of ${totalPages}`;
-  const right = `${safe(H.phone)}  ·  ${safe(H.email)}`;
-  doc.text(left, M, FY + 5);
-  doc.text(center, PW / 2, FY + 5, { align: "center" });
-  doc.text(right, RIGHT, FY + 5, { align: "right" });
+  doc.text(`${safe(H.legal || H.name)} · ${safe(H.website || "")}`, M, FY + 5);
+  doc.text(`Page ${pageNum} of ${totalPages}`, PW / 2, FY + 5, { align: "center" });
+  doc.text(`${safe(H.phone)}  ·  ${safe(H.email)}`, RIGHT, FY + 5, { align: "right" });
 }
 
 function sectionLabel(doc, y, label) {
-  doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...MUTED);
-  doc.text(label, M, y);
-  return y + 5;
+  // Section labels — small caps in gold with a tiny gold dot before the text,
+  // plus an ultra-thin underline that runs the full content width. Quiet but
+  // unmistakably editorial.
+  doc.setFillColor(...GOLD); doc.circle(M + 1.4, y - 1.6, 0.9, "F");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(8.2); doc.setTextColor(...GOLD_D);
+  doc.text(label, M + 4.2, y);
+  doc.setDrawColor(...HAIR); doc.setLineWidth(0.15);
+  doc.line(M, y + 1.5, RIGHT, y + 1.5);
+  return y + 6;
+}
+
+// Draw a single image with a small-caps gold caption underneath. Returns the
+// caption's bottom y so the caller can stack rows.
+function captionedImage(doc, x, y, w, h, base64, caption) {
+  if (base64) {
+    try { doc.addImage(base64, "JPEG", x, y, w, h, undefined, "FAST"); }
+    catch (_) { /* fall through and just render the caption */ }
+  } else {
+    // Subtle placeholder so the layout doesn't collapse when an image is
+    // missing — a soft cream rectangle with a hairline border.
+    doc.setFillColor(...CREAM); doc.rect(x, y, w, h, "F");
+    doc.setDrawColor(...HAIR); doc.setLineWidth(0.2); doc.rect(x, y, w, h);
+  }
+  if (caption) {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(...GOLD_D);
+    doc.text(safe(caption).toUpperCase(), x, y + h + 4);
+  }
+  return y + h + (caption ? 6 : 0);
 }
 
 // ---------------------------------------------------------------------------
-// PAGE 1 — The Property: hero, intro blurb, suite types & rates table
+// PAGE 1 — The Property: hero · intro · suite rates table · signature suites
 // ---------------------------------------------------------------------------
-function renderPage1(doc, H, rooms, currency, heroBase64) {
+function renderPage1(doc, H, rooms, currency, heroBase64, suitePhotos) {
   let y = pageHeader(doc, H, "FACT SHEET");
 
-  // Hero image strip — full-width, 70mm tall. Skip cleanly if missing.
+  // Hero strip — full content-width, 82mm tall.
   if (heroBase64) {
-    try {
-      doc.addImage(heroBase64, "JPEG", M, y, RIGHT - M, 70, undefined, "FAST");
-      y += 74;
-    } catch (_) { /* malformed image — fall through */ }
+    try { doc.addImage(heroBase64, "JPEG", M, y, RIGHT - M, 82, undefined, "FAST"); y += 86; }
+    catch (_) { y += 4; }
   }
 
-  // Intro blurb
+  // The Property blurb
   y = sectionLabel(doc, y, "THE PROPERTY");
   doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); doc.setTextColor(...INK);
-  const blurb = `${safe(H.name)} is a premium all-suite property located in the heart of ${safe(H.area) || "Manama"}, offering spacious accommodations and personalised hospitality services tailored to both business and leisure travellers. Each suite features a furnished kitchenette, 55" Smart TV, soundproofed windows and complimentary high-speed Wi-Fi — a comfortable environment ideal for corporate and extended-stay guests.`;
+  const blurb = `${safe(H.name)} is a premium all-suite property in the heart of ${safe(H.area) || "Manama"}, offering spacious accommodations and personalised hospitality tailored to both business and leisure travellers. Each suite features a furnished kitchenette, 55" Smart TV, soundproofed windows and complimentary high-speed Wi-Fi — a comfortable environment ideal for corporate and extended-stay guests.`;
   const blurbLines = doc.splitTextToSize(blurb, RIGHT - M);
   doc.text(blurbLines, M, y);
-  y += blurbLines.length * 4.6 + 4;
+  y += blurbLines.length * 4.5 + 3;
 
-  // Suite types & rates table
+  // Rates table
   y = sectionLabel(doc, y, "SUITE TYPES & RATES");
   doc.setFillColor(...INK); doc.rect(M, y, RIGHT - M, 8, "F");
   doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(255, 255, 255);
@@ -215,27 +266,50 @@ function renderPage1(doc, H, rooms, currency, heroBase64) {
     y += ROW_H;
   }
   doc.setFont("helvetica", "italic"); doc.setFontSize(7.5); doc.setTextColor(...MUTED);
-  doc.text("Rates are from-prices, per night, in BHD. Inclusive / exclusive of taxes per contract.", M, y + 5);
+  doc.text("Rates are from-prices, per night, in BHD. Inclusive / exclusive of taxes per contract.", M, y + 4.5);
+  y += 9;
+
+  // SIGNATURE SUITES — one captioned photo per room type, in the same order
+  // as the table. Filling the page with imagery is the key luxury upgrade.
+  y = sectionLabel(doc, y, "SIGNATURE SUITES");
+  const SUITE_COUNT = Math.min(activeRooms.length || 0, 4);
+  if (SUITE_COUNT > 0) {
+    const gap = 4;
+    const tileW = (RIGHT - M - gap * (SUITE_COUNT - 1)) / SUITE_COUNT;
+    const tileH = 30;
+    activeRooms.slice(0, SUITE_COUNT).forEach((r, i) => {
+      const x = M + i * (tileW + gap);
+      const photoKey = SUITE_PHOTOS[r.id] || SUITE_PHOTO_FALLBACK;
+      const b64 = suitePhotos[photoKey] || null;
+      captionedImage(doc, x, y, tileW, tileH, b64, safe(r.publicName || r.name || r.id));
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
-// PAGE 2 — Experience & Spaces: gallery strip, amenities, meeting room,
-// stay policies, contact block.
+// PAGE 2 — Experience & Spaces: 6-tile lifestyle mosaic + amenities +
+// meeting room + stay policies + contact block.
 // ---------------------------------------------------------------------------
-function renderPage2(doc, H, galleryBase64s) {
+function renderPage2(doc, H, mosaicBase64s) {
   let y = pageHeader(doc, H, "EXPERIENCE & SPACES");
 
-  // Gallery strip — 4 thumbs across the page, ~36mm tall.
-  const gap = 3;
-  const thumbW = (RIGHT - M - gap * 3) / 4;
-  const thumbH = 36;
-  galleryBase64s.slice(0, 4).forEach((b64, i) => {
-    if (!b64) return;
-    try {
-      doc.addImage(b64, "JPEG", M + i * (thumbW + gap), y, thumbW, thumbH, undefined, "FAST");
-    } catch (_) { /* skip silently */ }
-  });
-  y += thumbH + 6;
+  // 6-tile mosaic — 3 across × 2 down, each captioned. Rows are intentionally
+  // taller than the old single-strip gallery to give the photography room
+  // to read; the mosaic dominates the top half of the page.
+  y = sectionLabel(doc, y, "PROPERTY HIGHLIGHTS");
+  const COLS = 3, ROWS = 2;
+  const gap = 4;
+  const tileW = (RIGHT - M - gap * (COLS - 1)) / COLS;
+  const tileH = 38;
+  const cellH = tileH + 7; // tile + caption + padding
+  for (let i = 0; i < COLS * ROWS; i++) {
+    const col = i % COLS, row = Math.floor(i / COLS);
+    const x = M + col * (tileW + gap);
+    const ty = y + row * cellH;
+    const tile = MOSAIC_TILES[i] || { url: null, caption: "" };
+    captionedImage(doc, x, ty, tileW, tileH, mosaicBase64s[i], tile.caption);
+  }
+  y += ROWS * cellH + 2;
 
   // Amenities (left) | Meeting & Conference (right)
   const COL_W = (RIGHT - M - 6) / 2;
@@ -254,8 +328,9 @@ function renderPage2(doc, H, galleryBase64s) {
 
   // RIGHT — Meeting & Conference Room
   const RX = M + COL_W + 6;
-  doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...MUTED);
-  doc.text(MEETING_ROOM.title.toUpperCase(), RX, colStartY);
+  doc.setFillColor(...GOLD); doc.circle(RX + 1.4, colStartY - 1.6, 0.9, "F");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(8.2); doc.setTextColor(...GOLD_D);
+  doc.text(MEETING_ROOM.title.toUpperCase(), RX + 4.2, colStartY);
   let ry = colStartY + 5;
   doc.setFont("helvetica", "italic"); doc.setFontSize(8.5); doc.setTextColor(...MUTED);
   const blurbWrap = doc.splitTextToSize(MEETING_ROOM.blurb, COL_W);
@@ -269,12 +344,12 @@ function renderPage2(doc, H, galleryBase64s) {
     ry += wrap.length * 4.4 + 1.2;
   });
 
-  y = Math.max(ly, ry) + 6;
+  y = Math.max(ly, ry) + 4;
 
-  // Stay policies (left) | Contact (right)
+  // Stay policies + Contact (compact two-col footer)
   doc.setDrawColor(...HAIR); doc.setLineWidth(0.3); doc.line(M, y, RIGHT, y);
   y += 6;
-  doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...MUTED);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(8.2); doc.setTextColor(...GOLD_D);
   doc.text("STAY POLICIES", M, y);
   doc.text("RESERVATIONS & SALES", RX, y);
   y += 5;
@@ -300,16 +375,17 @@ function renderPage2(doc, H, galleryBase64s) {
 }
 
 // ---------------------------------------------------------------------------
-// PAGE 3 — Programs & Offers: Stay Offers, LS Privilege, Gift Cards, Partner.
+// PAGE 3 — Programs & Offers (largely unchanged structurally; the visual
+// chrome inherits the new gold-dot section labels for cohesion).
 // ---------------------------------------------------------------------------
 
-// Resolve a "from price" + first room label for a package so the card can show
-// "from BHD 52 / night · Studio" without printing the full per-room matrix.
+// Resolve a "from price" headline for a package so the card can show
+// "from BHD 52 / night" without printing the full per-room matrix.
 function packageHeadline(pkg, currency = "BHD") {
   const pricing = pkg.roomPricing || {};
   const entries = Object.entries(pricing).map(([roomId, v]) => ({ roomId, price: Number(v?.price || 0), saving: Number(v?.saving || 0) }))
     .filter((e) => e.price > 0);
-  if (entries.length === 0) return { from: "On request", saving: 0, mode: pkg.pricingMode || "per-night" };
+  if (entries.length === 0) return { from: "On request", saving: 0 };
   entries.sort((a, b) => a.price - b.price);
   const cheapest = entries[0];
   const modeLabel = pkg.pricingMode === "flat" ? "flat / stay"
@@ -318,7 +394,6 @@ function packageHeadline(pkg, currency = "BHD") {
   return {
     from: `${currency} ${cheapest.price.toFixed(0)} ${modeLabel}`,
     saving: cheapest.saving > 0 ? `save ${currency} ${cheapest.saving.toFixed(0)}` : "",
-    mode: pkg.pricingMode || "per-night",
     roomId: cheapest.roomId,
   };
 }
@@ -326,7 +401,7 @@ function packageHeadline(pkg, currency = "BHD") {
 function renderPage3(doc, H, packages, tiers, loyalty, giftCardTiers, currency) {
   let y = pageHeader(doc, H, "PROGRAMS & OFFERS");
 
-  // STAY OFFERS — top 4 active packages, two per row, mini cards.
+  // STAY OFFERS — top 4 active packages, 2x2 cards
   y = sectionLabel(doc, y, "STAY OFFERS");
   const offers = (packages || []).filter((p) => p && p.active !== false).slice(0, 4);
   const CARD_W = (RIGHT - M - 5) / 2;
@@ -337,14 +412,12 @@ function renderPage3(doc, H, packages, tiers, loyalty, giftCardTiers, currency) 
     const cy = y + row * (CARD_H + 4);
     doc.setDrawColor(...HAIR); doc.setLineWidth(0.3);
     doc.rect(x, cy, CARD_W, CARD_H);
-    // Gold accent bar
     doc.setFillColor(...GOLD); doc.rect(x, cy, 2, CARD_H, "F");
     doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...INK);
     doc.text(safe(pkg.label || pkg.id), x + 5, cy + 5.5);
     const head = packageHeadline(pkg, currency);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...GOLD);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...GOLD_D);
     doc.text(`From ${head.from}${head.saving ? "  ·  " + head.saving : ""}`, x + 5, cy + 10.5);
-    // First two inclusions
     const incs = (Array.isArray(pkg.includes) ? pkg.includes : []).slice(0, 2);
     doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...INK);
     let iy = cy + 16;
@@ -354,7 +427,6 @@ function renderPage3(doc, H, packages, tiers, loyalty, giftCardTiers, currency) 
       doc.text(wrap[0], x + 9, iy);
       iy += 4;
     });
-    // Stay window
     const nights = `${pkg.minNights || 1}${pkg.maxNights && pkg.maxNights > pkg.minNights ? `–${pkg.maxNights}` : "+"} night${(pkg.maxNights || pkg.minNights) === 1 ? "" : "s"}`;
     doc.setFont("helvetica", "italic"); doc.setFontSize(7); doc.setTextColor(...MUTED);
     doc.text(nights, x + CARD_W - 3, cy + CARD_H - 2.5, { align: "right" });
@@ -381,7 +453,6 @@ function renderPage3(doc, H, packages, tiers, loyalty, giftCardTiers, currency) 
     doc.text(safe(t.name || t.id).toUpperCase(), x + 3, y + 4.2);
     doc.setDrawColor(...HAIR); doc.setLineWidth(0.3);
     doc.rect(x, y + 6, TIER_W, TIER_H - 6);
-    // Top 4 enabled benefits
     const enabled = (Array.isArray(t.benefits) ? t.benefits : []).filter((b) => b && b.on).slice(0, 4);
     let by = y + 11;
     doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(...INK);
@@ -417,7 +488,7 @@ function renderPage3(doc, H, packages, tiers, loyalty, giftCardTiers, currency) 
   gcTiers.forEach((gc) => {
     doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...INK);
     doc.text(`${gc.nights || 0}`, M + 3, y + 4.6);
-    doc.setFont("helvetica", "bold"); doc.setTextColor(...GOLD);
+    doc.setFont("helvetica", "bold"); doc.setTextColor(...GOLD_D);
     doc.text(`${Number(gc.discountPct || 0)}%`, M + 40, y + 4.6);
     doc.setFont("helvetica", "normal"); doc.setTextColor(...INK);
     const desc = safe(gc.label || gc.hint || "");
@@ -438,7 +509,7 @@ function renderPage3(doc, H, packages, tiers, loyalty, giftCardTiers, currency) 
 
   // PARTNER BENEFITS callout
   y = sectionLabel(doc, y, "PARTNER BENEFITS · CORPORATE & TRAVEL AGENT");
-  doc.setFillColor(252, 248, 238); doc.setDrawColor(...GOLD); doc.setLineWidth(0.4);
+  doc.setFillColor(...CREAM); doc.setDrawColor(...GOLD); doc.setLineWidth(0.4);
   const boxH = PARTNER_BENEFITS.length * 5.2 + 4;
   doc.rect(M, y, RIGHT - M, boxH, "FD");
   let by = y + 4.5;
@@ -490,43 +561,56 @@ function friendlyBenefitLabel(key) {
 }
 
 // ---------------------------------------------------------------------------
-// buildFactSheetPdf — main entry. ASYNC: fetches property photos before
-// rendering so the gallery + hero land on page 1/2.
+// buildFactSheetPdf — main entry. ASYNC: fetches all 11 property photos in
+// parallel before rendering so the hero, signature-suite strip and the
+// lifestyle mosaic all land cleanly.
 //
 // opts: {
 //   hotel, rooms, packages, tiers, loyalty, giftCardTiers, gallery,
 //   currency = "BHD"
 // }
-// Returns Promise<{ base64, filename }>; never throws — partial PDFs are
-// preferred over a blank failure (any image that doesn't fetch is skipped).
+// Returns Promise<{ base64, filename }>; never throws — any image that
+// doesn't fetch is skipped so the PDF still renders.
 // ---------------------------------------------------------------------------
 export async function buildFactSheetPdf({
   hotel, rooms = [], packages = [], tiers = [], loyalty = null,
   giftCardTiers = [], gallery = null, currency = "BHD",
 } = {}) {
+  // `gallery` is accepted for backward-compat but the new mosaic uses its
+  // own curated 6-tile set for editorial integrity. We don't use it here,
+  // but resolveGalleryUrls is kept for callers that want it.
+  void resolveGalleryUrls; void gallery;
+
   const H = { ...HOTEL_FALLBACK, ...(hotel || {}) };
 
-  // Fetch hero + 4 gallery thumbs in parallel; total work bounded by the 5s
-  // per-image timeout in loadImageAsBase64.
-  const heroUrl = HERO_FALLBACK;
-  const galleryUrls = resolveGalleryUrls(gallery);
-  const [heroBase64, ...galleryBase64s] = await Promise.all([
-    loadImageAsBase64(heroUrl),
-    ...galleryUrls.map((u) => loadImageAsBase64(u)),
-  ]);
+  // Build the FULL set of unique URLs we need across all three pages — hero,
+  // signature suites (deduped by URL), and the six mosaic tiles — so the
+  // parallel fetch is exactly N requests with no duplicates.
+  const suiteUrls = (rooms || [])
+    .filter((r) => r && !r.archived && Number(r.price ?? r.rateWeekday ?? 0) > 0)
+    .slice(0, 4)
+    .map((r) => SUITE_PHOTOS[r.id] || SUITE_PHOTO_FALLBACK);
+  const mosaicUrls = MOSAIC_TILES.map((t) => t.url);
+  const unique = Array.from(new Set([HERO_FALLBACK, ...suiteUrls, ...mosaicUrls]));
+
+  // Fetch everything in parallel; each fetch is bounded by the per-image 5s
+  // timeout inside loadImageAsBase64, so worst-case the build settles after ~5s.
+  const fetched = await Promise.all(unique.map((u) => loadImageAsBase64(u)));
+  const byUrl = unique.reduce((acc, url, i) => { acc[url] = fetched[i]; return acc; }, {});
 
   const doc = new jsPDF({ unit: "mm", format: "a4" });
 
-  // Page 1 — The Property
-  renderPage1(doc, H, rooms, currency, heroBase64);
+  // Page 1
+  renderPage1(doc, H, rooms, currency, byUrl[HERO_FALLBACK], byUrl);
   pageFooter(doc, H, 1, 3);
 
-  // Page 2 — Experience & Spaces
+  // Page 2 — mosaic in the curated order
   doc.addPage();
-  renderPage2(doc, H, galleryBase64s);
+  const mosaicBase64s = mosaicUrls.map((u) => byUrl[u]);
+  renderPage2(doc, H, mosaicBase64s);
   pageFooter(doc, H, 2, 3);
 
-  // Page 3 — Programs & Offers
+  // Page 3
   doc.addPage();
   renderPage3(doc, H, packages, tiers, loyalty, giftCardTiers, currency);
   pageFooter(doc, H, 3, 3);
