@@ -158,6 +158,12 @@ export function ActivityCard({ activity, onEdit, onComplete, showAccount = false
   const [introOpen, setIntroOpen] = useState(false);
 
   return (
+    // Fragment-wrapped so the IntroEmailModal can sit OUTSIDE the card's
+    // clickable <div>. The card's onClick opens the activity editor on any
+    // click that lands on the card; rendering the modal as a sibling means
+    // its internal clicks (CC field, message textarea, etc.) can never
+    // bubble up the React tree and trigger the editor underneath.
+    <>
     <div
       onClick={() => onEdit?.(activity)}
       className="p-4 transition-colors"
@@ -228,9 +234,6 @@ export function ActivityCard({ activity, onEdit, onComplete, showAccount = false
           ><Edit2 size={11} /></button>
         </div>
       </div>
-      {introOpen && (
-        <IntroEmailModal activity={activity} onClose={() => setIntroOpen(false)} />
-      )}
 
       {/* Subject + account name */}
       <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.1rem", color: p.textPrimary, fontWeight: 500, lineHeight: 1.25 }}>
@@ -324,6 +327,10 @@ export function ActivityCard({ activity, onEdit, onComplete, showAccount = false
         </div>
       )}
     </div>
+    {introOpen && (
+      <IntroEmailModal activity={activity} onClose={() => setIntroOpen(false)} />
+    )}
+    </>
   );
 }
 
