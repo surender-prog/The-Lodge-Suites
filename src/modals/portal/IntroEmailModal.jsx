@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Mail, Paperclip, Send, X } from "lucide-react";
 import { usePalette } from "./theme.jsx";
 import { useData } from "../../data/store.jsx";
 import { Drawer, FormGroup, GhostBtn, PrimaryBtn, TextField, pushToast } from "./admin/ui.jsx";
 import { CheckSquare, Square } from "lucide-react";
+import { DEFAULT_GALLERY_ITEMS } from "../../data/gallery.js";
 import { buildIntroEmail } from "../../lib/introEmailTemplate.js";
 import { buildFactSheetPdf } from "../../lib/factSheetPdf.js";
 import { sendTransactionalEmail } from "../../utils/email.js";
@@ -44,6 +45,7 @@ export function IntroEmailModal({ activity, onClose }) {
   const {
     agreements, agencies, rooms, hotelInfo, staffSession, adminUsers, addActivity,
     upsertAgreement, upsertAgency,
+    packages, tiers, loyalty, giftCardTiers, siteContent,
   } = useData();
 
   const owner = useMemo(() => {
@@ -89,17 +91,35 @@ export function IntroEmailModal({ activity, onClose }) {
     return null;
   }, [activity, agreements, agencies]);
 
-  // Build the Fact Sheet once when the modal opens; rebuilds when rooms/hotel
-  // change. ~10 KB output so we keep the base64 in component state.
-  const factSheet = useMemo(() => {
-    try { return buildFactSheetPdf({ hotel: hotelInfo, rooms, currency: "BHD" }); }
-    catch (_) { return null; }
-  }, [hotelInfo, rooms]);
+  // Build the Fact Sheet when the modal opens. The builder is async — it fetches
+  // hero + 4 gallery photos from /images/ and inlines them — so we own the state
+  // via useState + useEffect (vs the old sync useMemo). While building, send is
+  // disabled so a click can't race the attachment in. Bare images fail-soft;
+  // the textual sections of the PDF still render if a photo doesn't fetch.
+  const [factSheet, setFactSheet] = useState(null);
+  const [factSheetBuilding, setFactSheetBuilding] = useState(true);
+  const galleryItems = (siteContent && siteContent.galleryItems) || DEFAULT_GALLERY_ITEMS;
+  useEffect(() => {
+    let cancelled = false;
+    setFactSheetBuilding(true);
+    buildFactSheetPdf({
+      hotel: hotelInfo, rooms, packages, tiers, loyalty,
+      giftCardTiers, gallery: galleryItems, currency: "BHD",
+    })
+      .then((res) => { if (!cancelled) { setFactSheet(res); setFactSheetBuilding(false); } })
+      .catch(() => { if (!cancelled) { setFactSheet(null); setFactSheetBuilding(false); } });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hotelInfo, rooms, packages, tiers, loyalty, giftCardTiers, galleryItems]);
 
   const valid = /.+@.+\..+/.test(draft.to.trim()) && draft.subject.trim() && draft.text.trim();
+  // The send button waits for the Fact Sheet to finish building so the
+  // attachment is always included — better UX than letting the operator hit
+  // Send and silently sending without the Fact Sheet.
+  const canSend = valid && !sending && !factSheetBuilding;
 
   const send = async () => {
-    if (!valid || sending) return;
+    if (!canSend) return;
     setSending(true);
     const attachments = factSheet ? [{ filename: factSheet.filename, contentBase64: factSheet.base64, contentType: "application/pdf" }] : [];
     const result = await sendTransactionalEmail({
@@ -181,8 +201,8 @@ export function IntroEmailModal({ activity, onClose }) {
         <>
           <GhostBtn onClick={onClose} small>Cancel</GhostBtn>
           <div className="flex-1" />
-          <PrimaryBtn onClick={send} small disabled={!valid || sending}>
-            <Send size={11} /> {sending ? "Sending…" : "Send email"}
+          <PrimaryBtn onClick={send} small disabled={!canSend}>
+            <Send size={11} /> {sending ? "Sending…" : factSheetBuilding ? "Preparing Fact Sheet…" : "Send email"}
           </PrimaryBtn>
         </>
       }
@@ -263,10 +283,14 @@ export function IntroEmailModal({ activity, onClose }) {
         color: p.textPrimary, fontSize: "0.82rem",
       }}>
         <Paperclip size={13} style={{ color: p.accent }} />
-        <span><strong>{factSheet?.filename || "Fact Sheet"}</strong> {factSheet ? "· auto-attached" : "· (failed to build)"}</span>
+        <span>
+          <strong>{factSheet?.filename || "Fact Sheet"}</strong>{" "}
+          {factSheetBuilding ? "· preparing…" : factSheet ? "· auto-attached" : "· (failed to build)"}
+        </span>
       </div>
       <div style={{ fontSize: "0.72rem", color: p.textMuted, marginTop: 6 }}>
-        The Fact Sheet is built fresh from your live property info (suites, rates, amenities, contact) every time you open this modal.
+        The Fact Sheet is a 3-page deck rebuilt fresh from your live data every time — suites &amp; rates,
+        property photos, meeting room, stay offers, LS Privilege tiers and gift cards.
       </div>
 
       {/* Empty-state hint when no recipient could be auto-resolved. */}
