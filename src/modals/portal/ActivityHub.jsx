@@ -370,9 +370,45 @@ export function ActivityEditor({ activity, onClose, lockedAccount }) {
     return null;
   }, [activity?.accountId, activity?.accountKind, agreements, agencies]);
 
+  // Did an intro email get sent FOR or AS this activity? Two cases:
+  //   (a) This activity IS the email-log entry → activity.meta.introEmail
+  //   (b) Another activity references this one as its trigger → look in
+  //       activities for one whose meta.refActivityId points here.
+  // We surface ONE banner either way, with the timestamp + recipient.
+  const introEmailLog = useMemo(() => {
+    if (!activity) return null;
+    if (activity.meta?.introEmail) return activity;
+    if (!activity.id) return null;
+    return (activities || []).find((a) => a?.meta?.introEmail && a?.meta?.refActivityId === activity.id) || null;
+  }, [activity, activities]);
+
+  // The signed-in operator — new activities default their Owner (sales rep)
+  // to whoever is logging them, instead of an arbitrary first staff record.
+  const me = (staffSession && adminUsers?.find((u) => u.id === staffSession.id)) || null;
+
+  const [draft, setDraft] = useState(() => ({
+    kind: "call",
+    accountKind: lockedAccount?.kind || "corporate",
+    accountId:   lockedAccount?.id   || "",
+    accountName: lockedAccount?.name || "",
+    subject: "", contactName: "", contactPosition: "", contactPhone: "", contactEmail: "", location: "",
+    scheduledAt: new Date().toISOString().slice(0, 16),
+    completedAt: null, durationMin: 30,
+    summary: "", outcome: null,
+    nextAction: "", nextActionAt: "",
+    ownerId: me?.id || adminUsers?.[0]?.id || "",
+    ownerName: me?.name || adminUsers?.[0]?.name || "",
+    status: "scheduled",
+    ...activity,
+  }));
+
+  const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
+
   // Resolve the partner account currently in the DRAFT (responsive to picker
   // changes, unlike linkedAccount which is keyed off the saved activity).
   // Used by the contact-prefill effect + the "save as new contact" detection.
+  // Declared AFTER `draft` so its useMemo factory doesn't hit a temporal-
+  // dead-zone error when React calls it during the same render.
   const draftAccount = useMemo(() => {
     if (!draft.accountId) return null;
     if (draft.accountKind === "corporate") return agreements.find((a) => a.id === draft.accountId) || null;
@@ -430,40 +466,6 @@ export function ActivityEditor({ activity, onClose, lockedAccount }) {
   // operator can untick it to log the activity without changing the account.
   const [saveContactToAccount, setSaveContactToAccount] = useState(false);
   useEffect(() => { setSaveContactToAccount(contactIsNew); }, [contactIsNew]);
-
-  // Did an intro email get sent FOR or AS this activity? Two cases:
-  //   (a) This activity IS the email-log entry → activity.meta.introEmail
-  //   (b) Another activity references this one as its trigger → look in
-  //       activities for one whose meta.refActivityId points here.
-  // We surface ONE banner either way, with the timestamp + recipient.
-  const introEmailLog = useMemo(() => {
-    if (!activity) return null;
-    if (activity.meta?.introEmail) return activity;
-    if (!activity.id) return null;
-    return (activities || []).find((a) => a?.meta?.introEmail && a?.meta?.refActivityId === activity.id) || null;
-  }, [activity, activities]);
-
-  // The signed-in operator — new activities default their Owner (sales rep)
-  // to whoever is logging them, instead of an arbitrary first staff record.
-  const me = (staffSession && adminUsers?.find((u) => u.id === staffSession.id)) || null;
-
-  const [draft, setDraft] = useState(() => ({
-    kind: "call",
-    accountKind: lockedAccount?.kind || "corporate",
-    accountId:   lockedAccount?.id   || "",
-    accountName: lockedAccount?.name || "",
-    subject: "", contactName: "", contactPosition: "", contactPhone: "", contactEmail: "", location: "",
-    scheduledAt: new Date().toISOString().slice(0, 16),
-    completedAt: null, durationMin: 30,
-    summary: "", outcome: null,
-    nextAction: "", nextActionAt: "",
-    ownerId: me?.id || adminUsers?.[0]?.id || "",
-    ownerName: me?.name || adminUsers?.[0]?.name || "",
-    status: "scheduled",
-    ...activity,
-  }));
-
-  const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
 
   // When the operator picks an account from the dropdown, denormalize the
   // account name onto the draft so the activity card stays correct even if
