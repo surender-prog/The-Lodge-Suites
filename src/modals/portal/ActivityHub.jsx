@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Calendar, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
+  Calendar, Check, CheckCircle2, CheckSquare, ChevronDown, ChevronLeft, ChevronRight,
   Clock, Download, Edit2, FileText, Mail, MapPin, MessageCircle, NotebookPen,
-  Phone, Plus, Printer, Save, Search, Send, Trash2, Users, X,
+  Phone, Plus, Printer, Save, Search, Send, Square, Trash2, Users, X,
 } from "lucide-react";
 import { usePalette } from "./theme.jsx";
 import {
@@ -370,6 +370,67 @@ export function ActivityEditor({ activity, onClose, lockedAccount }) {
     return null;
   }, [activity?.accountId, activity?.accountKind, agreements, agencies]);
 
+  // Resolve the partner account currently in the DRAFT (responsive to picker
+  // changes, unlike linkedAccount which is keyed off the saved activity).
+  // Used by the contact-prefill effect + the "save as new contact" detection.
+  const draftAccount = useMemo(() => {
+    if (!draft.accountId) return null;
+    if (draft.accountKind === "corporate") return agreements.find((a) => a.id === draft.accountId) || null;
+    if (draft.accountKind === "agent")     return agencies.find((a) => a.id === draft.accountId) || null;
+    return null;
+  }, [draft.accountId, draft.accountKind, agreements, agencies]);
+
+  // Pre-fill the contact fields from the account's primary contact when an
+  // account is picked AND no contact info has been typed yet. Critically, this
+  // NEVER overwrites operator edits — once any contact field has a value, the
+  // pre-fill is skipped (so if the operator clears the name to type a new one,
+  // it stays cleared).
+  useEffect(() => {
+    if (!draftAccount) return;
+    const hasAny = !!(draft.contactName || draft.contactEmail || draft.contactPhone);
+    if (hasAny) return;
+    const users = Array.isArray(draftAccount.users) ? draftAccount.users : [];
+    const primary = users.find((u) => u.primary) || users.find((u) => (u.role || "") === "primary") || users[0];
+    const src = (primary && (primary.email || primary.name || primary.phone))
+      ? primary
+      : ((draftAccount.pocEmail || draftAccount.pocName || draftAccount.pocPhone)
+          ? { name: draftAccount.pocName, email: draftAccount.pocEmail, phone: draftAccount.pocPhone }
+          : null);
+    if (src) {
+      setDraft((d) => ({
+        ...d,
+        contactName:  d.contactName  || src.name  || "",
+        contactEmail: d.contactEmail || src.email || "",
+        contactPhone: d.contactPhone || src.phone || "",
+      }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftAccount]);
+
+  // Is the typed contact a NEW person (not on the account's user list / POC)?
+  // Email is the primary key when present; name is the fallback for accounts
+  // that don't yet capture per-user emails. Returns false when the form's
+  // contact fields are empty so the checkbox doesn't show prematurely.
+  const contactIsNew = useMemo(() => {
+    if (!draftAccount) return false;
+    const email = (draft.contactEmail || "").trim().toLowerCase();
+    const name  = (draft.contactName  || "").trim().toLowerCase();
+    if (!email && !name) return false;
+    const users = Array.isArray(draftAccount.users) ? draftAccount.users : [];
+    const knownEmail = (u) => u && u.email && u.email.toLowerCase() === email;
+    const knownName  = (u) => u && u.name  && u.name.toLowerCase()  === name;
+    if (email && users.some(knownEmail)) return false;
+    if (!email && name && users.some(knownName)) return false;
+    if (email && draftAccount.pocEmail && draftAccount.pocEmail.toLowerCase() === email) return false;
+    if (!email && name && draftAccount.pocName && draftAccount.pocName.toLowerCase() === name) return false;
+    return true;
+  }, [draftAccount, draft.contactEmail, draft.contactName]);
+
+  // Default the save-back checkbox to ON whenever the contact looks new — the
+  // operator can untick it to log the activity without changing the account.
+  const [saveContactToAccount, setSaveContactToAccount] = useState(false);
+  useEffect(() => { setSaveContactToAccount(contactIsNew); }, [contactIsNew]);
+
   // Did an intro email get sent FOR or AS this activity? Two cases:
   //   (a) This activity IS the email-log entry → activity.meta.introEmail
   //   (b) Another activity references this one as its trigger → look in
@@ -499,6 +560,30 @@ export function ActivityEditor({ activity, onClose, lockedAccount }) {
       ownerName: owner?.name || draft.ownerName,
       scheduledAt: draft.scheduledAt ? new Date(draft.scheduledAt).toISOString() : null,
     };
+    // Persist the typed contact as a new user on the linked account so the
+    // next intro / activity pre-fills automatically. Only when the operator
+    // left the toggle on AND the contact really is new (in case the email
+    // got changed to match an existing user between save-clicks).
+    if (saveContactToAccount && contactIsNew && draftAccount && draft.contactName.trim()) {
+      const slug = String(draftAccount.id || "ACCT").replace(/\W/g, "").slice(-6).toUpperCase();
+      const stamp = Date.now().toString(36).slice(-5).toUpperCase();
+      const newUser = {
+        id: `U-${slug}-${stamp}`,
+        name:  draft.contactName.trim(),
+        email: (draft.contactEmail || "").trim(),
+        phone: (draft.contactPhone || "").trim(),
+        // First user becomes primary; subsequent ones default to "booker" so
+        // an existing primary contact isn't quietly demoted.
+        role: (draftAccount.users || []).length === 0 ? "primary" : "booker",
+        primary: (draftAccount.users || []).length === 0,
+        createdAt: new Date().toISOString().slice(0, 10),
+        lastLogin: null,
+      };
+      const patched = { ...draftAccount, users: [...(draftAccount.users || []), newUser] };
+      if (draft.accountKind === "corporate") upsertAgreement(patched);
+      else if (draft.accountKind === "agent") upsertAgency(patched);
+      pushToast({ message: `Contact saved · ${newUser.name} on ${draftAccount.account || draftAccount.name}` });
+    }
     if (isNew) {
       addActivity(next);
       pushToast({ message: `Activity logged · ${draft.subject}` });
@@ -839,6 +924,31 @@ export function ActivityEditor({ activity, onClose, lockedAccount }) {
             <FormGroup label="Contact phone">
               <TextField value={draft.contactPhone} onChange={(v) => set({ contactPhone: v })} placeholder="e.g. +973 3300 1122" />
             </FormGroup>
+            {/* Save-as-new-contact opt-in — appears whenever the typed contact
+                isn't already on the account's user / POC list. Default ON when
+                it's clearly a new person so the operator just confirms by
+                saving the activity; tick off to log the touch without changing
+                the account record. */}
+            {draftAccount && contactIsNew && (
+              <div className="sm:col-span-2" style={{ paddingTop: 2 }}>
+                <button
+                  type="button"
+                  onClick={() => setSaveContactToAccount((v) => !v)}
+                  className="inline-flex items-center gap-2"
+                  style={{
+                    color: saveContactToAccount ? p.accent : p.textMuted,
+                    fontSize: "0.78rem", fontFamily: "'Manrope', sans-serif",
+                    background: "transparent", border: "none", cursor: "pointer", padding: 0,
+                  }}
+                  title="Append this contact to the account's user list so the next intro / activity pre-fills automatically."
+                >
+                  {saveContactToAccount ? <CheckSquare size={14} /> : <Square size={14} />}
+                  Also save as a new contact for <strong style={{ color: p.textPrimary, marginInlineStart: 4 }}>
+                    {draftAccount.account || draftAccount.name}
+                  </strong>
+                </button>
+              </div>
+            )}
             <FormGroup label={draft.kind === "visit" ? "Location *" : "Location"} className="sm:col-span-2">
               <TextField value={draft.location} onChange={(v) => set({ location: v })} placeholder={draft.kind === "visit" ? "Client's office address" : "Optional"} />
             </FormGroup>
