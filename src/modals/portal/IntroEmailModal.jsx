@@ -5,7 +5,11 @@ import { useData } from "../../data/store.jsx";
 import { Drawer, FormGroup, GhostBtn, PrimaryBtn, TextField, pushToast } from "./admin/ui.jsx";
 import { CheckSquare, Square } from "lucide-react";
 import { DEFAULT_GALLERY_ITEMS } from "../../data/gallery.js";
-import { buildIntroEmail } from "../../lib/introEmailTemplate.js";
+import {
+  buildIntroEmail,
+  substituteTemplateVars, templatizeFromValues, plainTextToHtml,
+  openerForKind, resolveGreetingName,
+} from "../../lib/introEmailTemplate.js";
 import { buildFactSheetPdf } from "../../lib/factSheetPdf.js";
 import { sendTransactionalEmail } from "../../utils/email.js";
 
@@ -46,6 +50,7 @@ export function IntroEmailModal({ activity, onClose }) {
     agreements, agencies, rooms, hotelInfo, staffSession, adminUsers, addActivity,
     upsertAgreement, upsertAgency,
     packages, tiers, loyalty, giftCardTiers, siteContent,
+    introEmailTemplate, setIntroEmailTemplate, resetIntroEmailTemplate,
   } = useData();
 
   const owner = useMemo(() => {
@@ -58,21 +63,62 @@ export function IntroEmailModal({ activity, onClose }) {
   // The activity's OWN contactEmail / contactName win when the operator
   // captured them on the touch — that's literally the person they just spoke
   // to, more accurate than the account's generic primary contact.
+  // Resolved variable bag for placeholder substitution + signing off. Kept
+  // in a memo so save/send/reset can re-use the same values.
+  const vars = useMemo(() => {
+    const fallback = resolveContact(activity, agreements, agencies);
+    const name = (activity?.contactName || "").trim() || fallback.name;
+    const greetingName = resolveGreetingName(name) || "Sir/Madam";
+    return {
+      name: greetingName,
+      account: activity?.accountName || "",
+      hotel: hotelInfo?.name || "The Lodge Suites",
+      opener: openerForKind(activity?.kind),
+      owner: owner?.name || activity?.ownerName || "",
+    };
+  }, [activity, agreements, agencies, hotelInfo, owner]);
+
   const initial = useMemo(() => {
     const fallback = resolveContact(activity, agreements, agencies);
     const name = (activity?.contactName || "").trim() || fallback.name;
     const email = (activity?.contactEmail || "").trim() || fallback.email;
-    const act = { ...activity, contactName: name };
-    const built = buildIntroEmail({ activity: act, hotel: hotelInfo, owner });
+
+    // If the operator has saved a custom template, render IT (with
+    // placeholders substituted from the current activity). Otherwise rebuild
+    // from the brand-aligned built-in template, which already inlines values.
+    const saved = introEmailTemplate && (introEmailTemplate.bodyText || introEmailTemplate.subject)
+      ? introEmailTemplate : null;
+
+    let subject, text, html;
+    if (saved && saved.bodyText) {
+      subject = substituteTemplateVars(
+        saved.subject || `Introduction & partnership offer · ${vars.hotel}${vars.account ? " · " + vars.account : ""}`,
+        vars,
+      );
+      text = substituteTemplateVars(saved.bodyText, vars);
+      // Saved templates don't carry the gold-callout HTML structure; fall
+      // back to a clean <p>-per-paragraph wrap (still brand-styled colour /
+      // font), so the recipient sees a tidy email either way.
+      html = plainTextToHtml(text);
+    } else {
+      const built = buildIntroEmail({
+        activity: { ...activity, contactName: name },
+        hotel: hotelInfo,
+        owner,
+      });
+      subject = built.subject;
+      text = built.bodyText;
+      html = built.bodyHtml;
+    }
     return {
       to: email || "",
       cc: "",
       bcc: hotelInfo?.emailSales || "",
-      subject: built.subject,
-      text: built.bodyText,
-      html: built.bodyHtml,
+      subject,
+      text,
+      html,
     };
-  }, [activity, agreements, agencies, hotelInfo, owner]);
+  }, [activity, agreements, agencies, hotelInfo, owner, introEmailTemplate, vars]);
 
   const [draft, setDraft] = useState(initial);
   const [sending, setSending] = useState(false);
@@ -118,18 +164,43 @@ export function IntroEmailModal({ activity, onClose }) {
   // Send and silently sending without the Fact Sheet.
   const canSend = valid && !sending && !factSheetBuilding;
 
+  // Save / reset the operator-edited template so future intro sends start
+  // from this version. Reverse-substitute resolved values back to
+  // placeholders so the saved template stays usable for the next account.
+  const saveTemplate = () => {
+    const payload = {
+      subject: templatizeFromValues(draft.subject.trim(), vars),
+      bodyText: templatizeFromValues(draft.text, vars),
+      savedAt: new Date().toISOString(),
+      savedBy: staffSession?.name || staffSession?.id || null,
+    };
+    setIntroEmailTemplate(payload);
+    pushToast({ message: "Saved as your default intro-email template." });
+  };
+  const resetTemplate = () => {
+    if (!window.confirm("Reset the intro-email template back to the built-in version? Your custom edits will be discarded.")) return;
+    resetIntroEmailTemplate();
+    pushToast({ message: "Template reset to the built-in version. Reopen the modal to see it." });
+  };
+
   const send = async () => {
     if (!canSend) return;
     setSending(true);
+    // Re-run placeholder substitution at send time in case the operator left
+    // {{name}} / {{account}} / etc. in the body — the recipient should never
+    // see raw markers.
+    const finalSubject = substituteTemplateVars(draft.subject.trim(), vars);
+    const finalText    = substituteTemplateVars(draft.text, vars);
+    const finalHtml    = substituteTemplateVars(draft.html, vars);
     const attachments = factSheet ? [{ filename: factSheet.filename, contentBase64: factSheet.base64, contentType: "application/pdf" }] : [];
     const result = await sendTransactionalEmail({
       kind: "intro",
       to: draft.to.trim(),
       cc: draft.cc.trim() || undefined,
       bcc: draft.bcc.trim() || undefined,
-      subject: draft.subject.trim(),
-      text: draft.text,
-      html: draft.html,
+      subject: finalSubject,
+      text: finalText,
+      html: finalHtml,
       attachments,
     });
     setSending(false);
@@ -200,6 +271,10 @@ export function IntroEmailModal({ activity, onClose }) {
       footer={
         <>
           <GhostBtn onClick={onClose} small>Cancel</GhostBtn>
+          <GhostBtn onClick={saveTemplate} small>💾 Save as template</GhostBtn>
+          {introEmailTemplate && (introEmailTemplate.subject || introEmailTemplate.bodyText) && (
+            <GhostBtn onClick={resetTemplate} small>Reset to built-in</GhostBtn>
+          )}
           <div className="flex-1" />
           <PrimaryBtn onClick={send} small disabled={!canSend}>
             <Send size={11} /> {sending ? "Sending…" : factSheetBuilding ? "Preparing Fact Sheet…" : "Send email"}
@@ -273,6 +348,14 @@ export function IntroEmailModal({ activity, onClose }) {
         />
         <div style={{ fontSize: "0.72rem", color: p.textMuted, marginTop: 6 }}>
           Plain-text body — the email also carries a brand-styled HTML version generated from your edits' opener.
+          <br />
+          <strong>Tip:</strong> Use placeholders <code>{`{{name}}`}</code> · <code>{`{{account}}`}</code> · <code>{`{{hotel}}`}</code> · <code>{`{{opener}}`}</code> · <code>{`{{owner}}`}</code> to keep the template reusable.
+          They're filled in automatically when sending.
+          {introEmailTemplate && (introEmailTemplate.subject || introEmailTemplate.bodyText) && (
+            <span style={{ color: p.accent, marginInlineStart: 6 }}>
+              · Using your saved template{introEmailTemplate.savedBy ? ` by ${introEmailTemplate.savedBy}` : ""}.
+            </span>
+          )}
           For richer per-account customisation, edit this text and the HTML version will use the same opener.
         </div>
       </FormGroup>

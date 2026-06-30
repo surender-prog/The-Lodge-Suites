@@ -5,6 +5,52 @@
 // feels native to whatever just happened (a call vs a visit vs an email
 // exchange). Recipient resolution lives in the modal/store, not here.
 
+// Placeholder substitution for SAVED templates. Operators who customise the
+// body and hit "Save as default" should keep {{name}}, {{account}}, {{hotel}},
+// {{opener}}, {{owner}} as markers — those get filled in fresh on each send,
+// so the saved template stays reusable across different recipients.
+export function substituteTemplateVars(text, vars = {}) {
+  let out = String(text || "");
+  for (const [k, v] of Object.entries(vars)) {
+    out = out.replace(new RegExp(`\\{\\{\\s*${k}\\s*\\}\\}`, "g"), v == null ? "" : String(v));
+  }
+  return out;
+}
+
+// Auto-replace resolved values BACK with their placeholders so an operator
+// can hit "Save as default" without manually inserting markers. Sorted by
+// value-length DESC so longer values (e.g. full account name) substitute
+// before shorter overlapping ones (e.g. the city in the address). Empty
+// values are skipped — they'd no-op the entire body.
+export function templatizeFromValues(text, vars = {}) {
+  let out = String(text || "");
+  const entries = Object.entries(vars)
+    .filter(([_k, v]) => v && String(v).trim())
+    .sort((a, b) => String(b[1]).length - String(a[1]).length);
+  for (const [k, v] of entries) {
+    out = out.split(String(v)).join(`{{${k}}}`);
+  }
+  return out;
+}
+
+// Wrap plain text in minimal brand-aligned HTML — used when a SAVED template
+// is loaded (we don't have the original section structure to re-render the
+// gold-callout box, so we fall back to a clean <p>-per-paragraph layout).
+export function plainTextToHtml(text) {
+  const esc = (s) => String(s || "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const paragraphs = String(text || "").split(/\n{2,}/);
+  return `<div style="font-family:'Helvetica Neue',Arial,sans-serif;color:#15161A;max-width:640px;font-size:14px;line-height:1.55;">${
+    paragraphs.map((p) => `<p style="margin:0 0 12px;white-space:pre-line;">${esc(p)}</p>`).join("")
+  }</div>`;
+}
+
+// Pulled out so the modal can resolve the kind-specific opener without
+// rebuilding the entire email (used when applying a saved template).
+export function openerForKind(kind) {
+  return OPENER_BY_KIND[String(kind || "").toLowerCase()] || FALLBACK_OPENER;
+}
+
 const OPENER_BY_KIND = {
   call:    "Thank you for taking my call earlier today. As discussed, I'd like to formally introduce The Lodge Suites and share an exclusive partnership offer for your organisation.",
   email:   "Further to our recent email exchange, I'd like to formally introduce The Lodge Suites and share an exclusive partnership offer for your organisation.",
@@ -16,13 +62,33 @@ const OPENER_BY_KIND = {
 
 const FALLBACK_OPENER = OPENER_BY_KIND.meeting;
 
-const greetingFor = (name) => {
+// Honorifics / titles the operator might enter in the Contact field instead
+// of a real name ("Mr.", "Mrs", "Dr"). Treated as if no name were provided so
+// we don't render greetings like "Dear Mr.,".
+const TITLE_ONLY = /^(mr|mrs|ms|miss|mister|dr|sir|madam|prof|engr|eng)\.?$/i;
+
+// Pull the most natural first name out of a contact-name string. Returns ""
+// when only a title or nothing usable was provided.
+function firstNameFrom(name) {
   const n = String(name || "").trim();
-  if (!n) return "Dear Sir/Madam";
-  // Use first name only — "Dear Yusuf" reads warmer than "Dear Yusuf Al-Mannai".
-  const first = n.split(/\s+/)[0];
-  return `Dear ${first}`;
+  if (!n) return "";
+  if (TITLE_ONLY.test(n)) return "";
+  const tokens = n.split(/\s+/);
+  // "Mr Yusuf" -> "Yusuf"; "Dr Sarah Holloway" -> "Sarah"; etc.
+  const first = tokens.find((t) => !TITLE_ONLY.test(t));
+  return first || "";
+}
+
+const greetingFor = (name) => {
+  const first = firstNameFrom(name);
+  return first ? `Dear ${first}` : "Dear Sir/Madam";
 };
+
+// Exported so the modal can use the SAME resolution for placeholder
+// substitution as the default body uses for its greeting.
+export function resolveGreetingName(name) {
+  return firstNameFrom(name);
+}
 
 const signOff = ({ ownerName, ownerTitle, hotelName, phone, email } = {}) => {
   const lines = [];
