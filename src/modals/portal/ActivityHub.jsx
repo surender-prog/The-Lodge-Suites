@@ -914,6 +914,48 @@ export function ActivityEditor({ activity, onClose, lockedAccount }) {
             <FormGroup label="Subject *" className="sm:col-span-2">
               <TextField value={draft.subject} onChange={(v) => set({ subject: v })} placeholder="e.g. Quarterly business review · BAPCO" />
             </FormGroup>
+            {/* Pick from the account's known users (so the operator can log a
+                call with a different colleague without retyping their email
+                and phone). Only shown when the linked account actually has
+                user records. Picking "+ Add a new contact" clears the four
+                contact fields so the operator can type a different person —
+                the save-as-new-contact checkbox below then offers to append
+                them to the account so they're available next time. The
+                picker is transient (resets to the placeholder after each
+                pick) — the SOURCE OF TRUTH for the activity remains the
+                four contact fields below. */}
+            {draftAccount && (draftAccount.users || []).length > 0 && (
+              <FormGroup label="Pick from existing contacts" className="sm:col-span-2">
+                <SelectField
+                  value=""
+                  onChange={(v) => {
+                    if (!v) return;
+                    if (v === "__new__") {
+                      set({ contactName: "", contactEmail: "", contactPhone: "", contactPosition: "" });
+                      return;
+                    }
+                    const u = (draftAccount.users || []).find((x) => x.id === v);
+                    if (u) {
+                      set({
+                        contactName:  u.name  || "",
+                        contactEmail: u.email || "",
+                        contactPhone: u.phone || "",
+                        // user records don't carry a job title; leave the
+                        // Position field as-is for the operator to fill in.
+                      });
+                    }
+                  }}
+                  options={[
+                    { value: "", label: "— Pick a contact on this account —" },
+                    ...(draftAccount.users || []).map((u) => ({
+                      value: u.id,
+                      label: `${u.name || u.id}${u.role ? ` · ${u.role}` : ""}${u.email ? ` · ${u.email}` : ""}`,
+                    })),
+                    { value: "__new__", label: "+ Add a new contact (different person / department)" },
+                  ]}
+                />
+              </FormGroup>
+            )}
             <FormGroup label="Contact (the person we met / called)">
               <TextField value={draft.contactName} onChange={(v) => set({ contactName: v })} placeholder="e.g. Yusuf Al-Khalifa" />
             </FormGroup>
