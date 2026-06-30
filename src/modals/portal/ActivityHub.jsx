@@ -710,6 +710,30 @@ export function ActivityEditor({ activity, onClose, lockedAccount }) {
                     const created = createAccount(name, prospectKind);
                     if (created?.id) set({ accountId: created.id, accountName: created.name });
                   }}
+                  // Inline rename — propagates to the linked agreement/agency
+                  // record (or prospect) so the new name shows everywhere this
+                  // account is referenced. We also patch draft.accountName so
+                  // the saved activity carries the corrected denormalised name.
+                  onRenameAccount={(newName) => {
+                    const nm = String(newName || "").trim();
+                    if (!nm || !draft.accountId) return;
+                    if (draft.accountKind === "corporate") {
+                      const a = agreements.find((x) => x.id === draft.accountId);
+                      if (a) upsertAgreement({ ...a, account: nm });
+                    } else if (draft.accountKind === "agent") {
+                      const a = agencies.find((x) => x.id === draft.accountId);
+                      if (a) upsertAgency({ ...a, name: nm });
+                    } else if (draft.accountKind === "prospect") {
+                      const pr = prospects.find((x) => x.id === draft.accountId);
+                      if (pr && typeof addProspect === "function") {
+                        // No dedicated upsert for prospects in scope — re-add
+                        // the same id to overwrite the existing entry.
+                        addProspect({ ...pr, name: nm });
+                      }
+                    }
+                    set({ accountName: nm });
+                    pushToast({ message: `Renamed to "${nm}"` });
+                  }}
                 />
               </FormGroup>
             </>
@@ -940,7 +964,7 @@ export function ActivityEditor({ activity, onClose, lockedAccount }) {
 // when the typed name doesn't match an existing account, so a sales
 // rep can capture a brand-new lead without leaving the activity flow.
 // ---------------------------------------------------------------------------
-function SearchableAccountPicker({ p, accounts, value, accountKind, onSelect, onCreate }) {
+function SearchableAccountPicker({ p, accounts, value, accountKind, onSelect, onCreate, onRenameAccount }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [prospectKind, setProspectKind] = useState("agent");
@@ -948,11 +972,19 @@ function SearchableAccountPicker({ p, accounts, value, accountKind, onSelect, on
   // even before the operator types a non-matching name into the search.
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
+  // Inline rename — when the operator typed the wrong company name on
+  // quick-create ("Explore Middel East" instead of "Explore Middle East"),
+  // they can fix it in place here without leaving the activity editor. The
+  // commit propagates to the linked agreement/agency record via onRenameAccount.
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
   const wrapRef = useRef(null);
 
   useEffect(() => {
     if (!open) { setCreating(false); setNewName(""); }
   }, [open]);
+  // Reset rename when the selection changes or the picker is reopened.
+  useEffect(() => { setRenaming(false); setRenameValue(""); }, [value, open]);
 
   const selected = accounts.find((a) => a.id === value) || null;
   const ql = query.trim().toLowerCase();
@@ -1051,31 +1083,107 @@ function SearchableAccountPicker({ p, accounts, value, accountKind, onSelect, on
         >
           <Users size={13} style={{ color: p.accent }} />
           <div className="flex-1 min-w-0">
-            <div style={{ color: p.textPrimary, fontSize: "0.86rem", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {selected.name}
-            </div>
+            {renaming ? (
+              // Inline rename input — Enter commits, Escape cancels.
+              <input
+                type="text"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    const nm = renameValue.trim();
+                    if (nm && nm !== selected.name) onRenameAccount?.(nm);
+                    setRenaming(false);
+                  }
+                  if (e.key === "Escape") { e.preventDefault(); setRenaming(false); }
+                }}
+                autoFocus
+                className="w-full outline-none"
+                style={{
+                  backgroundColor: p.inputBg, color: p.textPrimary,
+                  border: `1px solid ${p.accent}`, padding: "0.35rem 0.55rem",
+                  fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem", fontWeight: 600,
+                }}
+              />
+            ) : (
+              <div style={{ color: p.textPrimary, fontSize: "0.86rem", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {selected.name}
+              </div>
+            )}
             {selected.id && (
               <div style={{ color: p.textMuted, fontSize: "0.7rem" }}>{selected.id}</div>
             )}
           </div>
-          <button
-            type="button"
-            onClick={() => onSelect({ id: "", name: "" })}
-            title="Clear selection"
-            style={{ color: p.textMuted, padding: 4, background: "transparent", border: "none", cursor: "pointer" }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = p.danger)}
-            onMouseLeave={(e) => (e.currentTarget.style.color = p.textMuted)}
-          ><X size={13} /></button>
-          <button
-            type="button"
-            onClick={() => { setOpen(true); }}
-            style={{
-              color: p.accent, fontFamily: "'Manrope', sans-serif",
-              fontSize: "0.6rem", letterSpacing: "0.18em", textTransform: "uppercase",
-              fontWeight: 700, background: "transparent", border: `1px solid ${p.accent}`,
-              padding: "0.3rem 0.55rem", cursor: "pointer", marginInlineStart: 4,
-            }}
-          >Change</button>
+          {renaming ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  const nm = renameValue.trim();
+                  if (nm && nm !== selected.name) onRenameAccount?.(nm);
+                  setRenaming(false);
+                }}
+                title="Save the new company name"
+                style={{
+                  color: "#FFFFFF", backgroundColor: p.success,
+                  fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem",
+                  letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                  border: `1px solid ${p.success}`, padding: "0.3rem 0.55rem", cursor: "pointer",
+                }}
+              >Save</button>
+              <button
+                type="button"
+                onClick={() => setRenaming(false)}
+                title="Cancel rename"
+                style={{
+                  color: p.textMuted, background: "transparent", border: `1px solid ${p.border}`,
+                  fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem",
+                  letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                  padding: "0.3rem 0.55rem", cursor: "pointer",
+                }}
+              >Cancel</button>
+            </>
+          ) : (
+            <>
+              {/* Rename — only when the parent wired a handler (we know how to
+                  update the underlying agreement/agency record). Fixes typos
+                  like "Explore Middel East" without leaving the activity editor. */}
+              {onRenameAccount && (
+                <button
+                  type="button"
+                  onClick={() => { setRenameValue(selected.name || ""); setRenaming(true); }}
+                  title="Rename company"
+                  style={{
+                    color: p.accent, fontFamily: "'Manrope', sans-serif",
+                    fontSize: "0.6rem", letterSpacing: "0.18em", textTransform: "uppercase",
+                    fontWeight: 700, background: "transparent", border: `1px solid ${p.accent}`,
+                    padding: "0.3rem 0.55rem", cursor: "pointer",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = p.bgHover; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+                >Rename</button>
+              )}
+              <button
+                type="button"
+                onClick={() => onSelect({ id: "", name: "" })}
+                title="Clear selection"
+                style={{ color: p.textMuted, padding: 4, background: "transparent", border: "none", cursor: "pointer" }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = p.danger)}
+                onMouseLeave={(e) => (e.currentTarget.style.color = p.textMuted)}
+              ><X size={13} /></button>
+              <button
+                type="button"
+                onClick={() => { setOpen(true); }}
+                style={{
+                  color: p.accent, fontFamily: "'Manrope', sans-serif",
+                  fontSize: "0.6rem", letterSpacing: "0.18em", textTransform: "uppercase",
+                  fontWeight: 700, background: "transparent", border: `1px solid ${p.accent}`,
+                  padding: "0.3rem 0.55rem", cursor: "pointer", marginInlineStart: 4,
+                }}
+              >Change</button>
+            </>
+          )}
         </div>
       ) : (
         <div className="flex items-center"
