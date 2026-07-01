@@ -7,7 +7,7 @@ import { CheckSquare, Square } from "lucide-react";
 import { DEFAULT_GALLERY_ITEMS } from "../../data/gallery.js";
 import {
   buildIntroEmail,
-  substituteTemplateVars, templatizeFromValues, plainTextToHtml,
+  substituteTemplateVars, templatizeFromValues,
   openerForKind, resolveGreetingName,
 } from "../../lib/introEmailTemplate.js";
 import { buildFactSheetPdf } from "../../lib/factSheetPdf.js";
@@ -83,32 +83,25 @@ export function IntroEmailModal({ activity, onClose }) {
     const name = (activity?.contactName || "").trim() || fallback.name;
     const email = (activity?.contactEmail || "").trim() || fallback.email;
 
-    // If the operator has saved a custom template, render IT (with
-    // placeholders substituted from the current activity). Otherwise rebuild
-    // from the brand-aligned built-in template, which already inlines values.
+    // Always build the brand HTML from buildIntroEmail() so the gold
+    // callout box, bullet list, and formatted signature block are present
+    // in every send — even when a saved template customises the text body.
+    const built = buildIntroEmail({
+      activity: { ...activity, contactName: name },
+      hotel: hotelInfo,
+      owner,
+    });
+
     const saved = introEmailTemplate && (introEmailTemplate.bodyText || introEmailTemplate.subject)
       ? introEmailTemplate : null;
 
-    let subject, text, html;
+    let subject, text;
     if (saved && saved.bodyText) {
-      subject = substituteTemplateVars(
-        saved.subject || `Introduction & partnership offer · ${vars.hotel}${vars.account ? " · " + vars.account : ""}`,
-        vars,
-      );
+      subject = substituteTemplateVars(saved.subject || built.subject, vars);
       text = substituteTemplateVars(saved.bodyText, vars);
-      // Saved templates don't carry the gold-callout HTML structure; fall
-      // back to a clean <p>-per-paragraph wrap (still brand-styled colour /
-      // font), so the recipient sees a tidy email either way.
-      html = plainTextToHtml(text);
     } else {
-      const built = buildIntroEmail({
-        activity: { ...activity, contactName: name },
-        hotel: hotelInfo,
-        owner,
-      });
       subject = built.subject;
       text = built.bodyText;
-      html = built.bodyHtml;
     }
     return {
       to: email || "",
@@ -116,7 +109,7 @@ export function IntroEmailModal({ activity, onClose }) {
       bcc: hotelInfo?.emailSales || "",
       subject,
       text,
-      html,
+      html: built.bodyHtml,
     };
   }, [activity, agreements, agencies, hotelInfo, owner, introEmailTemplate, vars]);
 
@@ -186,12 +179,18 @@ export function IntroEmailModal({ activity, onClose }) {
   const send = async () => {
     if (!canSend) return;
     setSending(true);
-    // Re-run placeholder substitution at send time in case the operator left
-    // {{name}} / {{account}} / etc. in the body — the recipient should never
-    // see raw markers.
     const finalSubject = substituteTemplateVars(draft.subject.trim(), vars);
     const finalText    = substituteTemplateVars(draft.text, vars);
-    const finalHtml    = substituteTemplateVars(draft.html, vars);
+    // Rebuild brand HTML fresh so the email always carries the gold callout,
+    // bullet list, and properly formatted sender signature — regardless of
+    // saved-template customisations (which affect the plain-text fallback).
+    const _fb = resolveContact(activity, agreements, agencies);
+    const _cn = (activity?.contactName || "").trim() || _fb.name;
+    const { bodyHtml: finalHtml } = buildIntroEmail({
+      activity: { ...activity, contactName: _cn },
+      hotel: hotelInfo,
+      owner,
+    });
     const attachments = factSheet ? [{ filename: factSheet.filename, contentBase64: factSheet.base64, contentType: "application/pdf" }] : [];
     const result = await sendTransactionalEmail({
       kind: "intro",
@@ -347,7 +346,7 @@ export function IntroEmailModal({ activity, onClose }) {
           }}
         />
         <div style={{ fontSize: "0.72rem", color: p.textMuted, marginTop: 6 }}>
-          Plain-text body — the email also carries a brand-styled HTML version generated from your edits' opener.
+          Plain-text fallback — the email is always sent with a <strong>brand-styled HTML version</strong> (gold callout, formatted signature with your name, title &amp; contact) auto-generated from the activity data.
           <br />
           <strong>Tip:</strong> Use placeholders <code>{`{{name}}`}</code> · <code>{`{{account}}`}</code> · <code>{`{{hotel}}`}</code> · <code>{`{{opener}}`}</code> · <code>{`{{owner}}`}</code> to keep the template reusable.
           They're filled in automatically when sending.
@@ -356,7 +355,6 @@ export function IntroEmailModal({ activity, onClose }) {
               · Using your saved template{introEmailTemplate.savedBy ? ` by ${introEmailTemplate.savedBy}` : ""}.
             </span>
           )}
-          For richer per-account customisation, edit this text and the HTML version will use the same opener.
         </div>
       </FormGroup>
 
