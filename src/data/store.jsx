@@ -1082,6 +1082,7 @@ Kind regards,
       <li style="margin:0 0 6px;line-height:1.5;">Limited to a maximum of two (2) consecutive nights.</li>
       <li style="margin:0 0 6px;line-height:1.5;">Exclusively for corporate / travel-agent partners; cannot be exchanged for cash or transferred.</li>
     </ul>
+    <div style="margin-top:8px;font-size:12px;color:#7A7464;">Offer valid until 31 July 2026.</div>
   </div>
   <p style="margin:0 0 12px;line-height:1.55;">Additionally, we would be delighted to extend complimentary use of our meeting / conference room for your guests staying with us, subject to prior booking and availability.</p>
   <p style="margin:0 0 12px;line-height:1.55;">Please find our hotel Fact Sheet attached for your kind consideration. Should you wish to arrange a property visit, please do not hesitate to contact me at your convenience.</p>

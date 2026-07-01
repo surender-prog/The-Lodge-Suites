@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
 import { useData, INTRO_TEMPLATE_ID, INTRO_TEMPLATE_SEED } from "../../../../data/store.jsx";
+import { htmlToText } from "../../../../lib/introEmailTemplate.js";
 import {
   Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast,
   SelectField, Stat, TableShell, Td, Th, TextField,
@@ -598,7 +599,16 @@ function TemplateEditor({ draft: initial, onClose, onSave, onRemove }) {
     }
   };
 
-  const valid = !!draft.name?.trim() && !!draft.subject?.trim() && !!draft.body?.trim();
+  const valid = !!draft.name?.trim() && !!draft.subject?.trim() && (supportsHtml ? !!htmlValue.trim() : !!draft.body?.trim());
+
+  // For HTML-source templates the plain-text body is AUTO-DERIVED from the HTML
+  // (single source of truth → no Body/HTML gap). Persist both together so the
+  // stored fallback always matches what recipients see.
+  const buildSavePayload = () => {
+    if (!supportsHtml) return draft;
+    const html = draft.html ?? htmlValue;
+    return { ...draft, html, body: htmlToText(html) };
+  };
 
   const usedPlaceholders = useMemo(() => discoverPlaceholders(draft), [draft.subject, draft.body]);
 
@@ -631,9 +641,9 @@ function TemplateEditor({ draft: initial, onClose, onSave, onRemove }) {
               <div className="flex-1" />
             </>
           )}
-          <GhostBtn onClick={() => sendTestEmail(draft)} small><MailOpen size={11} /> Test send</GhostBtn>
+          <GhostBtn onClick={() => sendTestEmail(buildSavePayload())} small><MailOpen size={11} /> Test send</GhostBtn>
           <GhostBtn onClick={onClose} small>Cancel</GhostBtn>
-          <PrimaryBtn onClick={() => valid && onSave(draft)} small><Save size={12} /> {draft._new ? "Create template" : "Save changes"}</PrimaryBtn>
+          <PrimaryBtn onClick={() => valid && onSave(buildSavePayload())} small><Save size={12} /> {draft._new ? "Create template" : "Save changes"}</PrimaryBtn>
         </>
       }
     >
@@ -749,16 +759,24 @@ function TemplateEditor({ draft: initial, onClose, onSave, onRemove }) {
             </p>
           </Card>
 
-          <Card title="Body">
+          <Card title={supportsHtml ? "Plain-text fallback · auto-generated from the HTML" : "Body"}>
+            {supportsHtml && (
+              <p className="mb-2" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.55 }}>
+                Read-only — this is generated from the <strong style={{ color: p.accent }}>Rich HTML</strong> below and only shown to email clients that can't render HTML, so the two never drift apart. To change the wording, the offer line, or the footer, edit the <strong style={{ color: p.accent }}>HTML card</strong>.
+              </p>
+            )}
             <textarea
               ref={bodyRef}
-              value={draft.body ?? ""}
-              onFocus={() => setActiveField("body")}
-              onChange={(e) => set({ body: e.target.value })}
-              rows={18}
+              value={supportsHtml ? htmlToText(htmlValue) : (draft.body ?? "")}
+              readOnly={supportsHtml}
+              onFocus={() => { if (!supportsHtml) setActiveField("body"); }}
+              onChange={(e) => { if (!supportsHtml) set({ body: e.target.value }); }}
+              rows={supportsHtml ? 12 : 18}
               className="w-full outline-none"
               style={{
-                backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`,
+                backgroundColor: supportsHtml ? p.bgPanelAlt : p.inputBg,
+                color: supportsHtml ? p.textSecondary : p.textPrimary,
+                border: `1px solid ${p.border}`,
                 padding: "0.85rem 0.95rem",
                 fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace", fontSize: "0.85rem",
                 lineHeight: 1.65, resize: "vertical",
@@ -780,16 +798,18 @@ function TemplateEditor({ draft: initial, onClose, onSave, onRemove }) {
                     fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
                     letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
                   }}>Subject</button>
-                <button
-                  onClick={() => { setActiveField("body"); bodyRef.current?.focus(); }}
-                  style={{
-                    padding: "0.3rem 0.7rem",
-                    backgroundColor: activeField === "body" ? `${p.accent}1F` : "transparent",
-                    border: `1px solid ${activeField === "body" ? p.accent : p.border}`,
-                    color: activeField === "body" ? p.accent : p.textSecondary,
-                    fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
-                    letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
-                  }}>Body</button>
+                {!supportsHtml && (
+                  <button
+                    onClick={() => { setActiveField("body"); bodyRef.current?.focus(); }}
+                    style={{
+                      padding: "0.3rem 0.7rem",
+                      backgroundColor: activeField === "body" ? `${p.accent}1F` : "transparent",
+                      border: `1px solid ${activeField === "body" ? p.accent : p.border}`,
+                      color: activeField === "body" ? p.accent : p.textSecondary,
+                      fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+                      letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                    }}>Body</button>
+                )}
                 {supportsHtml && (
                   <button
                     onClick={() => { setActiveField("html"); htmlRef.current?.focus(); }}
@@ -804,7 +824,7 @@ function TemplateEditor({ draft: initial, onClose, onSave, onRemove }) {
                 )}
               </div>
             </div>
-            {usedPlaceholders.length > 0 && (
+            {!supportsHtml && usedPlaceholders.length > 0 && (
               <div className="mt-3 flex items-baseline gap-2 flex-wrap" style={{ paddingTop: 12, borderTop: `1px solid ${p.border}` }}>
                 <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>Placeholders used</span>
                 {usedPlaceholders.map((k) => (

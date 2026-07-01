@@ -8,7 +8,7 @@ import { DEFAULT_GALLERY_ITEMS } from "../../data/gallery.js";
 import {
   buildIntroEmail,
   substituteTemplateVars, templatizeFromValues,
-  openerForKind, resolveGreetingName,
+  openerForKind, resolveGreetingName, htmlToText,
 } from "../../lib/introEmailTemplate.js";
 import { buildFactSheetPdf } from "../../lib/factSheetPdf.js";
 import { sendTransactionalEmail } from "../../utils/email.js";
@@ -139,12 +139,13 @@ export function IntroEmailModal({ activity, onClose }) {
       logoUrl: LOGO_URL,
     });
 
-    // Subject / plain-text / RICH HTML all come from the "Partner introduction"
-    // email template so whatever the operator edits there — including the
-    // footer and sender-title line — flows straight through to the recipient.
+    // Subject + RICH HTML come from the "Partner introduction" email template
+    // so whatever the operator edits there — including the offer line, footer
+    // and sender-title — flows straight through to the recipient. The plain-
+    // text is DERIVED from that same HTML so the two can't drift apart.
     const subject = substituteTemplateVars(introTpl?.subject || built.subject, vars);
-    const text    = substituteTemplateVars(introTpl?.body    || built.bodyText, vars);
     const html    = substituteTemplateVars(introTpl?.html || INTRO_TEMPLATE_SEED.html, vars);
+    const text    = htmlToText(html);
     return {
       to: email || "",
       cc: "",
@@ -204,13 +205,15 @@ export function IntroEmailModal({ activity, onClose }) {
   // placeholders so the saved template stays reusable for the next account.
   const saveTemplate = () => {
     const base = introTpl || INTRO_TEMPLATE_SEED;
+    const html = base.html || INTRO_TEMPLATE_SEED.html;
     upsertEmailTemplate({
       ...base,
       // Preserve the rich HTML (edited in the Email Templates section); the
-      // composer only tweaks the subject + plain-text body.
-      html:    base.html || INTRO_TEMPLATE_SEED.html,
+      // composer only tweaks the subject. The plain-text body is derived from
+      // the HTML so the fallback always matches.
+      html,
       subject: templatizeFromValues(draft.subject.trim(), vars),
-      body:    templatizeFromValues(draft.text, vars),
+      body:    htmlToText(html),
     });
     pushToast({ message: "Saved to Settings → Email Templates · Partner introduction." });
   };
@@ -224,11 +227,12 @@ export function IntroEmailModal({ activity, onClose }) {
     if (!canSend) return;
     setSending(true);
     const finalSubject = substituteTemplateVars(draft.subject.trim(), vars);
-    const finalText    = substituteTemplateVars(draft.text, vars);
     // Rich HTML is the template's own `html` (edited in Settings → Email
     // Templates), with placeholders resolved fresh at send time so the
     // formatting, offer callout, footer and sender-title all render intact.
+    // The plain-text fallback is derived from that same HTML → always in sync.
     const finalHtml    = substituteTemplateVars(introTpl?.html || INTRO_TEMPLATE_SEED.html, vars);
+    const finalText    = htmlToText(finalHtml);
     const attachments = factSheet ? [{ filename: factSheet.filename, contentBase64: factSheet.base64, contentType: "application/pdf" }] : [];
     const result = await sendTransactionalEmail({
       kind: "intro",
@@ -368,26 +372,23 @@ export function IntroEmailModal({ activity, onClose }) {
         <TextField value={draft.subject} onChange={(v) => set({ subject: v })} />
       </FormGroup>
 
-      <FormGroup label="Message" className="mt-4">
+      <FormGroup label="Message preview (plain-text fallback)" className="mt-4">
         <textarea
           value={draft.text}
-          onChange={(e) => set({ text: e.target.value })}
-          rows={18}
+          readOnly
+          rows={16}
           className="w-full outline-none"
           style={{
-            backgroundColor: p.inputBg, color: p.textPrimary,
+            backgroundColor: p.bgPanel, color: p.textSecondary,
             border: `1px solid ${p.border}`, padding: "0.7rem 0.85rem",
             fontFamily: "'Manrope', sans-serif", fontSize: "0.86rem", lineHeight: 1.55,
-            resize: "vertical", minHeight: 280,
+            resize: "vertical", minHeight: 240,
           }}
         />
         <div style={{ fontSize: "0.72rem", color: p.textMuted, marginTop: 6 }}>
-          Plain-text fallback — recipients receive the <strong>formatted HTML version</strong> (gold offer callout, plus a footer with the property logo, your name &amp; title, and the hotel address).
-          <br />
-          <strong>Tip:</strong> Use placeholders <code>{`{{name}}`}</code> · <code>{`{{account}}`}</code> · <code>{`{{hotel}}`}</code> · <code>{`{{opener}}`}</code> · <code>{`{{owner}}`}</code> to keep the template reusable.
-          They're filled in automatically when sending.
+          Recipients receive the <strong>formatted HTML version</strong> (gold offer callout, plus a footer with the property logo, your name &amp; title, and the hotel address). This plain-text is the auto-generated fallback for email clients that can't show HTML — it always matches.
           <span style={{ color: p.accent, marginInlineStart: 6 }}>
-            · To change the <strong>formatting, footer or sender title</strong>, edit the rich HTML in Settings → Email Templates → <strong>Partner introduction</strong>.
+            · To change the <strong>wording, offer, formatting, footer or sender title</strong>, edit Settings → Email Templates → <strong>Partner introduction</strong>.
           </span>
         </div>
       </FormGroup>

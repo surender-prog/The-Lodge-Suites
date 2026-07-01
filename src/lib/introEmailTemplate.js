@@ -45,6 +45,33 @@ export function plainTextToHtml(text) {
   }</div>`;
 }
 
+// Derive a readable plain-text version from an HTML body. The intro template
+// keeps ONE editable source — the rich HTML — and this generates the plain-text
+// fallback from it so the two can never drift apart (the "gap"). Block tags
+// become line breaks, <li> become bullets, then tags are stripped and the
+// common entities decoded. Placeholders ({{…}}) pass through untouched.
+export function htmlToText(html) {
+  let s = String(html || "");
+  s = s.replace(/<!--[\s\S]*?-->/g, "");          // drop HTML comments
+  s = s.replace(/<\s*br\s*\/?>/gi, "\n");
+  s = s.replace(/<li[^>]*>/gi, "\n• ");
+  s = s.replace(/<\/(p|div|h[1-6]|li|ul|ol|tr)>/gi, "\n");
+  s = s.replace(/<[^>]+>/g, "");                    // strip remaining tags
+  s = s.replace(/&nbsp;/gi, " ")
+       .replace(/&middot;/gi, "·")
+       .replace(/&Prime;/gi, "″")
+       .replace(/&amp;/gi, "&")
+       .replace(/&lt;/gi, "<")
+       .replace(/&gt;/gi, ">")
+       .replace(/&quot;/gi, '"')
+       .replace(/&#39;|&apos;/gi, "'");
+  s = s.replace(/[ \t]+/g, " ")     // collapse runs of spaces/tabs
+       .replace(/ *\n */g, "\n")    // trim spaces hugging line breaks
+       .replace(/\n{3,}/g, "\n\n")  // at most one blank line between blocks
+       .trim();
+  return s;
+}
+
 // Pulled out so the modal can resolve the kind-specific opener without
 // rebuilding the entire email (used when applying a saved template).
 export function openerForKind(kind) {
