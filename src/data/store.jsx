@@ -1022,7 +1022,53 @@ function bookingCopyEmails(bk, { agencies = [], agreements = [], members = [] })
   return out;
 }
 
+// Partner introduction — the sales intro emailed to a new corporate / travel-
+// agent contact after an activity is logged (call / visit / meeting / email).
+// This is the EDITABLE SOURCE the Intro Email composer reads for its subject +
+// body; the branded HTML layout (gold offer callout + logo/address footer) is
+// applied automatically on send by buildIntroEmail(). Placeholders are the
+// intro-specific set — {{name}} greeting · {{account}} company · {{hotel}}
+// property · {{opener}} activity-aware opening line · {{owner}} sender name.
+// Exported so the composer can reference the id and restore this seed on
+// "Reset to built-in".
+export const INTRO_TEMPLATE_ID = "tpl-partner-intro";
+export const INTRO_TEMPLATE_SEED = {
+  id: INTRO_TEMPLATE_ID, name: "Partner introduction & Fact Sheet", category: "contracts",
+  description: "The sales introduction + partner offer emailed to a new corporate / travel-agent contact from a logged activity. The hotel Fact Sheet attaches automatically; the branded HTML layout is applied on send.",
+  trigger: { event: "partner.intro", auto: false, delayMinutes: 0 },
+  subject: "Introduction & partnership offer · {{hotel}} · {{account}}",
+  body:
+`Dear {{name}},
+
+Greetings from {{hotel}}.
+
+{{opener}}
+
+{{hotel}} is a premium all-suite property offering spacious accommodations and personalised hospitality tailored to both business and leisure travellers. Our suites feature furnished kitchenettes, 55" Smart TVs, soundproofed windows, complimentary high-speed Wi-Fi and dedicated guest services — ideal for corporate and extended-stay guests.
+
+As part of our commitment to establishing a successful partnership with {{account}}, we are pleased to introduce a limited-time corporate offer whereby your organisation may avail ONE COMPLIMENTARY STAY at our property.
+
+Terms & Conditions:
+  •  Subject to prior reservation and availability.
+  •  Not applicable on weekends and public holidays.
+  •  Limited to a maximum of two (2) consecutive nights.
+  •  Exclusively for corporate / travel-agent partners; cannot be exchanged for cash or transferred.
+
+Additionally, we would be delighted to extend complimentary use of our meeting / conference room facilities for your guests staying at the hotel, subject to prior booking and availability.
+
+Please find our hotel Fact Sheet attached for your kind consideration. Should you wish to arrange a property visit, please do not hesitate to contact me at your convenience.
+
+Thank you for your time and consideration. We look forward to building a long-lasting and mutually beneficial partnership.
+
+Kind regards,
+{{owner}}`,
+  fromName: FROM_NAME, fromEmail: "sales@exploremena.com", replyTo: "sales@exploremena.com", cc: "", bcc: "",
+  active: true, builtIn: true,
+};
+
 const SAMPLE_EMAIL_TEMPLATES = [
+  // Partner introduction — editable source for the Intro Email composer.
+  INTRO_TEMPLATE_SEED,
   // ---------- Booking ---------------------------------------------------------
   {
     id: "tpl-booking-confirm", name: "Booking confirmation", category: "booking",
@@ -4699,7 +4745,17 @@ export function DataProvider({ children }) {
       fetchAll("invoices")           .then(d => { if (!cancelled && d && d.length > 0) setInvoices(d); }),
       fetchAll("agreements")         .then(d => { if (!cancelled && d && d.length > 0) setAgreements(d); }),
       fetchAll("agencies")           .then(d => { if (!cancelled && d && d.length > 0) setAgencies(d); }),
-      fetchAll("email_templates")    .then(d => { if (!cancelled && d && d.length > 0) setEmailTemplates(d); }),
+      fetchAll("email_templates")    .then(d => {
+        if (cancelled || !d || d.length === 0) return;
+        // DB rows win (operator edits persist), but re-inject any built-in
+        // template absent from the DB so newly-shipped built-ins (e.g. the
+        // partner-intro template) appear WITHOUT a migration. Append-only —
+        // never overwrites a stored row, and runs during hydration so the
+        // slice-persistence baseline already includes it (no spurious write).
+        const haveIds = new Set(d.map((t) => t && t.id));
+        const missing = SAMPLE_EMAIL_TEMPLATES.filter((t) => t.builtIn && !haveIds.has(t.id));
+        setEmailTemplates(missing.length ? [...d, ...missing] : d);
+      }),
       fetchAll("rfps")               .then(d => { if (!cancelled && d && d.length > 0) setRfps(d); }),
       fetchAll("channels")           .then(d => { if (!cancelled && d && d.length > 0) setChannels(d); }),
       fetchAll("admin_users")        .then(d => {

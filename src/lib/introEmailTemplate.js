@@ -90,21 +90,27 @@ export function resolveGreetingName(name) {
   return firstNameFrom(name);
 }
 
-const signOff = ({ ownerName, ownerTitle, hotelName, phone, email } = {}) => {
+const signOff = ({ ownerName, ownerTitle, hotelName, phone, email, website, addressLines = [] } = {}) => {
   const lines = [];
   if (ownerName) lines.push(ownerName);
   if (ownerTitle) lines.push(ownerTitle);
   lines.push(hotelName || "The Lodge Suites");
+  addressLines.filter(Boolean).forEach((l) => lines.push(l));
   const contact = [phone, email].filter(Boolean).join("  ·  ");
   if (contact) lines.push(contact);
+  if (website) lines.push(website);
   return lines;
 };
 
 // buildIntroEmail — returns { subject, bodyText, bodyHtml }.
 //   activity: { kind, contactName, accountName, accountKind, ownerName }
-//   hotel:    { name, phone, email }
+//   hotel:    { name, phone, email, address, area, country, website }
 //   owner:    { name, title, email } — overrides activity.ownerName when set
-export function buildIntroEmail({ activity = {}, hotel = {}, owner = {} } = {}) {
+//   logoUrl:  absolute URL to the property logo (rendered in the HTML footer).
+//             Pass window.location.origin + "/images/logo.png" from the
+//             browser so the recipient loads it from the live deployment;
+//             falls back to a serif wordmark when absent.
+export function buildIntroEmail({ activity = {}, hotel = {}, owner = {}, logoUrl = "" } = {}) {
   const kind = String(activity.kind || "").toLowerCase();
   const opener = OPENER_BY_KIND[kind] || FALLBACK_OPENER;
   const greeting = greetingFor(activity.contactName);
@@ -118,7 +124,18 @@ export function buildIntroEmail({ activity = {}, hotel = {}, owner = {} } = {}) 
   const ownerEmail = owner.email || hotel.emailSales || hotel.email || "";
   const ownerPhone = hotel.phone || "";
 
-  const sig = signOff({ ownerName, ownerTitle, hotelName, phone: ownerPhone, email: ownerEmail });
+  // Address lines for the footer — line 1 building/road/block, line 2 the
+  // area + country joined so the signature reads as a proper postal block.
+  const addressLines = [
+    hotel.address,
+    [hotel.area, hotel.country].filter(Boolean).join(" · "),
+  ];
+
+  const sig = signOff({
+    ownerName, ownerTitle, hotelName,
+    phone: ownerPhone, email: ownerEmail,
+    website: hotel.website, addressLines,
+  });
 
   // Plain-text body (canonical) — uses the body of the introduction template
   // the operator provided, with the kind-aware opener stitched in.
@@ -158,9 +175,32 @@ export function buildIntroEmail({ activity = {}, hotel = {}, owner = {} } = {}) 
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const p = (s) => `<p style="margin:0 0 12px;line-height:1.55;">${esc(s)}</p>`;
   const li = (s) => `<li style="margin:0 0 6px;line-height:1.5;">${esc(s)}</li>`;
-  const sigHtml = sig.map((l, i) =>
-    `<div style="line-height:1.45;${i === 0 ? "font-weight:600;color:#15161A;" : "color:#7A7464;font-size:13px;"}">${esc(l)}</div>`
-  ).join("");
+
+  // Branded footer — logo (or serif wordmark fallback), sender name + title,
+  // hotel name, postal address, and contact row. Gold rule on the address
+  // block ties it to the brand. All inline-styled for email-client safety.
+  const titleLine = [ownerTitle, hotelName].filter(Boolean).join(" · ");
+  const addr1 = esc(hotel.address || "");
+  const addr2 = esc([hotel.area, hotel.country].filter(Boolean).join(" · "));
+  const logoBlock = logoUrl
+    ? `<img src="${esc(logoUrl)}" alt="${esc(hotelName)}" width="150" style="display:block;width:150px;max-width:150px;height:auto;margin-bottom:4px;">`
+    : `<div style="font-family:'Cormorant Garamond','Times New Roman',serif;font-size:22px;letter-spacing:0.12em;color:#15161A;text-transform:uppercase;margin-bottom:2px;">${esc(hotelName)}</div>`;
+  const contactRow = [
+    ownerPhone ? esc(ownerPhone) : "",
+    ownerEmail ? `<a href="mailto:${esc(ownerEmail)}" style="color:#C9A961;text-decoration:none;">${esc(ownerEmail)}</a>` : "",
+  ].filter(Boolean).join(" &middot; ");
+  const footerHtml =
+    `<div style="margin-top:20px;">Kind regards,</div>` +
+    `<div style="margin-top:14px;border-top:1px solid #E7E1D4;padding-top:16px;">` +
+      logoBlock +
+      (ownerName ? `<div style="font-weight:700;color:#15161A;font-size:14px;margin-top:8px;">${esc(ownerName)}</div>` : "") +
+      (titleLine ? `<div style="color:#7A7464;font-size:12px;margin-bottom:8px;">${esc(titleLine)}</div>` : "") +
+      ((addr1 || addr2)
+        ? `<div style="color:#3F3B33;font-size:12px;line-height:1.55;border-inline-start:2px solid #C9A961;padding-inline-start:10px;margin-bottom:6px;">${addr1}${addr1 && addr2 ? "<br>" : ""}${addr2}</div>`
+        : "") +
+      (contactRow ? `<div style="color:#3F3B33;font-size:12px;">${contactRow}</div>` : "") +
+      (hotel.website ? `<div style="margin-top:2px;"><a href="https://${esc(hotel.website)}" style="color:#C9A961;text-decoration:none;font-size:12px;">${esc(hotel.website)}</a></div>` : "") +
+    `</div>`;
 
   const html = [
     `<div style="font-family:'Helvetica Neue',Arial,sans-serif;color:#15161A;max-width:640px;font-size:14px;">`,
@@ -181,8 +221,7 @@ export function buildIntroEmail({ activity = {}, hotel = {}, owner = {} } = {}) 
       p(`As a gesture of appreciation, we are also pleased to extend complimentary use of our meeting / conference room for your guests staying with us, subject to prior booking and availability.`),
       p(`Please find our hotel Fact Sheet attached for your kind consideration. We'd welcome the opportunity to discuss your accommodation requirements in greater detail and tailor our offerings to best suit your organisation's needs. Should you wish to arrange a property visit, please do not hesitate to contact me at your convenience.`),
       p(`Thank you for your time and consideration. We look forward to building a long-lasting and mutually beneficial partnership.`),
-      `<div style="margin-top:18px;">Kind regards,</div>`,
-      `<div style="margin-top:6px;">${sigHtml}</div>`,
+      footerHtml,
     `</div>`,
   ].join("");
 

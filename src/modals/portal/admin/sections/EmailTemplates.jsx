@@ -61,6 +61,7 @@ const TRIGGER_EVENTS = [
   { value: "loyalty.statement",     label: "Member statement (monthly)", category: "loyalty" },
   { value: "loyalty.anniversary",   label: "Membership anniversary", category: "loyalty" },
   // Contracts
+  { value: "partner.intro",         label: "Partner introduction (from activity)", category: "contracts" },
   { value: "contract.issued.corporate", label: "Corporate contract dispatched", category: "contracts" },
   { value: "contract.issued.agent",     label: "Travel-agent contract dispatched", category: "contracts" },
   { value: "contract.renewal",      label: "Contract renewal (60d before)", category: "contracts" },
@@ -122,6 +123,12 @@ const SAMPLE_VARS = {
   accountName:      "BAPCO",
   pocName:          "Sara Al-Hammadi",
   contactName:      "Sara Al-Hammadi",
+  // Partner intro (activity → introduction email)
+  name:             "Yusuf",
+  account:          "BAPCO",
+  hotel:            "The Lodge Suites",
+  opener:           "It was a pleasure meeting with you recently. I'd like to take this opportunity to formally introduce The Lodge Suites and share an exclusive partnership offer for your organisation.",
+  owner:            "Aparajeet Mathad",
   // Loyalty
   memberName:       "Sarah Holloway",
   memberId:         "LS-P-D4E5F6",
@@ -198,6 +205,7 @@ const VARIABLE_GROUPS = [
   { label: "Invoice", keys: ["invoiceId", "issueDate", "dueDate", "paymentTerms", "accountName", "pocName"] },
   { label: "Loyalty", keys: ["memberName", "memberId", "tier", "points", "redeemableBhd", "earnRate", "pointsEarned", "redeemedPoints", "redeemedAmount", "lifetimeNights", "yearsAsMember", "tierBenefits", "statementMonth", "monthStays", "monthNights", "monthPointsEarned", "monthPointsRedeemed"] },
   { label: "Contract / Agent", keys: ["contractId", "accountName", "pocName", "validFrom", "validTo", "creditLimit", "commissionPct", "rateStudio", "rateOneBed", "rateTwoBed", "rateThreeBed", "allotmentStudio", "allotmentOneBed", "allotmentTwoBed", "allotmentThreeBed", "rfpId", "roomNights", "monthBookings", "monthStayValue", "monthCommission", "ytdCommission", "paymentStatus"] },
+  { label: "Partner intro", keys: ["name", "account", "hotel", "opener", "owner"] },
   { label: "OTA", keys: ["startDate", "endDate", "effectiveDate", "roomTypes", "reason"] },
   { label: "Marketing", keys: ["newsletterMonth", "newsItem1", "newsItem2", "newsItem3", "offerHeadline", "offerDetail", "offerCode", "offerValidFrom", "offerValidTo"] },
   { label: "Internal", keys: ["arrivals", "departures", "inHouse", "vipGuests", "longStayCount", "maintenanceFlags", "allergyFlags", "forecastOccupancy"] },
