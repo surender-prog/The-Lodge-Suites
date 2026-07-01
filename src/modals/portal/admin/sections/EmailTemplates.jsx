@@ -5,7 +5,7 @@ import {
   Power, Save, Search, Send, Settings, Sparkles, Tag, Trash2, X, Zap,
 } from "lucide-react";
 import { usePalette } from "../../theme.jsx";
-import { useData } from "../../../../data/store.jsx";
+import { useData, INTRO_TEMPLATE_ID, INTRO_TEMPLATE_SEED } from "../../../../data/store.jsx";
 import {
   Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast,
   SelectField, Stat, TableShell, Td, Th, TextField,
@@ -129,6 +129,14 @@ const SAMPLE_VARS = {
   hotel:            "The Lodge Suites",
   opener:           "It was a pleasure meeting with you recently. I'd like to take this opportunity to formally introduce The Lodge Suites and share an exclusive partnership offer for your organisation.",
   owner:            "Aparajeet Mathad",
+  // Partner intro — sender & footer (fill the rich-HTML signature block)
+  ownerTitle:       "Front Office Manager",
+  ownerEmail:       "sales@exploremena.com",
+  ownerPhone:       "+973 1616 8146",
+  logoUrl:          "/images/logo.png",
+  hotelArea:        "Shabab Avenue, Juffair, Manama",
+  hotelCountry:     "Kingdom of Bahrain",
+  hotelWebsite:     "www.thelodgesuites.com",
   // Loyalty
   memberName:       "Sarah Holloway",
   memberId:         "LS-P-D4E5F6",
@@ -206,6 +214,7 @@ const VARIABLE_GROUPS = [
   { label: "Loyalty", keys: ["memberName", "memberId", "tier", "points", "redeemableBhd", "earnRate", "pointsEarned", "redeemedPoints", "redeemedAmount", "lifetimeNights", "yearsAsMember", "tierBenefits", "statementMonth", "monthStays", "monthNights", "monthPointsEarned", "monthPointsRedeemed"] },
   { label: "Contract / Agent", keys: ["contractId", "accountName", "pocName", "validFrom", "validTo", "creditLimit", "commissionPct", "rateStudio", "rateOneBed", "rateTwoBed", "rateThreeBed", "allotmentStudio", "allotmentOneBed", "allotmentTwoBed", "allotmentThreeBed", "rfpId", "roomNights", "monthBookings", "monthStayValue", "monthCommission", "ytdCommission", "paymentStatus"] },
   { label: "Partner intro", keys: ["name", "account", "hotel", "opener", "owner"] },
+  { label: "Sender & footer", keys: ["owner", "ownerTitle", "ownerEmail", "ownerPhone", "logoUrl", "hotelAddress", "hotelArea", "hotelCountry", "hotelPhone", "hotelWebsite"] },
   { label: "OTA", keys: ["startDate", "endDate", "effectiveDate", "roomTypes", "reason"] },
   { label: "Marketing", keys: ["newsletterMonth", "newsItem1", "newsItem2", "newsItem3", "offerHeadline", "offerDetail", "offerCode", "offerValidFrom", "offerValidTo"] },
   { label: "Internal", keys: ["arrivals", "departures", "inHouse", "vipGuests", "longStayCount", "maintenanceFlags", "allergyFlags", "forecastOccupancy"] },
@@ -521,6 +530,12 @@ function formatDelay(mins) {
 async function sendTestEmail(tpl) {
   const subject = renderTemplate(tpl.subject);
   const body    = renderTemplate(tpl.body);
+  // Include the rendered HTML for templates that carry one, so the test lands
+  // fully formatted. Resolve {{logoUrl}} to an absolute URL (the deploy origin)
+  // so the logo loads in the recipient's mail client rather than a broken
+  // relative path.
+  const htmlVars = { ...SAMPLE_VARS, logoUrl: (typeof window !== "undefined" && window.location ? `${window.location.origin}/images/logo.png` : SAMPLE_VARS.logoUrl) };
+  const html = tpl.html ? renderTemplate(tpl.html, htmlVars) : undefined;
   const fallback = tpl.replyTo || tpl.fromEmail || "";
   const to = window.prompt("Send a test of this template to which email address?", fallback);
   if (to == null) return; // cancelled
@@ -530,7 +545,7 @@ async function sendTestEmail(tpl) {
     return;
   }
   pushToast({ message: `Sending test to ${addr}…` });
-  const res = await sendTransactionalEmail({ kind: "custom", to: addr, subject: `[TEST] ${subject}`, text: body, cc: tpl.cc || undefined, bcc: tpl.bcc || undefined });
+  const res = await sendTransactionalEmail({ kind: "custom", to: addr, subject: `[TEST] ${subject}`, text: body, html, cc: tpl.cc || undefined, bcc: tpl.bcc || undefined });
   if (res?.ok) {
     pushToast({ message: `Test email sent to ${addr}` });
   } else if (res?.skipped) {
@@ -551,13 +566,19 @@ function TemplateEditor({ draft: initial, onClose, onSave, onRemove }) {
 
   const subjectRef = useRef(null);
   const bodyRef    = useRef(null);
+  const htmlRef    = useRef(null);
   const [activeField, setActiveField] = useState("body");
+
+  // The partner-intro template carries a rich HTML body that recipients see;
+  // expose the HTML editor for it (and for any template that already has html).
+  const supportsHtml = draft.id === INTRO_TEMPLATE_ID || draft.html != null;
+  const htmlValue = draft.html ?? (draft.id === INTRO_TEMPLATE_ID ? INTRO_TEMPLATE_SEED.html : "");
 
   const insertVariable = (key) => {
     const placeholder = `{{${key}}}`;
-    const fld = activeField === "subject" ? "subject" : "body";
-    const ref = activeField === "subject" ? subjectRef : bodyRef;
-    const current = draft[fld] || "";
+    const fld = activeField === "subject" ? "subject" : activeField === "html" ? "html" : "body";
+    const ref = fld === "subject" ? subjectRef : fld === "html" ? htmlRef : bodyRef;
+    const current = fld === "html" ? htmlValue : (draft[fld] || "");
     const el = ref.current;
     if (el && typeof el.selectionStart === "number") {
       const start = el.selectionStart;
@@ -769,6 +790,18 @@ function TemplateEditor({ draft: initial, onClose, onSave, onRemove }) {
                     fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
                     letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
                   }}>Body</button>
+                {supportsHtml && (
+                  <button
+                    onClick={() => { setActiveField("html"); htmlRef.current?.focus(); }}
+                    style={{
+                      padding: "0.3rem 0.7rem",
+                      backgroundColor: activeField === "html" ? `${p.accent}1F` : "transparent",
+                      border: `1px solid ${activeField === "html" ? p.accent : p.border}`,
+                      color: activeField === "html" ? p.accent : p.textSecondary,
+                      fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+                      letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                    }}>HTML</button>
+                )}
               </div>
             </div>
             {usedPlaceholders.length > 0 && (
@@ -787,6 +820,46 @@ function TemplateEditor({ draft: initial, onClose, onSave, onRemove }) {
               </div>
             )}
           </Card>
+
+          {supportsHtml && (
+            <Card title="Rich HTML version — what recipients see">
+              <p className="mb-3" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.76rem", lineHeight: 1.6 }}>
+                This is the <strong style={{ color: p.textPrimary }}>formatted email</strong> the recipient receives — the plain-text body above is only the fallback. Edit the layout, the offer box, or the <strong style={{ color: p.accent }}>footer &amp; sender-title line</strong> here; placeholders like <code style={{ color: p.accent, fontFamily: "ui-monospace, monospace" }}>{`{{ownerTitle}}`}</code>, <code style={{ color: p.accent, fontFamily: "ui-monospace, monospace" }}>{`{{logoUrl}}`}</code> and <code style={{ color: p.accent, fontFamily: "ui-monospace, monospace" }}>{`{{hotelAddress}}`}</code> fill in on send. The preview on the right renders it live.
+              </p>
+              <textarea
+                ref={htmlRef}
+                value={htmlValue}
+                onFocus={() => setActiveField("html")}
+                onChange={(e) => set({ html: e.target.value })}
+                rows={22}
+                spellCheck={false}
+                className="w-full outline-none"
+                style={{
+                  backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`,
+                  padding: "0.85rem 0.95rem",
+                  fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace", fontSize: "0.8rem",
+                  lineHeight: 1.6, resize: "vertical",
+                }}
+              />
+              <div className="mt-2 flex items-center gap-2 flex-wrap">
+                <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem" }}>
+                  HTML source · edit tags directly to keep formatting intact.
+                </span>
+                {draft.html != null && draft.html !== INTRO_TEMPLATE_SEED.html && (
+                  <button
+                    onClick={() => set({ html: INTRO_TEMPLATE_SEED.html })}
+                    style={{
+                      padding: "0.2rem 0.6rem", border: `1px solid ${p.border}`, color: p.textSecondary,
+                      fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.14em",
+                      textTransform: "uppercase", fontWeight: 700, cursor: "pointer",
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = p.accent; e.currentTarget.style.borderColor = p.accent; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = p.textSecondary; e.currentTarget.style.borderColor = p.border; }}
+                  >Reset HTML to built-in</button>
+                )}
+              </div>
+            </Card>
+          )}
         </div>
 
         {/* Right: sticky preview + variable picker */}
@@ -795,10 +868,28 @@ function TemplateEditor({ draft: initial, onClose, onSave, onRemove }) {
             title={
               <div className="flex items-center gap-2">
                 <Eye size={12} /> <span>Live preview</span>
+                {supportsHtml && htmlValue ? (
+                  <span style={{ color: p.accent, fontSize: "0.58rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, border: `1px solid ${p.accent}`, padding: "1px 6px" }}>HTML</span>
+                ) : null}
               </div>
             }
           >
-            <PreviewBlock template={draft} p={p} />
+            {supportsHtml && htmlValue ? (
+              <div>
+                <div className="px-4 py-3" style={{ borderBottom: `1px solid ${p.border}`, backgroundColor: p.bgPanelAlt }}>
+                  <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>Subject</div>
+                  <div style={{ color: p.textPrimary, fontSize: "0.92rem", fontWeight: 700, marginTop: 4, fontFamily: "'Cormorant Garamond', serif" }}>
+                    {renderTemplate(draft.subject) || <em style={{ color: p.textDim, fontWeight: 400 }}>(no subject)</em>}
+                  </div>
+                </div>
+                {/* Rendered email — operator-authored HTML; light background to
+                    mirror how a mail client shows the branded template. */}
+                <div style={{ background: "#fff", padding: "16px 18px", maxHeight: 460, overflowY: "auto" }}
+                     dangerouslySetInnerHTML={{ __html: renderTemplate(htmlValue) }} />
+              </div>
+            ) : (
+              <PreviewBlock template={draft} p={p} />
+            )}
           </Card>
 
           <Card padded={false} title={<><Tag size={11} className="inline mr-1.5" />Variables</>}>
@@ -837,7 +928,7 @@ function TemplateEditor({ draft: initial, onClose, onSave, onRemove }) {
               ))}
             </div>
             <p className="px-4 py-3" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", lineHeight: 1.55 }}>
-              Click any variable to insert it at the cursor in the {activeField === "subject" ? <strong style={{ color: p.accent }}>subject</strong> : <strong style={{ color: p.accent }}>body</strong>}. Variables outside this list still render as their literal placeholder in the preview.
+              Click any variable to insert it at the cursor in the {activeField === "subject" ? <strong style={{ color: p.accent }}>subject</strong> : activeField === "html" ? <strong style={{ color: p.accent }}>HTML</strong> : <strong style={{ color: p.accent }}>body</strong>}. Variables outside this list still render as their literal placeholder in the preview.
             </p>
           </Card>
         </aside>
@@ -862,14 +953,22 @@ function PreviewBlock({ template, p }) {
           {renderTemplate(template.subject) || <em style={{ color: p.textDim, fontWeight: 400 }}>(no subject)</em>}
         </div>
       </div>
-      <pre style={{
-        backgroundColor: p.bgPanel, color: p.textPrimary,
-        fontFamily: "'Manrope', sans-serif", fontSize: "0.82rem", lineHeight: 1.65,
-        whiteSpace: "pre-wrap", wordBreak: "break-word",
-        padding: "16px 18px", margin: 0, maxHeight: 380, overflowY: "auto",
-      }}>
-        {renderTemplate(template.body) || "(empty body)"}
-      </pre>
+      {template.html ? (
+        // Render the formatted email the recipient actually gets. Operator-
+        // authored template HTML with static sample vars — light background to
+        // mirror a mail client.
+        <div style={{ background: "#fff", padding: "16px 18px", maxHeight: 420, overflowY: "auto" }}
+             dangerouslySetInnerHTML={{ __html: renderTemplate(template.html) }} />
+      ) : (
+        <pre style={{
+          backgroundColor: p.bgPanel, color: p.textPrimary,
+          fontFamily: "'Manrope', sans-serif", fontSize: "0.82rem", lineHeight: 1.65,
+          whiteSpace: "pre-wrap", wordBreak: "break-word",
+          padding: "16px 18px", margin: 0, maxHeight: 380, overflowY: "auto",
+        }}>
+          {renderTemplate(template.body) || "(empty body)"}
+        </pre>
+      )}
     </div>
   );
 }

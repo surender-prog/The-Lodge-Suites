@@ -229,10 +229,12 @@ function buildEmail(kind, payload, hotelName) {
     };
   }
 
-  // Generic / custom message.
+  // Generic / custom message. Pass through an optional HTML body so template
+  // test-sends (and any caller supplying rich HTML) land fully formatted.
   return {
     subject: subject || `A message from ${hotelName}`,
     text:    text || "",
+    html:    payload.html ? String(payload.html) : undefined,
   };
 }
 

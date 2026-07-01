@@ -1025,16 +1025,21 @@ function bookingCopyEmails(bk, { agencies = [], agreements = [], members = [] })
 // Partner introduction — the sales intro emailed to a new corporate / travel-
 // agent contact after an activity is logged (call / visit / meeting / email).
 // This is the EDITABLE SOURCE the Intro Email composer reads for its subject +
-// body; the branded HTML layout (gold offer callout + logo/address footer) is
-// applied automatically on send by buildIntroEmail(). Placeholders are the
-// intro-specific set — {{name}} greeting · {{account}} company · {{hotel}}
-// property · {{opener}} activity-aware opening line · {{owner}} sender name.
+// body + rich HTML. `body` is the plain-text fallback; `html` is the FORMATTED
+// version recipients actually see (gold offer callout + logo/address footer) —
+// edit it to change formatting, the footer, or the sender-title line and it
+// flows straight through on send. Placeholders:
+//   content — {{name}} greeting · {{account}} company · {{hotel}} property ·
+//             {{opener}} activity-aware opening line · {{owner}} sender name
+//   footer  — {{ownerTitle}} sender job title · {{ownerEmail}} · {{logoUrl}}
+//             logo image · {{hotelAddress}} · {{hotelArea}} · {{hotelCountry}}
+//             · {{hotelPhone}} · {{hotelWebsite}}
 // Exported so the composer can reference the id and restore this seed on
 // "Reset to built-in".
 export const INTRO_TEMPLATE_ID = "tpl-partner-intro";
 export const INTRO_TEMPLATE_SEED = {
   id: INTRO_TEMPLATE_ID, name: "Partner introduction & Fact Sheet", category: "contracts",
-  description: "The sales introduction + partner offer emailed to a new corporate / travel-agent contact from a logged activity. The hotel Fact Sheet attaches automatically; the branded HTML layout is applied on send.",
+  description: "The sales introduction + partner offer emailed to a new corporate / travel-agent contact from a logged activity. The hotel Fact Sheet attaches automatically; the formatted HTML (below) is what recipients receive.",
   trigger: { event: "partner.intro", auto: false, delayMinutes: 0 },
   subject: "Introduction & partnership offer · {{hotel}} · {{account}}",
   body:
@@ -1062,6 +1067,36 @@ Thank you for your time and consideration. We look forward to building a long-la
 
 Kind regards,
 {{owner}}`,
+  html:
+`<div style="font-family:'Helvetica Neue',Arial,sans-serif;color:#15161A;max-width:640px;font-size:14px;">
+  <p style="margin:0 0 12px;line-height:1.55;">Dear {{name}},</p>
+  <p style="margin:0 0 12px;line-height:1.55;">Greetings from {{hotel}}.</p>
+  <p style="margin:0 0 12px;line-height:1.55;">{{opener}}</p>
+  <p style="margin:0 0 12px;line-height:1.55;">{{hotel}} is a premium all-suite property offering spacious accommodations and personalised hospitality tailored to both business and leisure travellers. Our suites feature furnished kitchenettes, 55&Prime; Smart TVs, soundproofed windows, complimentary high-speed Wi-Fi and dedicated guest services — ideal for corporate and extended-stay guests.</p>
+  <div style="border-inline-start:3px solid #C9A961;background:#FBF7EC;padding:12px 16px;margin:0 0 16px;">
+    <div style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#C9A961;font-weight:700;margin-bottom:6px;">Limited-time partner offer</div>
+    <div style="font-weight:600;color:#15161A;margin-bottom:8px;">One complimentary stay (up to two nights) for {{account}}.</div>
+    <ul style="margin:0;padding-inline-start:18px;color:#3F3B33;font-size:13px;">
+      <li style="margin:0 0 6px;line-height:1.5;">Subject to prior reservation and availability.</li>
+      <li style="margin:0 0 6px;line-height:1.5;">Not applicable on weekends and public holidays.</li>
+      <li style="margin:0 0 6px;line-height:1.5;">Limited to a maximum of two (2) consecutive nights.</li>
+      <li style="margin:0 0 6px;line-height:1.5;">Exclusively for corporate / travel-agent partners; cannot be exchanged for cash or transferred.</li>
+    </ul>
+  </div>
+  <p style="margin:0 0 12px;line-height:1.55;">Additionally, we would be delighted to extend complimentary use of our meeting / conference room for your guests staying with us, subject to prior booking and availability.</p>
+  <p style="margin:0 0 12px;line-height:1.55;">Please find our hotel Fact Sheet attached for your kind consideration. Should you wish to arrange a property visit, please do not hesitate to contact me at your convenience.</p>
+  <p style="margin:0 0 12px;line-height:1.55;">Thank you for your time and consideration. We look forward to building a long-lasting and mutually beneficial partnership.</p>
+  <div style="margin-top:20px;">Kind regards,</div>
+  <!-- FOOTER — edit the logo, address, or sender-title line below -->
+  <div style="margin-top:14px;border-top:1px solid #E7E1D4;padding-top:16px;">
+    <img src="{{logoUrl}}" alt="{{hotel}}" width="150" style="display:block;width:150px;max-width:150px;height:auto;margin-bottom:4px;">
+    <div style="font-weight:700;color:#15161A;font-size:14px;margin-top:8px;">{{owner}}</div>
+    <div style="color:#7A7464;font-size:12px;margin-bottom:8px;">{{ownerTitle}} · {{hotel}}</div>
+    <div style="color:#3F3B33;font-size:12px;line-height:1.55;border-inline-start:2px solid #C9A961;padding-inline-start:10px;margin-bottom:6px;">{{hotelAddress}}<br>{{hotelArea}} · {{hotelCountry}}</div>
+    <div style="color:#3F3B33;font-size:12px;">{{hotelPhone}} &middot; <a href="mailto:{{ownerEmail}}" style="color:#C9A961;text-decoration:none;">{{ownerEmail}}</a></div>
+    <div style="margin-top:2px;"><a href="https://{{hotelWebsite}}" style="color:#C9A961;text-decoration:none;font-size:12px;">{{hotelWebsite}}</a></div>
+  </div>
+</div>`,
   fromName: FROM_NAME, fromEmail: "sales@exploremena.com", replyTo: "sales@exploremena.com", cc: "", bcc: "",
   active: true, builtIn: true,
 };
@@ -4747,14 +4782,25 @@ export function DataProvider({ children }) {
       fetchAll("agencies")           .then(d => { if (!cancelled && d && d.length > 0) setAgencies(d); }),
       fetchAll("email_templates")    .then(d => {
         if (cancelled || !d || d.length === 0) return;
-        // DB rows win (operator edits persist), but re-inject any built-in
-        // template absent from the DB so newly-shipped built-ins (e.g. the
-        // partner-intro template) appear WITHOUT a migration. Append-only —
-        // never overwrites a stored row, and runs during hydration so the
-        // slice-persistence baseline already includes it (no spurious write).
+        // DB rows win (operator edits persist), with two additive-only steps
+        // so newly-shipped built-in content appears WITHOUT a migration:
+        //   1) BACKFILL a brand-new built-in field (e.g. `html`) onto a stored
+        //      row that predates it — only when the row is missing that field,
+        //      so operator edits to existing fields are never touched.
+        //   2) RE-INJECT any built-in template absent from the DB entirely.
+        // Both run during hydration so the slice-persistence baseline already
+        // includes them (no spurious write); neither overwrites stored content.
+        const seedById = new Map(SAMPLE_EMAIL_TEMPLATES.map((t) => [t.id, t]));
+        const patched = d.map((row) => {
+          const seed = row && seedById.get(row.id);
+          if (seed && seed.builtIn && seed.html && row.html == null) {
+            return { ...row, html: seed.html };
+          }
+          return row;
+        });
         const haveIds = new Set(d.map((t) => t && t.id));
         const missing = SAMPLE_EMAIL_TEMPLATES.filter((t) => t.builtIn && !haveIds.has(t.id));
-        setEmailTemplates(missing.length ? [...d, ...missing] : d);
+        setEmailTemplates(missing.length ? [...patched, ...missing] : patched);
       }),
       fetchAll("rfps")               .then(d => { if (!cancelled && d && d.length > 0) setRfps(d); }),
       fetchAll("channels")           .then(d => { if (!cancelled && d && d.length > 0) setChannels(d); }),

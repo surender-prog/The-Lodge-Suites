@@ -102,12 +102,26 @@ export function IntroEmailModal({ activity, onClose }) {
     const fallback = resolveContact(activity, agreements, agencies);
     const name = (activity?.contactName || "").trim() || fallback.name;
     const greetingName = resolveGreetingName(name) || "Sir/Madam";
+    const hi = hotelInfo || {};
     return {
+      // Content
       name: greetingName,
       account: activity?.accountName || "",
-      hotel: hotelInfo?.name || "The Lodge Suites",
+      hotel: hi.name || "The Lodge Suites",
       opener: openerForKind(activity?.kind),
       owner: owner?.name || activity?.ownerName || "",
+      // Sender + footer — fill the {{ownerTitle}} / {{logoUrl}} / address
+      // placeholders in the template's rich HTML so the footer and the
+      // sender-title line render correctly on send.
+      ownerTitle: owner?.title || "",
+      ownerEmail: owner?.email || hi.emailSales || hi.email || "",
+      ownerPhone: hi.phone || "",
+      logoUrl: LOGO_URL,
+      hotelAddress: hi.address || "",
+      hotelArea: hi.area || "",
+      hotelCountry: hi.country || "",
+      hotelPhone: hi.phone || "",
+      hotelWebsite: hi.website || "",
     };
   }, [activity, agreements, agencies, hotelInfo, owner]);
 
@@ -116,9 +130,8 @@ export function IntroEmailModal({ activity, onClose }) {
     const name = (activity?.contactName || "").trim() || fallback.name;
     const email = (activity?.contactEmail || "").trim() || fallback.email;
 
-    // Always build the brand HTML from buildIntroEmail() so the gold
-    // callout box, bullet list, and logo/address footer are present in every
-    // send — even when the template customises the plain-text body.
+    // buildIntroEmail is the built-in fallback (subject/text/html) for when the
+    // editable template hasn't hydrated yet.
     const built = buildIntroEmail({
       activity: { ...activity, contactName: name },
       hotel: hotelInfo,
@@ -126,20 +139,19 @@ export function IntroEmailModal({ activity, onClose }) {
       logoUrl: LOGO_URL,
     });
 
-    // Editable subject/body come from the "Partner introduction" email
-    // template; fall back to the built-in wording until it's hydrated.
-    let subject = built.subject, text = built.bodyText;
-    if (introTpl && (introTpl.body || introTpl.subject)) {
-      subject = substituteTemplateVars(introTpl.subject || built.subject, vars);
-      text    = substituteTemplateVars(introTpl.body    || built.bodyText, vars);
-    }
+    // Subject / plain-text / RICH HTML all come from the "Partner introduction"
+    // email template so whatever the operator edits there — including the
+    // footer and sender-title line — flows straight through to the recipient.
+    const subject = substituteTemplateVars(introTpl?.subject || built.subject, vars);
+    const text    = substituteTemplateVars(introTpl?.body    || built.bodyText, vars);
+    const html    = substituteTemplateVars(introTpl?.html || INTRO_TEMPLATE_SEED.html, vars);
     return {
       to: email || "",
       cc: "",
       bcc: hotelInfo?.emailSales || "",
       subject,
       text,
-      html: built.bodyHtml,
+      html,
     };
   }, [activity, agreements, agencies, hotelInfo, owner, introTpl, vars]);
 
@@ -194,6 +206,9 @@ export function IntroEmailModal({ activity, onClose }) {
     const base = introTpl || INTRO_TEMPLATE_SEED;
     upsertEmailTemplate({
       ...base,
+      // Preserve the rich HTML (edited in the Email Templates section); the
+      // composer only tweaks the subject + plain-text body.
+      html:    base.html || INTRO_TEMPLATE_SEED.html,
       subject: templatizeFromValues(draft.subject.trim(), vars),
       body:    templatizeFromValues(draft.text, vars),
     });
@@ -210,17 +225,10 @@ export function IntroEmailModal({ activity, onClose }) {
     setSending(true);
     const finalSubject = substituteTemplateVars(draft.subject.trim(), vars);
     const finalText    = substituteTemplateVars(draft.text, vars);
-    // Rebuild brand HTML fresh so the email always carries the gold callout,
-    // bullet list, and properly formatted sender signature — regardless of
-    // saved-template customisations (which affect the plain-text fallback).
-    const _fb = resolveContact(activity, agreements, agencies);
-    const _cn = (activity?.contactName || "").trim() || _fb.name;
-    const { bodyHtml: finalHtml } = buildIntroEmail({
-      activity: { ...activity, contactName: _cn },
-      hotel: hotelInfo,
-      owner,
-      logoUrl: LOGO_URL,
-    });
+    // Rich HTML is the template's own `html` (edited in Settings → Email
+    // Templates), with placeholders resolved fresh at send time so the
+    // formatting, offer callout, footer and sender-title all render intact.
+    const finalHtml    = substituteTemplateVars(introTpl?.html || INTRO_TEMPLATE_SEED.html, vars);
     const attachments = factSheet ? [{ filename: factSheet.filename, contentBase64: factSheet.base64, contentType: "application/pdf" }] : [];
     const result = await sendTransactionalEmail({
       kind: "intro",
@@ -374,12 +382,12 @@ export function IntroEmailModal({ activity, onClose }) {
           }}
         />
         <div style={{ fontSize: "0.72rem", color: p.textMuted, marginTop: 6 }}>
-          Plain-text fallback — the email is always sent with a <strong>brand-styled HTML version</strong> (gold offer callout, plus a footer with the property logo, your name &amp; title, and the hotel address) auto-generated on send.
+          Plain-text fallback — recipients receive the <strong>formatted HTML version</strong> (gold offer callout, plus a footer with the property logo, your name &amp; title, and the hotel address).
           <br />
           <strong>Tip:</strong> Use placeholders <code>{`{{name}}`}</code> · <code>{`{{account}}`}</code> · <code>{`{{hotel}}`}</code> · <code>{`{{opener}}`}</code> · <code>{`{{owner}}`}</code> to keep the template reusable.
           They're filled in automatically when sending.
           <span style={{ color: p.accent, marginInlineStart: 6 }}>
-            · Edit the shared wording in Settings → Email Templates → <strong>Partner introduction</strong>.
+            · To change the <strong>formatting, footer or sender title</strong>, edit the rich HTML in Settings → Email Templates → <strong>Partner introduction</strong>.
           </span>
         </div>
       </FormGroup>
