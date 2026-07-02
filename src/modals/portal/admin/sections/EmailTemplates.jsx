@@ -7,6 +7,7 @@ import {
 import { usePalette } from "../../theme.jsx";
 import { useData, INTRO_TEMPLATE_ID, INTRO_TEMPLATE_SEED } from "../../../../data/store.jsx";
 import { htmlToText } from "../../../../lib/introEmailTemplate.js";
+import { RichHtmlEditor } from "./RichHtmlEditor.jsx";
 import {
   Card, Drawer, FormGroup, GhostBtn, PageHeader, PrimaryBtn, pushToast,
   SelectField, Stat, TableShell, Td, Th, TextField,
@@ -565,21 +566,27 @@ function TemplateEditor({ draft: initial, onClose, onSave, onRemove }) {
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
   const setTrigger = (patch) => setDraft((d) => ({ ...d, trigger: { ...(d.trigger || {}), ...patch } }));
 
-  const subjectRef = useRef(null);
-  const bodyRef    = useRef(null);
-  const htmlRef    = useRef(null);
+  const subjectRef    = useRef(null);
+  const bodyRef       = useRef(null);
+  const richEditorRef = useRef(null);
   const [activeField, setActiveField] = useState("body");
 
   // The partner-intro template carries a rich HTML body that recipients see;
-  // expose the HTML editor for it (and for any template that already has html).
+  // expose the rich-text/HTML/preview editor for it (and any template with html).
   const supportsHtml = draft.id === INTRO_TEMPLATE_ID || draft.html != null;
   const htmlValue = draft.html ?? (draft.id === INTRO_TEMPLATE_ID ? INTRO_TEMPLATE_SEED.html : "");
 
   const insertVariable = (key) => {
     const placeholder = `{{${key}}}`;
-    const fld = activeField === "subject" ? "subject" : activeField === "html" ? "html" : "body";
-    const ref = fld === "subject" ? subjectRef : fld === "html" ? htmlRef : bodyRef;
-    const current = fld === "html" ? htmlValue : (draft[fld] || "");
+    // For HTML templates, everything except the subject goes through the rich
+    // editor, which drops the token at the cursor in whichever mode is active.
+    if (supportsHtml && activeField !== "subject") {
+      richEditorRef.current?.insertToken(placeholder);
+      return;
+    }
+    const fld = activeField === "subject" ? "subject" : "body";
+    const ref = fld === "subject" ? subjectRef : bodyRef;
+    const current = draft[fld] || "";
     const el = ref.current;
     if (el && typeof el.selectionStart === "number") {
       const start = el.selectionStart;
@@ -759,111 +766,22 @@ function TemplateEditor({ draft: initial, onClose, onSave, onRemove }) {
             </p>
           </Card>
 
-          <Card title={supportsHtml ? "Plain-text fallback · auto-generated from the HTML" : "Body"}>
-            {supportsHtml && (
-              <p className="mb-2" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.55 }}>
-                Read-only — this is generated from the <strong style={{ color: p.accent }}>Rich HTML</strong> below and only shown to email clients that can't render HTML, so the two never drift apart. To change the wording, the offer line, or the footer, edit the <strong style={{ color: p.accent }}>HTML card</strong>.
-              </p>
-            )}
-            <textarea
-              ref={bodyRef}
-              value={supportsHtml ? htmlToText(htmlValue) : (draft.body ?? "")}
-              readOnly={supportsHtml}
-              onFocus={() => { if (!supportsHtml) setActiveField("body"); }}
-              onChange={(e) => { if (!supportsHtml) set({ body: e.target.value }); }}
-              rows={supportsHtml ? 12 : 18}
-              className="w-full outline-none"
-              style={{
-                backgroundColor: supportsHtml ? p.bgPanelAlt : p.inputBg,
-                color: supportsHtml ? p.textSecondary : p.textPrimary,
-                border: `1px solid ${p.border}`,
-                padding: "0.85rem 0.95rem",
-                fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace", fontSize: "0.85rem",
-                lineHeight: 1.65, resize: "vertical",
-              }}
-            />
-            <div className="mt-3 flex items-center justify-between gap-3 flex-wrap">
-              <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.55 }}>
-                Use <code style={{ color: p.accent, fontFamily: "ui-monospace, monospace" }}>{`{{placeholder}}`}</code> syntax. The picker on the right inserts at the cursor position in whichever field was last focused.
-              </p>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}>Insert into</span>
-                <button
-                  onClick={() => { setActiveField("subject"); subjectRef.current?.focus(); }}
-                  style={{
-                    padding: "0.3rem 0.7rem",
-                    backgroundColor: activeField === "subject" ? `${p.accent}1F` : "transparent",
-                    border: `1px solid ${activeField === "subject" ? p.accent : p.border}`,
-                    color: activeField === "subject" ? p.accent : p.textSecondary,
-                    fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
-                    letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
-                  }}>Subject</button>
-                {!supportsHtml && (
-                  <button
-                    onClick={() => { setActiveField("body"); bodyRef.current?.focus(); }}
-                    style={{
-                      padding: "0.3rem 0.7rem",
-                      backgroundColor: activeField === "body" ? `${p.accent}1F` : "transparent",
-                      border: `1px solid ${activeField === "body" ? p.accent : p.border}`,
-                      color: activeField === "body" ? p.accent : p.textSecondary,
-                      fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
-                      letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
-                    }}>Body</button>
-                )}
-                {supportsHtml && (
-                  <button
-                    onClick={() => { setActiveField("html"); htmlRef.current?.focus(); }}
-                    style={{
-                      padding: "0.3rem 0.7rem",
-                      backgroundColor: activeField === "html" ? `${p.accent}1F` : "transparent",
-                      border: `1px solid ${activeField === "html" ? p.accent : p.border}`,
-                      color: activeField === "html" ? p.accent : p.textSecondary,
-                      fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
-                      letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
-                    }}>HTML</button>
-                )}
-              </div>
-            </div>
-            {!supportsHtml && usedPlaceholders.length > 0 && (
-              <div className="mt-3 flex items-baseline gap-2 flex-wrap" style={{ paddingTop: 12, borderTop: `1px solid ${p.border}` }}>
-                <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>Placeholders used</span>
-                {usedPlaceholders.map((k) => (
-                  <span key={k} style={{
-                    fontFamily: "ui-monospace, Menlo, monospace", fontSize: "0.72rem",
-                    padding: "1px 6px",
-                    color: SAMPLE_VARS[k] !== undefined ? p.accent : p.warn,
-                    border: `1px solid ${SAMPLE_VARS[k] !== undefined ? p.accent : p.warn}`,
-                  }}>
-                    {`{{${k}}}`}{SAMPLE_VARS[k] === undefined && " · custom"}
-                  </span>
-                ))}
-              </div>
-            )}
-          </Card>
-
-          {supportsHtml && (
-            <Card title="Rich HTML version — what recipients see">
+          {supportsHtml ? (
+            <Card title="Email content — what recipients see">
               <p className="mb-3" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.76rem", lineHeight: 1.6 }}>
-                This is the <strong style={{ color: p.textPrimary }}>formatted email</strong> the recipient receives — the plain-text body above is only the fallback. Edit the layout, the offer box, or the <strong style={{ color: p.accent }}>footer &amp; sender-title line</strong> here; placeholders like <code style={{ color: p.accent, fontFamily: "ui-monospace, monospace" }}>{`{{ownerTitle}}`}</code>, <code style={{ color: p.accent, fontFamily: "ui-monospace, monospace" }}>{`{{logoUrl}}`}</code> and <code style={{ color: p.accent, fontFamily: "ui-monospace, monospace" }}>{`{{hotelAddress}}`}</code> fill in on send. The preview on the right renders it live.
+                Compose in <strong style={{ color: p.accent }}>Rich text</strong>, fine-tune the <strong style={{ color: p.accent }}>HTML</strong>, or check the <strong style={{ color: p.accent }}>Preview</strong> — all three edit the same email. Change the offer box, the <strong style={{ color: p.accent }}>footer</strong> and the <strong style={{ color: p.accent }}>sender-title line</strong> here; placeholders like <code style={{ color: p.accent, fontFamily: "ui-monospace, monospace" }}>{`{{ownerTitle}}`}</code>, <code style={{ color: p.accent, fontFamily: "ui-monospace, monospace" }}>{`{{logoUrl}}`}</code> and <code style={{ color: p.accent, fontFamily: "ui-monospace, monospace" }}>{`{{hotelAddress}}`}</code> fill in on send. The plain-text fallback is generated automatically — no separate copy to maintain.
               </p>
-              <textarea
-                ref={htmlRef}
+              <RichHtmlEditor
+                ref={richEditorRef}
                 value={htmlValue}
-                onFocus={() => setActiveField("html")}
-                onChange={(e) => set({ html: e.target.value })}
-                rows={22}
-                spellCheck={false}
-                className="w-full outline-none"
-                style={{
-                  backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`,
-                  padding: "0.85rem 0.95rem",
-                  fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace", fontSize: "0.8rem",
-                  lineHeight: 1.6, resize: "vertical",
-                }}
+                onChange={(h) => set({ html: h })}
+                onFocusEditor={() => setActiveField("content")}
+                p={p}
+                renderPreview={(h) => renderTemplate(h)}
               />
               <div className="mt-2 flex items-center gap-2 flex-wrap">
                 <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem" }}>
-                  HTML source · edit tags directly to keep formatting intact.
+                  Click a variable on the right to drop it at the cursor.
                 </span>
                 {draft.html != null && draft.html !== INTRO_TEMPLATE_SEED.html && (
                   <button
@@ -875,42 +793,84 @@ function TemplateEditor({ draft: initial, onClose, onSave, onRemove }) {
                     }}
                     onMouseEnter={(e) => { e.currentTarget.style.color = p.accent; e.currentTarget.style.borderColor = p.accent; }}
                     onMouseLeave={(e) => { e.currentTarget.style.color = p.textSecondary; e.currentTarget.style.borderColor = p.border; }}
-                  >Reset HTML to built-in</button>
+                  >Reset to built-in</button>
                 )}
               </div>
+            </Card>
+          ) : (
+            <Card title="Body">
+              <textarea
+                ref={bodyRef}
+                value={draft.body ?? ""}
+                onFocus={() => setActiveField("body")}
+                onChange={(e) => set({ body: e.target.value })}
+                rows={18}
+                className="w-full outline-none"
+                style={{
+                  backgroundColor: p.inputBg, color: p.textPrimary, border: `1px solid ${p.border}`,
+                  padding: "0.85rem 0.95rem",
+                  fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace", fontSize: "0.85rem",
+                  lineHeight: 1.65, resize: "vertical",
+                }}
+              />
+              <div className="mt-3 flex items-center justify-between gap-3 flex-wrap">
+                <p style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.74rem", lineHeight: 1.55 }}>
+                  Use <code style={{ color: p.accent, fontFamily: "ui-monospace, monospace" }}>{`{{placeholder}}`}</code> syntax. The picker on the right inserts at the cursor position in whichever field was last focused.
+                </p>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.66rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700 }}>Insert into</span>
+                  <button
+                    onClick={() => { setActiveField("subject"); subjectRef.current?.focus(); }}
+                    style={{
+                      padding: "0.3rem 0.7rem",
+                      backgroundColor: activeField === "subject" ? `${p.accent}1F` : "transparent",
+                      border: `1px solid ${activeField === "subject" ? p.accent : p.border}`,
+                      color: activeField === "subject" ? p.accent : p.textSecondary,
+                      fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+                      letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                    }}>Subject</button>
+                  <button
+                    onClick={() => { setActiveField("body"); bodyRef.current?.focus(); }}
+                    style={{
+                      padding: "0.3rem 0.7rem",
+                      backgroundColor: activeField === "body" ? `${p.accent}1F` : "transparent",
+                      border: `1px solid ${activeField === "body" ? p.accent : p.border}`,
+                      color: activeField === "body" ? p.accent : p.textSecondary,
+                      fontFamily: "'Manrope', sans-serif", fontSize: "0.62rem",
+                      letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700,
+                    }}>Body</button>
+                </div>
+              </div>
+              {usedPlaceholders.length > 0 && (
+                <div className="mt-3 flex items-baseline gap-2 flex-wrap" style={{ paddingTop: 12, borderTop: `1px solid ${p.border}` }}>
+                  <span style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>Placeholders used</span>
+                  {usedPlaceholders.map((k) => (
+                    <span key={k} style={{
+                      fontFamily: "ui-monospace, Menlo, monospace", fontSize: "0.72rem",
+                      padding: "1px 6px",
+                      color: SAMPLE_VARS[k] !== undefined ? p.accent : p.warn,
+                      border: `1px solid ${SAMPLE_VARS[k] !== undefined ? p.accent : p.warn}`,
+                    }}>
+                      {`{{${k}}}`}{SAMPLE_VARS[k] === undefined && " · custom"}
+                    </span>
+                  ))}
+                </div>
+              )}
             </Card>
           )}
         </div>
 
         {/* Right: sticky preview + variable picker */}
         <aside className="space-y-4 lg:sticky lg:top-4 self-start">
-          <Card padded={false}
-            title={
-              <div className="flex items-center gap-2">
-                <Eye size={12} /> <span>Live preview</span>
-                {supportsHtml && htmlValue ? (
-                  <span style={{ color: p.accent, fontSize: "0.58rem", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, border: `1px solid ${p.accent}`, padding: "1px 6px" }}>HTML</span>
-                ) : null}
-              </div>
-            }
-          >
-            {supportsHtml && htmlValue ? (
-              <div>
-                <div className="px-4 py-3" style={{ borderBottom: `1px solid ${p.border}`, backgroundColor: p.bgPanelAlt }}>
-                  <div style={{ color: p.textMuted, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", fontWeight: 700 }}>Subject</div>
-                  <div style={{ color: p.textPrimary, fontSize: "0.92rem", fontWeight: 700, marginTop: 4, fontFamily: "'Cormorant Garamond', serif" }}>
-                    {renderTemplate(draft.subject) || <em style={{ color: p.textDim, fontWeight: 400 }}>(no subject)</em>}
-                  </div>
-                </div>
-                {/* Rendered email — operator-authored HTML; light background to
-                    mirror how a mail client shows the branded template. */}
-                <div style={{ background: "#fff", padding: "16px 18px", maxHeight: 460, overflowY: "auto" }}
-                     dangerouslySetInnerHTML={{ __html: renderTemplate(htmlValue) }} />
-              </div>
-            ) : (
+          {/* HTML templates carry their own Preview tab in the editor, so the
+              side preview is only shown for plain-text templates. */}
+          {!supportsHtml && (
+            <Card padded={false}
+              title={<div className="flex items-center gap-2"><Eye size={12} /> <span>Live preview</span></div>}
+            >
               <PreviewBlock template={draft} p={p} />
-            )}
-          </Card>
+            </Card>
+          )}
 
           <Card padded={false} title={<><Tag size={11} className="inline mr-1.5" />Variables</>}>
             <div style={{ maxHeight: 420, overflowY: "auto" }}>
@@ -948,7 +908,7 @@ function TemplateEditor({ draft: initial, onClose, onSave, onRemove }) {
               ))}
             </div>
             <p className="px-4 py-3" style={{ color: p.textMuted, fontFamily: "'Manrope', sans-serif", fontSize: "0.72rem", lineHeight: 1.55 }}>
-              Click any variable to insert it at the cursor in the {activeField === "subject" ? <strong style={{ color: p.accent }}>subject</strong> : activeField === "html" ? <strong style={{ color: p.accent }}>HTML</strong> : <strong style={{ color: p.accent }}>body</strong>}. Variables outside this list still render as their literal placeholder in the preview.
+              Click any variable to insert it at the cursor in the {activeField === "subject" ? <strong style={{ color: p.accent }}>subject</strong> : supportsHtml ? <strong style={{ color: p.accent }}>email content</strong> : <strong style={{ color: p.accent }}>body</strong>}. Variables outside this list still render as their literal placeholder in the preview.
             </p>
           </Card>
         </aside>
